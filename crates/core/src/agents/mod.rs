@@ -18,5 +18,6 @@ pub mod roles;
 pub mod screen_text;
 pub mod start;
 pub mod start_failed;
+pub mod startup_dialog;
 pub mod talk;
 pub mod talk_commands;
