@@ -137,9 +137,9 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
             let a = api.agent_get(&pane).ok().flatten();
             if a.is_none() && sent { error = no_verdict(None, "the reviewer exited without a verdict"); ended = true; break; }
             if a.is_none() && api.pane_get(&pane).is_none() { error = "the reviewer's terminal was closed".into(); break; }
-            // Until it has taken its brief, a dialog on its screen that herdr does not report (codex's hook review) fails
-            // the round at once instead of at the review's time limit.
-            if !sent || mark_cell.borrow().is_some() {
+            // Before its brief is typed (so the brief's own words are never on the screen), a dialog that herdr does not
+            // report (codex's hook review) fails the round at once instead of at the review's time limit.
+            if !sent {
                 if let Some(say) = api.pane_read(&pane, "visible", None).ok().and_then(|s| crate::agents::startup_dialog::blocking(&s)) { error = format!("the reviewer did not start: {say}"); break; }
             }
             // herdr status is used only to notice a reviewer that is blocked: "review needs you".

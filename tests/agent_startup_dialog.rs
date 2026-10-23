@@ -14,4 +14,6 @@ fn codex_hook_review_is_a_blocking_dialog() {
 fn a_prompt_at_rest_is_no_dialog() {
     assert_eq!(blocking(">_ OpenAI Codex (v0.164.0)\n› Ask Codex to do anything\n  gpt-6.1-sol medium"), None);
     assert_eq!(blocking(""), None);
+    // The phrase alone, as a reviewer's own words might hold it, is no dialog.
+    assert_eq!(blocking("Finding: codex shows 'hooks need review' when hooks change"), None);
 }
