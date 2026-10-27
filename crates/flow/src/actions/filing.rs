@@ -37,7 +37,17 @@ pub fn describe(id: &str, text: &str) -> Res<Task> { let cur = find(id)?; update
 pub fn pin(id: &str) -> Res<Task> { let cur = find(id)?; update(cur.s("id"), |t| { assert_unarchived(t)?; let p = !t.b("pinned"); t.put("pinned", p); Ok(Change::Write) }) }
 
 #[derive(Default)]
-pub struct Report { pub state: String, pub kind: String, pub msg: String, pub title: String, pub progress: Option<Value>, pub eta: Option<Value>, pub as_agent: bool }
+pub struct Report { pub state: String, pub kind: String, pub msg: String, pub title: String, pub progress: Option<Value>, pub eta: Option<Value>, pub as_agent: bool, pub expires: Option<Option<String>>, pub gate: Option<Option<Value>> }
+fn note_metadata(t: &mut Task, r: &Report) {
+    if r.msg.is_empty() && r.state != "blocked" {
+        crate::expiry::set_note_expiry(t, None);
+        crate::expiry::set_note_gate(t, None);
+    } else {
+        crate::expiry::set_note_expiry(t, r.expires.as_ref().and_then(|v| v.as_deref()));
+        crate::expiry::set_note_gate(t, r.gate.as_ref().and_then(|v| v.as_ref()));
+    }
+    t.del("staleCause");
+}
 fn clamp_pct(p: &Value) -> i64 { (number(p).round() as i64).clamp(0, 100) }
 /// A report: the human (or any agent) says where a task stands. A delegated task's own agent is told to say only that
 /// it is blocked (the finish line marks its work done); `as_agent` marks that the turn after its own "blocked" is not a finish.
@@ -57,6 +67,7 @@ pub fn report(id: &str, r: Report) -> Res<Task> {
             t.put("kind", if KINDS.contains(&r.kind.as_str()) { r.kind.clone() } else { "question".into() });
             let m = one_line(&r.msg, 2048);
             t.put("msg", if m.is_empty() { "Needs you".into() } else { m });
+            note_metadata(t, &r);
             t.put("turnOpen", false);
             // The end of the turn it says this in is not a finish (finish/waiting.rs).
             if r.as_agent { let now = crate::clock::now(); t.put("selfBlocked", now); t.put("blocked", json!({ "at": now, "kind": t.at("kind"), "msg": t.at("msg") })); }
@@ -65,6 +76,7 @@ pub fn report(id: &str, r: Report) -> Res<Task> {
         if delegated && runner_alive(t) { crate::fail!("{} is in the middle of a workflow step. Stop it first.", t.s("id")); }
         t.del("kind");
         t.put("msg", one_line(&r.msg, 2048));
+        note_metadata(t, &r);
         if r.state != "error" { t.put("failure", Value::Null); }
         let agent = flow::task::is_agent_task(t);
         match r.state.as_str() {

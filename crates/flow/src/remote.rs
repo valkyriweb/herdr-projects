@@ -141,7 +141,10 @@ fn carried(id: &str, req: &Value) -> Res<()> {
     let pairs: Vec<(String, Value)> = req.at("settings").as_object().unwrap().iter().map(|(k, v)| (k.clone(), v.clone())).collect();
     let values = checked(&pairs, &Scope::you())?;
     let from: String = (if req.b("from") { req.t("from") } else { "another machine".into() }).chars().take(64).collect();
-    update(id, |t| { t.put("carried", json!({ "from": from, "settings": values })); Ok(Change::Write) })?;
+    let settings_expires = req.o("settingsExpires").cloned().unwrap_or_default();
+    let mut carried = json!({ "from": from, "settings": values });
+    if !settings_expires.is_empty() { carried["settingsExpires"] = json!(settings_expires); }
+    update(id, move |t| { t.put("carried", carried); Ok(Change::Write) })?;
     Ok(())
 }
 /// One request of another machine, answered here (`remote_main` prints it as its one line).
@@ -169,7 +172,12 @@ pub fn door_with(what: &str, req: &Value, bytes: &[u8]) -> Res<Value> {
                 }
                 "archive" => { archive::archive(&id)?; ok(format!("{id}: archived. ? has undo, and the archive.")) }
                 "restore" => { archive::restore(&id)?; ok(format!("{id}: restored")) }
-                "delegate" => { carried(&id, req)?; let d = start::delegate_with(&id, vec![], crate::after::Wait { now: req.b("now"), ..Default::default() })?; ok(format!("{id}: {}", crate::after::waiting_words(&d).map(|w| format!("it {w}")).unwrap_or_else(|| "an agent is on it".into()))) }
+                "delegate" => {
+                    carried(&id, req)?;
+                    let d = start::delegate_with(&id, vec![], crate::after::Wait { now: req.b("now"), ..Default::default() })?;
+                    ok(if d.b("staleCause") { format!("{id}: waiting: {}", d.s("msg")) }
+                        else { format!("{id}: {}", crate::after::waiting_words(&d).map(|w| format!("it {w}")).unwrap_or_else(|| "an agent is on it".into())) })
+                }
                 "tell" => { if !t.b("startedOnce") { carried(&id, req)?; } ok(talk::reply(&id, &req.t("text"), crate::status_words::who::YOU)?.msg) }
                 "approve" => { let seen = if req.at("seen").is_array() { Some((req.at("seen").get(0).cloned().unwrap_or_default(), req.at("seen").get(1).cloned().unwrap_or_default())) } else { None }; ok(finish_line::approve(&id, seen, *req.at("anyway") == json!(true))?.msg) }
                 "pick" => ok(crate::attempts::settle::pick(&id, &req.t("letter"))?.msg),

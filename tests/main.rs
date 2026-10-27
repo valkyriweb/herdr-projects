@@ -135,6 +135,7 @@ mod doctor;
 mod doctor_leftovers;
 mod doctor_settings;
 mod endings;
+mod expiry;
 mod fallback;
 mod fallback_more;
 mod fallback_rest;

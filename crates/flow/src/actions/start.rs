@@ -71,7 +71,9 @@ const FRESH: &[&str] = &[
 pub fn delegate(id: &str, asked: Vec<(String, Value)>) -> Res<Task> { delegate_with(id, asked, Wait::default()) }
 /// The same with what it waits for (after.rs): a task whose tasks are not all done waits in stage "after" instead,
 /// and one that waits already is only started early with `now`.
-pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task> {
+pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task> { delegate_with_expiry(id, asked, w, None) }
+/// Delegate with an optional expiry update for the effective worker instructions.
+pub fn delegate_with_expiry(id: &str, asked: Vec<(String, Value)>, w: Wait, expiry: Option<Option<String>>) -> Res<Task> {
     let cur = find(id)?;
     if cur.s("stage") == after::STAGE && !w.now && w.after.is_none() && asked.is_empty() { crate::fail!("{}", after::still_waits(&cur)); }
     let deps = match &w.after { Some(r) => Some(after::checked(Some(cur.s("id")), r)?), None => None };
@@ -89,6 +91,11 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
         if t.b("autoMerge") { crate::fail!("{id} is waiting for an automatic merge. Reply to its agent to cancel that first."); }
         if t.at("link").b("socket") && t.at("link").s("socket") != socket { crate::fail!("{id} lives in another herdr session. Open the board there."); }
         if !values.is_empty() { let s = t.obj_mut("settings"); for (k, v) in &values { s.insert(k.clone(), v.clone()); } }
+        let expiry_update = expiry.clone().or_else(|| values.contains_key("worker.instructions").then_some(None));
+        if let Some(expiry) = expiry_update { crate::expiry::set_task_instruction_expiry(t, expiry.as_deref()); }
+        if let Some(d) = &deps { t.put("after", d.clone()); }
+        if let Some(reason) = crate::expiry::reason(t) { crate::expiry::park(t, &reason); return Ok(Change::Write); }
+        t.del("staleCause");
         if values.get("merge.by") == Some(&json!("itself")) { t.put("requireApproval", false); }
         let owns = |t: &Task| (t.at("link").b("workspace") && t.at("link").b("ownsWorkspace")).then(|| (t.at("link").t("socket"), t.at("link").t("workspace")));
         // Work that already landed and was cleaned up starts a new round in a fresh worktree, never in your checkout.
@@ -115,21 +122,25 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
         t.put("mergeIntent", Value::Null); t.put("requireApproval", ra); t.put("failure", Value::Null); t.put("expectedWake", Value::Null); t.put("turnOpen", false); t.put("waiting", Value::Null);
         if t.at("review").is_object() { t.obj_mut("review").put("stale", true); }
         for k in ["checkFails", "reviewRounds", "prRounds", "syncRepairs"] { t.put(k, 0); }
-        if let Some(d) = &deps { t.put("after", d.clone()); }
         after::on_delegate(t, w.now);
         Ok(Change::Write)
     })?;
     for c in &stale { let _ = crate::attempts::adopt::discard(&t, c); }
     if let Some((s, w)) = old { flow::spaces::close_later(&s, &w); }
     flow::sidebar::tell_sidebar(&t);
-    start_queued(&socket);
+    if t.s("stage") == "queued" { start_queued(&socket); }
     Ok(get(t.s("id")).unwrap_or(t))
 }
 /// Start queued tasks while slots are free. Counting and claiming happen under one lock, so two passes cannot both
 /// take the last slot. A turn the human started in an agent's terminal counts toward the total.
 pub fn start_queued(socket: &str) -> Vec<String> {
     // A task done several times at once is split into its attempts first: each then waits for a slot of its own.
-    for w in list(ListOpts::default()) { if w.s("stage") == "queued" && w.at("link").s("socket") == socket { let _ = crate::attempts::fan_out::fan_out(w.s("id")); } }
+    for w in list(ListOpts::default()) {
+        if w.s("stage") != "queued" || w.at("link").s("socket") != socket { continue; }
+        if let Some(reason) = crate::expiry::reason(&w) {
+            let _ = update(w.s("id"), |t| { if t.s("stage") == "queued" { crate::expiry::park(t, &reason); Ok(Change::Write) } else { Ok(Change::Keep) } });
+        } else { let _ = crate::attempts::fan_out::fan_out(w.s("id")); }
+    }
     let mut started = vec![];
     let _ = with_lock_wait("slots", 5000, || {
         let all = list(ListOpts { attempts: true, ..Default::default() });

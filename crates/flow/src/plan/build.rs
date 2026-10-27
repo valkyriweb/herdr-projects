@@ -95,6 +95,7 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
         })?;
         api.tab_close(&was.0); api.pane_close(&was.1);
     }
+    if let Some(reason) = crate::expiry::reason(&t) { g.set(|t| crate::expiry::park(t, &reason))?; return Ok(()); }
     let many = attempts_now(&t);
     if many.len() > 1 {
         if !planner && api.agent_get(t.at("link").s("pane"))?.is_some() && !api.pane_quit(t.at("link").s("pane"), 6000) { crate::fail!("The plan writer's program could not be ended to start the attempts. Close its terminal, then retry."); }
@@ -102,8 +103,13 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
         return Ok(());
     }
     let waiting: Vec<String> = take_text(id)?.iter().map(|m| m.t("text")).collect();
+    let mut expired = false;
     let r = (|| -> Res<()> {
-        if planner { start_agent(id, g, &std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n"), None)?; return Ok(()); }
+        if planner {
+            let status = start_agent(id, g, &std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n"), None)?;
+            if status == "expired" { expired = true; if !waiting.is_empty() { untake_text(id, waiting.len())?; } }
+            return Ok(());
+        }
         let a = api.agent_get(t.at("link").s("pane"))?;
         let words = std::iter::once(go_words(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n");
         if a.is_some() && !t.at("plan").b("mode") {
@@ -113,12 +119,14 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
         } else {
             // In its own plan mode, or in the read-only mount: neither ends by itself. Ended, and started again.
             if a.is_some() && !api.pane_quit(t.at("link").s("pane"), 6000) { crate::fail!("The agent's program could not be ended to leave its plan step. Close its terminal, then retry."); }
-            if resumable(&t) { start_agent(id, g, &flow::send::with_tail(&t, &words), Some(t.s("session")))?; }
-            else { start_agent(id, g, &std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n"), None)?; }
+            let status = if resumable(&t) { start_agent(id, g, &flow::send::with_tail(&t, &words), Some(t.s("session")))? }
+                else { start_agent(id, g, &std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n"), None)? };
+            if status == "expired" { expired = true; if !waiting.is_empty() { untake_text(id, waiting.len())?; } }
         }
         Ok(())
     })();
     if let Err(e) = r { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Err(e); }
+    if expired { return Ok(()); }
     let t = update_wait(id, 10000, |t| { let p = t.obj_mut("plan"); p.put("built", now()); p.put("locked", false); p.del("ignored"); t.del("kind"); Ok(Change::Write) })?;
     flow::sidebar::tell_sidebar(&t);
     Ok(())

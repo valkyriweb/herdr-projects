@@ -8,17 +8,20 @@ pub const HELP: &str = r#"herdr-projects: a work board for herdr
                                        where a default says it is)
   herdr-projects list [--archived] [--all] [--query TEXT] [--json]
   herdr-projects report <id> --state idle|working|blocked|done|error [--kind question|permission|auth] [--msg TEXT] [--title TEXT]
-                         [--progress 0-100] [--eta MINUTES]   (your own task, with --state working: how far, and minutes left)
+                         [--progress 0-100] [--eta MINUTES] [--expires UTC] [--stale-if 'load < threshold']
+                                      (your own task, with --state working: how far, and minutes left)
   herdr-projects describe <id> <text>          write or replace a task's description
   (a title is at most 60 characters: a longer one is shortened at a word, its full text kept in the description)
   (an <id> is repo/134; every repo has a short key, made from its name, and HSW-134 names the same task, in any
    letter case. Another key: herdr-projects set repo.key HSW --repo NAME; the old one still names its tasks)
-  herdr-projects delegate <id> [--after ID[,ID…]|--now] [--<setting> VALUE ...] [--research|--no-research]
-                                      any work setting, for this task only: --reviewer.agent claude --merge.by itself
+  herdr-projects delegate <id> [--after ID[,ID…]|--now] [--expires UTC] [--<setting> VALUE ...] [--research|--no-research]
+                                      any work setting, for this task only: --reviewer.agent claude --merge.by itself;
+                                      --expires applies to worker.instructions
                                       (a refused option changes nothing on the task)
                                       --after: start only once those tasks (of any repo here, or of another machine:
                                        vm-str:ELA-3) are done, by itself;
                                       --now: start a task that waits without waiting
+  Expired instructions or notes wait for you before the agent starts. Renew them with --expires, or clear them.
   herdr-projects after <id> [ID[,ID…] | --clear]   what a task waits for: shown, changed, or dropped (it starts then)
   herdr-projects tell <id> <text>              send a message to the task's agent
   herdr-projects stop <id>                     stop its agent
@@ -34,8 +37,8 @@ pub const HELP: &str = r#"herdr-projects: a work board for herdr
                                                 or when the board missed it finishing (its agent at rest, the row still "Finishing")
   herdr-projects details <id>                  failure details, review, next steps, and what it used against its limits
   herdr-projects pin|archive|restore|clear <id>
-  herdr-projects set <name> <value> [--repo NAME | --task ID | --automation NAME]
-                                      change a setting: for you, for your entry for one repo, for one task, or for an automation
+  herdr-projects set <name> <value> [--repo NAME | --task ID | --automation NAME] [--expires UTC]
+                                      change a setting; --expires applies to worker.instructions
   herdr-projects unset <name> [--repo NAME | --task ID]
                                       back to what it would be without that answer
   herdr-projects show [<id>] [--repo NAME]     every setting and the place it came from; without an id, your own

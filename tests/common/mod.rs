@@ -34,10 +34,12 @@ pub fn world_with(o: Opts) -> World {
     let base = std::env::temp_dir().join(format!("sw-test-{}-{}", std::process::id(), N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)));
     let _ = std::fs::remove_dir_all(&base);
     std::fs::create_dir_all(base.join("home")).unwrap();
+    let short_base = base.clone();
     let base = std::fs::canonicalize(&base).unwrap();
     let b = |p: &str| base.join(p).display().to_string();
     for k in ["HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_PLUGIN_ID", "HERDR_PLUGIN_CONTEXT_JSON", "HERDR_ENV", "HERDR_SESSION", "TMUX", "NO_COLOR", "HERDR_PROJECTS_DATA_DIR", "HERDR_PROJECTS_CONFIG_DIR", "HERDR_PROJECTS_REPORTS_DIR", "HERDR_PROJECTS_WEBUI", "HERDR_PROJECTS_PROGRESS", "HERDR_PROJECTS_SANDBOX", "HERDR_PROJECTS_RETRY_MS", "HERDR_PROJECTS_ENDED_MS", "HERDR_PROJECTS_QUIET_MS", "HERDR_PROJECTS_READY_MS", "HERDR_PROJECTS_SUBMIT_MS", "HERDR_PROJECTS_TICK_MS", "ELEVENLABS_API_KEY"] { unsafe { std::env::remove_var(k) } }
-    let socket = b("herdr.sock");
+    // Keep the socket's shorter TMPDIR spelling: canonicalizing /var adds /private on macOS and can exceed SUN_LEN.
+    let socket = short_base.join("herdr.sock").display().to_string();
     // herdr's socket is there (the fake answers for herdr itself): what looks for a running herdr finds one.
     let listen = std::os::unix::net::UnixListener::bind(&socket).unwrap();
     for (k, v) in [("HOME", b("home")), ("HERDR_PROJECTS_HOME", b("sw")), ("HERDR_SOCKET_PATH", socket.clone()), ("XDG_CONFIG_HOME", b("home/.config")), ("XDG_STATE_HOME", b("home/.state")),

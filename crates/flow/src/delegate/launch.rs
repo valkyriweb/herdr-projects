@@ -44,6 +44,13 @@ pub fn launch_extras(t: &Task, role: &str, kind: &str, round: i64, standing: &st
 /// Used by a first delegation and by restarting an exited agent. The pane must be at its shell prompt.
 pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) -> Res<&'static str> {
     let t = get(id).ok_or("the task is gone")?;
+    if !prompt.is_empty() {
+        if let Some(reason) = crate::expiry::reason(&t) {
+            let t = g.set(|t| crate::expiry::park(t, &reason))?;
+            flow::sidebar::tell_sidebar(&t);
+            return Ok("expired");
+        }
+    }
     let api = flow::task::h(&t);
     let kind = t.t("agent");
     // The worker's settings, read now, as it starts. A planner of its own runs on its own program and model.
@@ -86,6 +93,7 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
     let (session, version, plan_mode) = (resume.map(String::from).or(x.session.clone()), x.version.clone(), plan::plan_args(&t, &kind).is_some() || plan::sandbox::boxed(&t));
     let t = g.set(|t| {
         t.put("stage", "working"); t.put("armedAt", now()); t.put("expectedWake", Value::Null); t.put("turnOpen", true); t.put("turnBy", "start"); t.put("msg", "");
+        crate::expiry::set_note_expiry(t, None); crate::expiry::set_note_gate(t, None);
         t.obj_mut("link").put("agent", name.clone());
         if !(t.i("workAt") >= t.i("since") && t.has("workAt")) { t.put("workAt", now()); }
         t.put("startedAgentAt", now()); t.put("exitedAt", Value::Null);
