@@ -37,12 +37,13 @@ impl Rex {
         let base = if base.is_empty() { "HEAD" } else { base };
         let r = if exists { git(&root, &["worktree", "add", &ds, branch]) } else { git(&root, &["worktree", "add", "--no-track", "-b", branch, &ds, base]) };
         r.map_err(|e| run::err("worktree_create_failed", e))?;
-        registry::change(self.srv(), |r| r["made"][&ds] = json!(true))?; // made here: the board may remove it later
-        // No space for it: the worktree goes again (and a branch made for it), so a retry starts clean.
-        let mut made = match self.space_create(&ds, label, &crate::store::files::board_env(), linked(&ds, &root)) {
-            Ok(m) => m,
-            Err(e) => { let _ = git(&root, &["worktree", "remove", "--force", &ds]); if !exists { let _ = git(&root, &["branch", "-D", branch]); } return Err(e); }
+        // Recorded as made, then its space; if either fails, the worktree, its branch and the record all go, so a retry starts clean.
+        let undo = || {
+            let _ = git(&root, &["worktree", "remove", "--force", &ds]); if !exists { let _ = git(&root, &["branch", "-D", branch]); }
+            let _ = registry::change(self.srv(), |r| if let Some(m) = r["made"].as_object_mut() { m.remove(&ds); });
         };
+        let space = registry::change(self.srv(), |r| r["made"][&ds] = json!(true)).and_then(|_| self.space_create(&ds, label, &crate::store::files::board_env(), linked(&ds, &root)));
+        let mut made = match space { Ok(m) => m, Err(e) => { undo(); return Err(e); } };
         made["type"] = json!("worktree_created");
         made["worktree"] = json!({ "path": ds, "branch": branch, "open_workspace_id": made.at("workspace").at("workspace_id") });
         Ok(made)
