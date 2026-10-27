@@ -16,12 +16,8 @@ impl Rex {
     pub fn where_is(&self, block: &str) -> HRes<(String, String)> {
         let reg = registry::read(self.srv());
         let window = reg.at("blocks").at(block).t("window");
-        if let Some((_, s)) = registry::space_of_window(&reg, &window) { return Ok((s.t("session"), window)); }
-        for s in self.sessions()? {
-            let sid = s.t("session_id");
-            if let Some(w) = self.view(&sid).ok().as_ref().map(Self::windows_of).unwrap_or_default().into_iter().find(|w| w.2.iter().any(|b| b == block)) { return Ok((sid, w.0)); }
-        }
-        Err(run::err("pane_not_found", "Rex has no such block"))
+        // Only the board's own blocks: one in somebody else's session is never touched.
+        registry::space_of_window(&reg, &window).map(|(_, s)| (s.t("session"), window)).ok_or_else(|| run::err("pane_not_found", "no block of the board's has this id"))
     }
     /// The panes of one space, or of all of them, each with its agent as herdr would show it.
     pub fn blocks(&self, space: Option<&str>) -> HRes<Vec<Value>> {
@@ -62,6 +58,7 @@ impl Rex {
         Ok(self.pane_out(&block, &space, &window, &cwd, ""))
     }
     pub fn block_close(&self, id: &str) -> Option<Value> {
+        self.where_is(id).ok()?;
         run::rex(self.srv(), &args(&["block", "close", id]), "", 15000).ok()?;
         let _ = registry::change(self.srv(), |r| for k in ["blocks", "agents"] { if let Some(o) = r[k].as_object_mut() { o.remove(id); } });
         Some(json!({ "type": "ok" }))

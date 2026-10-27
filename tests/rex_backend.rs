@@ -163,6 +163,11 @@ fn a_worktree_is_gits_with_a_window_in_it_and_goes_with_its_space() {
     assert!(std::path::Path::new(&path).join(".git").exists(), "{made}");
     assert!(made.at("workspace").at("worktree").b("is_linked_worktree"));
     let ws = made.at("workspace").t("workspace_id");
+    let mine = w.base.join("mine");
+    common::git(&w.root, &["worktree", "add", "-q", "-b", "mine", &mine.display().to_string()]);
+    let opened = h.worktree_open("", &mine.display().to_string(), "").unwrap().at("workspace").t("workspace_id");
+    assert!(h.worktree_remove(&opened, true).is_err() && mine.exists(), "a worktree the board did not make is never removed");
+    assert!(h.pane_split("block:not-ours", "", "right", &[]).is_err(), "no block outside the board's own");
     assert_eq!(h.worktree_open("", &path, "").unwrap().b("already_open"), true);
     std::fs::write(std::path::Path::new(&path).join("new.txt"), "x").unwrap();
     assert_eq!(h.worktree_remove(&ws, false).unwrap_err().code, "worktree_remove_failed");

@@ -15,8 +15,8 @@ pub fn key(k: &str) -> String {
 impl Rex {
     /// The block an agent runs in: the target is its block, or its name.
     pub fn block_of(&self, target: &str) -> HRes<String> {
-        if target.starts_with("block:") { return Ok(target.into()); }
         let reg = registry::read(self.srv());
+        if reg.at("agents").at(target).is_object() || reg.at("blocks").at(target).is_object() { return Ok(target.into()); }
         reg.at("agents").as_object().and_then(|o| o.iter().find(|(_, a)| a.s("name") == target).map(|(b, _)| b.clone()))
             .ok_or_else(|| run::err("agent_not_found", format!("no agent named {target}")))
     }

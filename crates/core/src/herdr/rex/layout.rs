@@ -135,6 +135,7 @@ impl Rex {
                 (window, block)
             }
         };
+        registry::change(self.srv(), |r| r["blocks"][&block] = json!({ "window": window, "cwd": cwd }))?; // the board's own block: focus finds it
         self.window_focus(&window)?;
         Ok(block)
     }
