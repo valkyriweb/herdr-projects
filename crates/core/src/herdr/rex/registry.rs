@@ -38,6 +38,10 @@ pub fn change<T>(server: Option<&str>, f: impl FnOnce(&mut Value) -> T) -> HRes<
 pub fn not_made(socket: &str, path: &str) -> bool {
     crate::herdr::backend::is_rex(socket) && !read(crate::herdr::backend::rex_server(socket).as_deref()).at("made").at(path).as_bool().unwrap_or(false)
 }
+/// A removed worktree is no longer the board's: one made later at its path is not either.
+pub fn forget_made(socket: &str, path: &str) {
+    if crate::herdr::backend::is_rex(socket) { let _ = change(crate::herdr::backend::rex_server(socket).as_deref(), |r| if let Some(m) = r["made"].as_object_mut() { m.remove(path); }); }
+}
 /// The space a window belongs to, and that space.
 pub fn space_of_window(reg: &Value, window: &str) -> Option<(String, Value)> {
     reg.at("spaces").as_object()?.iter().find(|(_, s)| s.arr("windows").iter().any(|w| w.as_str() == Some(window))).map(|(k, v)| (k.clone(), v.clone()))

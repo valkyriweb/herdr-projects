@@ -164,6 +164,7 @@ pub fn cleanup_with(t: &Task, o: Opts) -> Cleanup {
             Ok(())
         })();
         if let Err(e) = removed { if git_out(&root, &["worktree", "remove", wt]).is_err() { return keep(format!("{wt_short} ({})", e.msg.lines().next().unwrap_or("could not be removed"))); } }
+        crate::herdr::rex::registry::forget_made(&sock, wt);
         let _ = git_out(&root, &["worktree", "prune"]);
         // git removed the checkout, herdr did not: its space is still there, or herdr does not say.
         if let (Some(api), true, true) = (&api, link.b("ownsWorkspace"), link.b("workspace")) {
