@@ -25,10 +25,8 @@ fn dest(root: &str, branch: &str) -> PathBuf {
     let repo = format!("{}-{}", Path::new(root).file_name().unwrap_or_default().to_string_lossy(), short(root));
     crate::store::files::data_dir().join("worktrees").join(repo).join(safe)
 }
-/// `made`: the board made it (under its own worktrees folder), so the board may remove it.
 fn linked(path: &str, root: &str) -> Value {
-    let made = Path::new(path).starts_with(crate::store::files::data_dir().join("worktrees"));
-    json!({ "checkout_path": path, "repo_root": root, "is_linked_worktree": true, "made": made })
+    json!({ "checkout_path": path, "repo_root": root, "is_linked_worktree": true })
 }
 
 impl Rex {
@@ -39,6 +37,7 @@ impl Rex {
         let base = if base.is_empty() { "HEAD" } else { base };
         let r = if exists { git(&root, &["worktree", "add", &ds, branch]) } else { git(&root, &["worktree", "add", "--no-track", "-b", branch, &ds, base]) };
         r.map_err(|e| run::err("worktree_create_failed", e))?;
+        registry::change(self.srv(), |r| r["made"][&ds] = json!(true))?; // made here: the board may remove it later
         // No space for it: the worktree goes again (and a branch made for it), so a retry starts clean.
         let mut made = match self.space_create(&ds, label, &crate::store::files::board_env(), linked(&ds, &root)) {
             Ok(m) => m,
@@ -60,8 +59,9 @@ impl Rex {
         Ok(made)
     }
     pub fn tree_remove(&self, space: &str, force: bool) -> HRes<Value> {
-        let s = registry::space(&registry::read(self.srv()), space).filter(|s| s.at("worktree").b("is_linked_worktree") && s.at("worktree").b("made"))
-            .ok_or_else(|| run::err("workspace_not_found", "not a worktree the board made"))?;
+        let reg = registry::read(self.srv());
+        let s = registry::space(&reg, space).filter(|s| s.at("worktree").b("is_linked_worktree")).ok_or_else(|| run::err("workspace_not_found", "not a linked worktree space"))?;
+        if !reg.at("made").at(s.at("worktree").s("checkout_path")).as_bool().unwrap_or(false) { return Err(run::err("worktree_not_owned", "worktree_not_owned: the board did not make this worktree, so it is not removed")); }
         let mut a = vec!["worktree", "remove"]; if force { a.push("--force"); }
         let path = s.t("cwd"); a.push(&path);
         // A worktree git would not remove keeps its space: refused before any window closes.
@@ -69,6 +69,7 @@ impl Rex {
         // Its windows first: none is left in a folder that is gone, and one Rex would not close keeps the worktree.
         self.space_close(space)?;
         git(s.at("worktree").s("repo_root"), &a).map_err(|e| run::err("worktree_remove_failed", e))?;
+        let _ = registry::change(self.srv(), |r| if let Some(m) = r["made"].as_object_mut() { m.remove(&path); });
         Ok(json!({ "type": "worktree_removed" }))
     }
 }

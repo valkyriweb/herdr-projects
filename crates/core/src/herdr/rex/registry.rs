@@ -16,8 +16,9 @@ fn file(server: Option<&str>) -> PathBuf {
     data_dir().join("rex").join(format!("{name}.json"))
 }
 fn lock_name(server: Option<&str>) -> String { format!("rex-{}", server.unwrap_or("local")) }
-const PARTS: [&str; 4] = ["projects", "spaces", "blocks", "agents"];
-fn blank() -> Value { json!({ "projects": {}, "spaces": {}, "blocks": {}, "agents": {} }) }
+/// `made`: the worktrees this board's `worktree_create` made, the only ones it may remove.
+const PARTS: [&str; 5] = ["projects", "spaces", "blocks", "agents", "made"];
+fn blank() -> Value { json!({ "projects": {}, "spaces": {}, "blocks": {}, "agents": {}, "made": {} }) }
 /// The registry as it is now.
 pub fn read(server: Option<&str>) -> Value {
     let mut v = read_json(&file(server)).filter(|v| v.is_object()).unwrap_or_else(blank);
