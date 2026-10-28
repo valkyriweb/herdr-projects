@@ -152,7 +152,8 @@ fn take_lock(name: &str, path: &Path, wait_ms: i64) -> Res<File> {
         let f = OpenOptions::new().create(true).append(true).open(path)?;
         let mut got = flock(&f, false);
         while !got && now() < until && same_file(&f, path) {
-            std::thread::sleep(std::time::Duration::from_millis(15));
+            // Let tests replace the path on a deterministic clock tick; normal waits still use real time.
+            crate::clock::pause(15);
             got = flock(&f, false);
         }
         if !got {

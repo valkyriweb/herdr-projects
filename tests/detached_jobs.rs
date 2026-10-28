@@ -2,12 +2,14 @@
 //! the long-lived keeper or board that started it until that ends, and its marker reads as gone (#212).
 use crate::common;
 use common::*;
+use std::process::Command;
 use std::time::{Duration, Instant};
 
-/// A process's state letter in /proc (`Z`: a zombie, ended and nobody waited for it), None once it is gone.
+/// A process's state letter from ps (`Z`: a zombie, ended and nobody waited for it), None once it is gone.
 fn state(pid: u32) -> Option<char> {
-    let s = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    s[s.rfind(')')? + 2..].chars().next()
+    let output = Command::new("ps").args(["-p", &pid.to_string(), "-o", "stat="]).output().ok()?;
+    if !output.status.success() { return None; }
+    String::from_utf8_lossy(&output.stdout).trim().chars().next()
 }
 fn until(done: impl Fn() -> bool) -> bool { let end = Instant::now() + Duration::from_secs(20); while Instant::now() < end { if done() { return true; } std::thread::sleep(Duration::from_millis(10)); } done() }
 
