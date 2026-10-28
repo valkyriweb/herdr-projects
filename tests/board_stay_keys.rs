@@ -47,7 +47,7 @@ fn herdr_socket(path: &std::path::Path, shows: Value, tabs: &'static [&'static s
 }
 /// How many times the board watching `tab` was told to close, once herdr's socket has said all it says.
 fn closes(w: &World, n: usize, tab: &str, shows: Value, tabs: &'static [&'static str]) -> (usize, Vec<Value>) {
-    let path = w.base.join(format!("events-{n}.sock"));
+    let path = std::path::Path::new(&w.socket).parent().unwrap().join(format!("events-{n}.sock"));
     let server = herdr_socket(&path, shows, tabs);
     let (tx, rx) = std::sync::mpsc::channel::<()>();
     let tx = std::sync::Mutex::new(tx);
@@ -72,7 +72,7 @@ fn the_popup_is_never_left_behind_its_board_closes_the_moment_herdr_shows_anothe
     assert_eq!(closes(&w, 3, "w9:t1", json!({ "tab": { "tab_id": "w9:t1", "focused": true } }), &[]).0, 0, "its tab shows: it stays");
     assert_eq!(closes(&w, 4, "w9:t1", Value::Null, &["w9:t1"]).0, 0, "herdr did not say: it stays, and the next tab that shows closes it");
     // A board that was not told its tab watches nothing: nothing is asked of herdr.
-    let path = w.base.join("events-5.sock"); let l = std::os::unix::net::UnixListener::bind(&path).unwrap(); l.set_nonblocking(true).unwrap();
+    let path = std::path::Path::new(&w.socket).parent().unwrap().join("events-5.sock"); let l = std::os::unix::net::UnixListener::bind(&path).unwrap(); l.set_nonblocking(true).unwrap();
     sw::board::run::start::watch_tab(Some(path.display().to_string()), "", || panic!("never"));
     assert!(l.accept().is_err());
 }
