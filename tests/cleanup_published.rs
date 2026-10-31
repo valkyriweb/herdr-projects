@@ -19,6 +19,11 @@ fn origin_ref(w: &World, r: &str, oid: Option<&str>) {
     let o = w.base.join("origin.git").display().to_string();
     match oid { Some(oid) => git(&w.base, &["--git-dir", &o, "update-ref", r, oid]), None => git(&w.base, &["--git-dir", &o, "update-ref", "-d", r]) };
 }
+/// A commit made only at the fake origin, not in the checkout's object store.
+fn origin_commit(w: &World, tree: &str, parent: &str, message: &str) -> String {
+    let bare = w.base.join("origin.git").display().to_string();
+    git(&w.base, &["--git-dir", &bare, "commit-tree", tree, "-p", parent, "-m", message])
+}
 /// One housekeeping pass, as the keeper or any hook runs it, and the clean-ups it starts for this task.
 fn pass(w: &World, id: &str) -> usize {
     let _ = std::fs::remove_dir_all(sw::store::files::data_dir().join("stamps"));
@@ -51,6 +56,62 @@ fn a_task_merged_through_its_pull_request_is_cleaned_up_as_github_keeps_the_pull
     assert_eq!(at_origin(&w, &branch), "", "the branch there went with the merge");
     assert!(c.b("cleaned") && !c.b("kept") && !c.b("tidy"), "{}", kept(&c));
     assert!(!Path::new(t.s("worktree")).exists() && !has_branch(&w, &t) && !open(&w, &c));
+}
+
+#[test]
+fn a_squash_merge_published_on_remote_main_allows_cleanup_without_the_original_head_refs() {
+    let w = pr_world();
+    let id = to_approval(&w, "Squashed on GitHub");
+    let t = task(&id);
+    let head = t.t("prHead");
+    let tree = git(&w.root, &["rev-parse", &format!("{head}^{{tree}}")]);
+    let base = git(&w.root, &["rev-parse", "main"]);
+    let merged = origin_commit(&w, &tree, &base, "squashed task");
+    let successor = origin_commit(&w, &tree, &merged, "subsequent main commit");
+    origin_ref(&w, "refs/heads/main", Some(&successor));
+    origin_ref(&w, &format!("refs/heads/{}", t.s("branch")), None);
+    assert_eq!(at_origin(&w, "refs/pull/7/head"), "");
+    let bare = w.base.join("origin.git").display().to_string();
+    assert!(common::worktrees::git(&w.base, &["--git-dir", &bare, "merge-base", "--is-ancestor", &head, &successor]).is_err(), "a squash does not preserve the task's ancestry");
+    w.gh_says(json!({ "view": { "state": "MERGED", "headRefOid": head, "mergeCommit": { "oid": merged } } }));
+
+    poll_prs();
+
+    let c = task(&id);
+    assert_eq!(c.s("stage"), "done");
+    assert_eq!(c.s("mergeCommit"), merged);
+    assert!(c.b("cleaned") && !c.b("kept") && !c.b("tidy"), "{}", kept(&c));
+    assert!(!Path::new(t.s("worktree")).exists() && !has_branch(&w, &t) && !open(&w, &c));
+}
+
+#[test]
+fn a_remote_only_successor_counts_as_publication_only_when_it_descends_from_the_task() {
+    for descendant in [false, true] {
+        let w = pr_world();
+        let id = to_approval(&w, "A later remote commit");
+        let t = task(&id);
+        let head = t.t("prHead");
+        let tree = git(&w.root, &["rev-parse", &format!("{head}^{{tree}}")]);
+        let base = git(&w.root, &["rev-parse", "main"]);
+        let parent = if descendant { head.as_str() } else { base.as_str() };
+        let successor = origin_commit(&w, &tree, parent, "remote-only successor");
+        origin_ref(&w, &format!("refs/heads/{}", t.s("branch")), Some(&successor));
+        assert!(common::worktrees::git(&w.root, &["cat-file", "-e", &format!("{successor}^{{commit}}")]).is_err(), "the successor must be unknown locally");
+        assert_eq!(at_origin(&w, "refs/pull/7/head"), "");
+        w.gh_says(json!({ "view": { "state": "MERGED", "headRefOid": head } }));
+
+        poll_prs();
+
+        let c = task(&id);
+        assert_eq!(c.s("stage"), "done");
+        if descendant {
+            assert!(c.b("cleaned") && !c.b("kept") && !c.b("tidy"), "{}", kept(&c));
+            assert!(!Path::new(t.s("worktree")).exists() && !has_branch(&w, &t) && !open(&w, &c));
+        } else {
+            assert!(kept(&c).contains("(unpublished commits on "), "{}", kept(&c));
+            assert!(c.b("tidy") && Path::new(t.s("worktree")).exists() && has_branch(&w, &t) && open(&w, &c), "unrelated remote history must not remove the work");
+        }
+    }
 }
 
 #[test]
