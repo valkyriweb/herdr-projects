@@ -12,10 +12,15 @@ use crate::store::repos::folder_of;
 use crate::store::settings_list::{needs_repo, Entry, Kind, Ty, SETTINGS};
 use crate::store::tasks::Task;
 
-pub struct Row { pub name: String, pub kind: Kind, pub value: Value, pub from: String, pub place: String, pub own: bool, pub note: String, pub later: String }
+pub struct Row { pub name: String, pub kind: Kind, pub value: Value, pub from: String, pub place: String, pub own: bool, pub note: String, pub later: String, pub expiries: Vec<String> }
 impl Row {
     /// As the command line's --json and another machine read it.
-    pub fn json(&self) -> Value { let mut o = json!({ "name": self.name, "kind": self.kind.name(), "value": self.value, "from": self.from, "place": self.place, "own": self.own, "note": self.note }); if !self.later.is_empty() { o.as_object_mut().unwrap().put("later", self.later.as_str()); } o }
+    pub fn json(&self) -> Value {
+        let mut o = json!({ "name": self.name, "kind": self.kind.name(), "value": self.value, "from": self.from, "place": self.place, "own": self.own, "note": self.note });
+        if !self.later.is_empty() { o.as_object_mut().unwrap().put("later", self.later.as_str()); }
+        if !self.expiries.is_empty() { o.as_object_mut().unwrap().put("expires", json!(self.expiries)); }
+        o
+    }
 }
 
 /// Why a value does nothing where it stands: the first reason that says something is the note.
@@ -59,7 +64,11 @@ pub fn rows(scope: &Scope) -> Vec<Row> {
         let n = note(s, &r, task, scope, at.no_repo, &get);
         let own_place = if task.is_some() { "task" } else if !scope.repo.is_empty() { "repo" } else { "you" };
         let later = match task { Some(t) if s.name == RESEARCH => later_words(t, &r.value), _ => String::new() };
-        Some(Row { name: s.name.clone(), kind: s.kind, own: r.place == own_place, value: r.value.clone(), from: r.from.clone(), place: r.place.clone(), note: n, later })
+        let mut expiries = if s.name == "worker.instructions" {
+            r.expiries.iter().flat_map(|v| v.as_array().cloned().unwrap_or_else(|| vec![v.clone()])).map(|v| text(&v)).collect::<Vec<_>>()
+        } else { vec![] };
+        expiries.dedup();
+        Some(Row { name: s.name.clone(), kind: s.kind, own: r.place == own_place, value: r.value.clone(), from: r.from.clone(), place: r.place.clone(), note: n, later, expiries })
     }).collect()
 }
 /// What is wrong in the files, one sentence each. The board keeps running: each such setting falls to the next place.
@@ -92,7 +101,7 @@ pub fn show_text(scope: &Scope) -> String {
         None if !scope.repo.is_empty() => format!("Your entry for {} (* = said there)", scope.repo), None => "Your settings (* = changed by you)".into() };
     let mut lines: Vec<String> = list.iter().map(|r| {
         let v: String = say(&r.value).split('\n').map(|l| l.trim()).collect::<Vec<_>>().join(" / ");
-        format!("{} {:<wide$}  {:<val$}  {}{}", if r.own { "*" } else { " " }, r.name, v, if r.note.is_empty() { &r.from } else { &r.note }, if r.later.is_empty() { String::new() } else { format!(" · {}", r.later) })
+        format!("{} {:<wide$}  {:<val$}  {}{}{}", if r.own { "*" } else { " " }, r.name, v, if r.note.is_empty() { &r.from } else { &r.note }, if r.later.is_empty() { String::new() } else { format!(" · {}", r.later) }, if r.expiries.is_empty() { String::new() } else { format!(" · expires {}", r.expiries.join(", ")) })
     }).collect();
     let bad = problems(task);
     if let Some(t) = task.filter(|t| !t.arr("attempts").is_empty()) {

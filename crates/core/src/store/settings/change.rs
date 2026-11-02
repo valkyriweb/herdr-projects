@@ -105,13 +105,33 @@ fn key_after(name: &str, scope: &Scope) {
     repo_keys();
 }
 fn key_before(name: &str) { if name == "repo.key" { repo_keys(); } }
-/// set: the setting as the scope now reads it.
+fn save_instruction_expiry(scope: &Scope, expiry: Option<&Value>) -> Res<()> {
+    let Some(task) = scope.task else { return crate::store::settings::places::write_yours_expiry("worker.instructions", expiry, &scope.repo); };
+    let id = task.s("id").to_string();
+    let expiry = expiry.cloned();
+    update(&id, move |t| {
+        let map = t.obj_mut("settingsExpires");
+        match expiry { Some(v) => { map.insert("worker.instructions".into(), v); } None => { map.shift_remove("worker.instructions"); } }
+        if map.is_empty() { t.del("settingsExpires"); }
+        Ok(Change::Write)
+    })?;
+    Ok(())
+}
+/// set: the setting as the scope now reads it. A new worker instruction value renews the scope unless an expiry is supplied.
 pub fn set_value(name: &str, value: &Value, scope: &Scope) -> Res<Found> {
     let values = checked(&[(name.to_string(), value.clone())], scope)?;
     key_before(name);
     let saved = save(&values.into_iter().map(|(k, v)| (k, Some(v))).collect::<Vec<_>>(), scope)?;
+    if name == "worker.instructions" { save_instruction_expiry(scope, None)?; }
     key_after(name, scope);
     read_back(name, scope, saved)
+}
+/// set with the optional expiry attached to worker.instructions at the same scope.
+pub fn set_value_expiring(name: &str, value: &Value, scope: &Scope, expiry: Option<&Value>) -> Res<Found> {
+    if name != "worker.instructions" && expiry.is_some() { return refuse("--expires applies only to worker.instructions on set.".into()); }
+    let found = set_value(name, value, scope)?;
+    if name == "worker.instructions" { save_instruction_expiry(scope, expiry)?; }
+    Ok(found)
 }
 /// Several settings of one task at once (delegate's options): all or none.
 pub fn set_many(pairs: &[(String, Value)], scope: &Scope) -> Res<Option<Task>> {
@@ -132,6 +152,7 @@ pub fn unset_value(name: &str, scope: &Scope) -> Res<Found> {
     }
     key_before(name);
     let saved = save(&[(name.to_string(), None)], scope)?;
+    if name == "worker.instructions" { save_instruction_expiry(scope, None)?; }
     key_after(name, scope);
     read_back(name, scope, saved)
 }

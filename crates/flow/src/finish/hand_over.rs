@@ -101,12 +101,24 @@ pub fn hand_over_to(id: &str, g: &mut Guard, why: &str, findings: &str, first: O
             t.obj_mut("fallbacks").del("worker");
         })?;
         let shown_from = if agent_of(&from).kind == k { from.clone() } else { agent_of(&from).kind };
-        if let Err(e) = start_agent(id, g, &handover_prompt(&t, &shown_from, why, findings), None) {
-            if is_aborted(&e) { return Err(e); }
-            // It could not be started: the task is the one before it's again, and the next on the list is asked.
-            skipped.push(format!("{next} could not be started ({})", one_line(&e.msg, 120)));
-            t = g.set(|t| { for (k, v) in before { t.insert(k, v); } })?;
-            continue;
+        if let Some(reason) = crate::expiry::reason(&t) {
+            g.set(|t| { for (k, v) in before { t.insert(k, v); } crate::expiry::park(t, &reason); })?;
+            return Ok(false);
+        }
+        match start_agent(id, g, &handover_prompt(&t, &shown_from, why, findings), None) {
+            Ok("expired") => {
+                let reason = crate::store::tasks::get(id).map(|t| t.s("staleCause").to_string()).unwrap_or_default();
+                if !reason.is_empty() { g.set(|t| { for (k, v) in before.clone() { t.insert(k, v); } crate::expiry::park(t, &reason); })?; }
+                return Ok(false);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                if is_aborted(&e) { return Err(e); }
+                // It could not be started: the task is the one before it's again, and the next on the list is asked.
+                skipped.push(format!("{next} could not be started ({})", one_line(&e.msg, 120)));
+                t = g.set(|t| { for (k, v) in before { t.insert(k, v); } })?;
+                continue;
+            }
         }
         // It is on the task. The row says so until the Watcher has a line of it, and herdr's sidebar names it.
         t = g.set(|t| { t.put("msg", handover_line(&entry)); t.put("since", now()); t.put("workAt", now()); })?;

@@ -6,7 +6,7 @@ pub fn skill_text(shim: &str) -> String {
     let agents = crate::agents::kinds::KIND_NAMES.join("|");
     format!(r#"---
 name: herdr-projects
-description: The human's work board in herdr. Use it when they ask to add, list, delegate, check or update a task on "the board", or to put an agent on something.
+description: "Manage the human’s herdr work board. Use when asked to add, list, delegate, check or update tasks, put an agent on work, look up task IDs (HO-1, LGH-5, repo/12), task state/stage and pane-to-task mappings, or drive or message a project coordinator (herdr-projects coordinator, coordinator tell)."
 ---
 
 # herdr-projects: the work board
@@ -48,6 +48,10 @@ Every command accepts `--json`. Below, `herdr-projects` stands for that path.
 - `herdr-projects show [<id>]`: every setting, its value and the place it came from (for one task, or the human's own).
   `herdr-projects set <name> <value>` changes one for the human, `--repo <name>` for one repo, `--task <id>` for one
   task; `herdr-projects unset <name>` (same options) puts it back. Only when the human asks.
+- Side effects: `delegate`, `tell`, `review`, `fix` and some `retry` paths start or resume execution. Clearing or satisfying `after` can start already-delegated queued work.
+  `finish` resumes the finish pipeline (checks, commit/push/PR/review as applicable); it is not a status-only action. `report --state done` marks done and can clean up the task’s space; it is not a request to run that pipeline.
+  `describe` replaces stored text; it does not send that text to the worker. A description edit is not evidence that a worker received it.
+  `review.when never` skips board review; `merge.by itself` permits automatic merge after its configured checks/review. Temporary settings should use `--task`, not `--repo`, so sibling tasks do not inherit them.
 - `herdr-projects tell <id> "<text>"`: send a message to a task's agent (on a task with no agent yet: starts one with it).
 - `herdr-projects stop <id>`: interrupt a task's agent.
 - `herdr-projects report <id> --state <idle|working|done> [--msg "<one line>"] [--progress <0-100>] [--eta <minutes left>]`: say where one of
@@ -79,6 +83,12 @@ Every command accepts `--json`. Below, `herdr-projects` stands for that path.
   its settings later: `set <name> <value> --automation <name>`. There is no webhook trigger. Only when the human asks.
 - `herdr-projects archive <id>` hides a task and keeps everything; `restore <id>` brings it back; `clear <id>` removes it
   (only when the human plainly asks).
+
+## Coordinating delegates
+
+Treat board stages and worker notes as hints. Just before reporting push, PR, merge or review state, re-read the relevant authority with `git ls-remote` or `gh pr view --json` (including reviews/checks as needed), and report the observation time. A board “reviewing” stage alone does not establish a completed review.
+
+Keep current delegate rules in the task description, not only in temporary packets or broadcasts. When policy changes, preserve the existing task requirements, update its description with what the new policy replaces, then `tell` the existing agent. Because `tell` can start execution, send it only within the user’s authorized scope. Routine lifecycle steps already authorized by current policy need no new permission block; actual access, secrets and consequential-action boundaries still apply.
 
 If you are an agent or a reviewer the board itself started on a task, your rules were given to you at the start, and
 they come first: do nothing to the board beyond your own task unless a human explicitly told you to. An explicit

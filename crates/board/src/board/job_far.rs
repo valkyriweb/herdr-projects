@@ -6,7 +6,7 @@ use crate::herdr::Herdr;
 use crate::json::*;
 use crate::remote::{ask, attach_command, carry::{carry, For}, why::unanswered, Machine};
 use crate::shown::ink::Ink;
-use crate::store::{inbox::{clear_dispatch, get_dispatch, new_dispatch, set_dispatch}, settings::{change::{set_value, unset_value}, lookup::{to_send, Scope}, show::rows, values::say}, settings_list::entry_of, tasks::{find, get}};
+use crate::store::{inbox::{clear_dispatch, get_dispatch, new_dispatch, set_dispatch}, settings::{change::{set_value, unset_value}, lookup::{to_send, to_send_expiries, Scope}, show::rows, values::say}, settings_list::entry_of, tasks::{find, get}};
 
 /// Words for another machine's Coordinator (`to`: "" its top-level one, else its machine or a repo's coordinator), as a
 /// row of this board until that machine has taken them. A file of this machine they name goes first (remote/carry.rs);
@@ -19,7 +19,8 @@ pub fn dispatch(m: Machine, text: String, delegate: bool, about: String, to: Str
         Err(e) => { if get_dispatch(&id).is_some() { set_dispatch(&id, obj(json!({ "state": "error", "msg": format!("{e} Nothing was sent.") }))); } return Done::default(); }
     };
     if get_dispatch(&id).is_none() { return Done::default(); } // stopped while its files went
-    let mut req = obj(json!({ "text": text, "delegate": delegate, "settings": to_send("", &crate::store::settings::places::yours()), "from": crate::remote::check::hostname() }));
+    let mine = crate::store::settings::places::yours();
+    let mut req = obj(json!({ "text": text, "delegate": delegate, "settings": to_send("", &mine), "settingsExpires": to_send_expiries("", &mine), "from": crate::remote::check::hostname() }));
     if !about.is_empty() { req.put("about", about); }
     if !to.is_empty() { req.put("to", to); }
     let answer = ask(&m, "dispatch", Some(&Value::Object(req)), 150000);
@@ -35,7 +36,11 @@ pub fn far(m: &Machine, host: &str, action: &str, req: Value, quiet: bool) -> Do
     let mut req = obj(req);
     req.put("action", action);
     // A task's work settings travel with whatever starts its agent: what this machine says for it is worked out here.
-    if ["delegate", "tell"].contains(&action) { let repo = req.t("id").split('/').next().unwrap_or("").to_string(); req.put("settings", to_send(&repo, &crate::store::settings::places::yours())); req.put("from", crate::remote::check::hostname()); }
+    if ["delegate", "tell"].contains(&action) {
+        let repo = req.t("id").split('/').next().unwrap_or("").to_string();
+        let mine = crate::store::settings::places::yours();
+        req.put("settings", to_send(&repo, &mine)); req.put("settingsExpires", to_send_expiries(&repo, &mine)); req.put("from", crate::remote::check::hostname());
+    }
     // Words for its agent take the files of this machine they name along first; one that cannot go stops them.
     if action == "tell" {
         match carry(m, &req.t("text"), &For::Task(req.t("id"))) { Ok(t) => req.put("text", t), Err(e) => return Done::fail(format!("{e} Nothing was sent.")) }

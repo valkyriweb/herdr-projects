@@ -13,6 +13,7 @@ impl Bench {
         let base = std::env::temp_dir().join(format!("sw-warm-start-{}-{name}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         std::fs::create_dir_all(base.join("repo/src")).unwrap();
+        let base = std::fs::canonicalize(base).unwrap();
         let b = Bench { base };
         b.git("repo", &["init", "-q", "-b", "main"]);
         b.write("repo", "src/a.rs", "a");

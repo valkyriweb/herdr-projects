@@ -47,7 +47,7 @@ pub fn read(o: &Value, place: &str, allowed: &[&str], why: &str) -> (Obj, Vec<Pr
 
 // ---- you, and your entry for each repo: one file ----------------------------------------------------------------------
 #[derive(Clone, Debug, Default)]
-pub struct Mine { pub you: Obj, pub repos: BTreeMap<String, Obj>, pub problems: Vec<Problem> }
+pub struct Mine { pub you: Obj, pub repos: BTreeMap<String, Obj>, pub you_expires: Obj, pub repo_expires: BTreeMap<String, Obj>, pub problems: Vec<Problem> }
 static LAST: Mutex<Option<(String, Arc<Mine>)>> = Mutex::new(None);
 /// Your settings. Asked for every setting that is looked up: the file is read again only when it changed on disk.
 pub fn yours() -> Arc<Mine> {
@@ -66,20 +66,25 @@ fn read_yours() -> Mine {
         Err(e) => (Value::Null, e.kind() != std::io::ErrorKind::NotFound),
     };
     let mut mine = raw.as_object().cloned().unwrap_or_default();
-    let repos = mine.shift_remove("repos").unwrap_or(Value::Null);
+    let you_expires = mine.shift_remove("_setting_expires").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+    let mut repos = mine.shift_remove("repos").unwrap_or(Value::Null);
     let not_repo: Vec<&str> = names().into_iter().filter(|n| entry_of(n).map(|e| e.kind != Kind::Repo).unwrap_or(false)).collect();
     let (you, mut problems) = read(&Value::Object(mine), "your settings", &not_repo, "is one repo's own: say it under \"repos\", in that repo's entry");
     if broken { problems.push(Problem { place: "your settings".into(), name: String::new(), why: "it is not valid JSON, so nothing in it counts".into() }); }
     let not_board: Vec<&str> = names().into_iter().filter(|n| entry_of(n).map(|e| e.kind != Kind::Board).unwrap_or(false)).collect();
     let mut entries = BTreeMap::new();
-    if let Some(map) = repos.as_object() {
-        for (repo, o) in map {
-            let (v, p) = read(o, &format!("your entry for {repo}"), &not_board, "is a board setting, yours only: say it outside \"repos\"");
+    let mut repo_expires = BTreeMap::new();
+    if let Some(map) = repos.as_object_mut() {
+        for (repo, raw) in map {
+            let mut o = raw.as_object().cloned().unwrap_or_default();
+            let expires = o.shift_remove("_setting_expires").and_then(|v| v.as_object().cloned()).unwrap_or_default();
+            let (v, p) = read(&Value::Object(o), &format!("your entry for {repo}"), &not_board, "is a board setting, yours only: say it outside \"repos\"");
             entries.insert(repo.clone(), v);
+            repo_expires.insert(repo.clone(), expires);
             problems.extend(p);
         }
     }
-    Mine { you, repos: entries, problems }
+    Mine { you, repos: entries, you_expires, repo_expires, problems }
 }
 /// Change one setting in your file: a value, or None to take it out. Everything else in the file stays as it is.
 pub fn write_yours(name: &str, value: Option<&Value>, repo: &str) -> crate::err::Res<()> {
@@ -99,6 +104,19 @@ pub fn write_yours(name: &str, value: Option<&Value>, repo: &str) -> crate::err:
             o.insert(parts[parts.len() - 1].to_string(), v.clone());
         }
     }
+    if !repo.is_empty() {
+        let empty = file.o("repos").and_then(|r| r.o(repo)).map(|r| r.is_empty()).unwrap_or(true);
+        if empty { if let Some(Value::Object(r)) = file.get_mut("repos") { r.shift_remove(repo); if r.is_empty() { file.shift_remove("repos"); } } }
+    }
+    write_json(&config_file(), &Value::Object(file))
+}
+/// Change an instruction expiry beside the settings it applies to, without exposing it as a setting.
+pub fn write_yours_expiry(name: &str, expiry: Option<&Value>, repo: &str) -> crate::err::Res<()> {
+    let mut file = read_obj(&config_file()).unwrap_or_default();
+    let at: &mut Obj = if repo.is_empty() { &mut file } else { file.obj_mut("repos").obj_mut(repo) };
+    let expires = at.obj_mut("_setting_expires");
+    match expiry { Some(v) => { expires.insert(name.to_string(), v.clone()); } None => { expires.shift_remove(name); } }
+    if expires.is_empty() { at.shift_remove("_setting_expires"); }
     if !repo.is_empty() {
         let empty = file.o("repos").and_then(|r| r.o(repo)).map(|r| r.is_empty()).unwrap_or(true);
         if empty { if let Some(Value::Object(r)) = file.get_mut("repos") { r.shift_remove(repo); if r.is_empty() { file.shift_remove("repos"); } } }

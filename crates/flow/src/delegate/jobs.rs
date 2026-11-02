@@ -66,6 +66,7 @@ pub fn delegate_job(id: &str) {
     release(id, false);
 }
 fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
+    if let Some(reason) = crate::expiry::reason(&t) { g.set(|t| crate::expiry::park(t, &reason))?; return Ok(()); }
     let api = flow::task::h(&t);
     let root = folder_of(t.s("id"));
     let label = flow::sidebar::space_label(&t);
@@ -153,11 +154,16 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
     t = g.set(|t| { if let Err(e) = r::starts_as(t) { refusal = Some(e); } })?;
     if let Some(e) = refusal { return Err(e); }
     if !t.b("startedAgentAt") && !t.at("plan").is_object() { t = plan::build::begin(g, t, &api)?; } // the work starts with a plan, where `plan.approve` says so
+    if let Some(reason) = crate::expiry::reason(&t) { g.set(|t| crate::expiry::park(t, &reason))?; return Ok(()); }
     let waiting: Vec<String> = take_text(id)?.iter().map(|m| m.t("text")).collect();
     let turned = if t.b("startedAgentAt") { turned_words(&t) } else { String::new() };
     let (resume, prompt) = if t.b("startedAgentAt") { again_prompt(&t, &[turned].into_iter().filter(|s| !s.is_empty()).chain(waiting.iter().cloned()).collect::<Vec<_>>()) }
         else { (None, std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n")) };
-    if let Err(e) = start_agent(id, g, &prompt, resume.as_deref()) { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Err(e); }
+    match start_agent(id, g, &prompt, resume.as_deref()) {
+        Ok("expired") => { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Ok(()); }
+        Ok(_) => {}
+        Err(e) => { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Err(e); }
+    }
     if t.b("researchTurned") { g.set(|t| t.del("researchTurned"))?; }
     Ok(())
 }
@@ -173,6 +179,7 @@ pub fn restart_job(id: &str) {
     release(id, false);
 }
 fn restart_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
+    if let Some(reason) = crate::expiry::reason(&t) { g.set(|t| crate::expiry::park(t, &reason))?; return Ok(()); }
     let api = flow::task::h(&t);
     let root = folder_of(t.s("id"));
     let mut pane = if t.at("link").b("pane") { api.pane_get(t.at("link").s("pane")) } else { None };
@@ -202,7 +209,12 @@ fn restart_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
     if t.b("researchOpen") { let mut refusal = None; t = g.set(|t| { if let Err(e) = r::starts_as(t) { refusal = Some(e); } })?; if let Some(e) = refusal { return Err(e); } }
     let waiting: Vec<String> = take_text(id)?.iter().map(|m| m.t("text")).collect();
     let (resume, prompt) = if t.b("unsent") { unsent_prompt(&t, &waiting) } else { again_prompt(&t, &waiting) };
-    if let Err(e) = start_agent(id, g, &prompt, resume.as_deref()) { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Err(e); }
+    if let Some(reason) = crate::expiry::reason(&t) { g.set(|t| crate::expiry::park(t, &reason))?; return Ok(()); }
+    match start_agent(id, g, &prompt, resume.as_deref()) {
+        Ok("expired") => { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Ok(()); }
+        Ok(_) => {}
+        Err(e) => { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Err(e); }
+    }
     Ok(())
 }
 /// Reopen a task's space when it was closed (archive closes it) and, with `restart`, start its exited agent again in
@@ -225,6 +237,7 @@ pub fn reopen(id: &str, restart: bool) -> Res<(Value, bool, Task)> {
     };
     let mut has_agent = api.agent_get(pane.s("pane_id"))?.is_some();
     if !has_agent && restart && resumable(&t) && !marker_alive(t.at("runner")) {
+        if let Some(reason) = crate::expiry::reason(&t) { t = update_wait(t.s("id"), 10000, |t| { crate::expiry::park(t, &reason); Ok(Change::Write) })?; return Ok((pane, false, t)); }
         let (stage, armed) = (t.at("stage").clone(), t.at("armedAt").clone());
         let mut g = Guard::free(t.s("id"));
         if start_agent(t.s("id"), &mut g, "", Some(t.s("session"))).is_ok() { has_agent = true; }

@@ -90,6 +90,10 @@ pub fn send_error(id: &str) -> Res<Said> {
     let cur = find(id)?;
     assert_unarchived(&cur)?;
     let cid = cur.t("id");
+    if let Some(reason) = crate::expiry::reason(&cur).filter(|_| can_send_error(&cur) || stopped_at_limit(&cur)) {
+        let parked = update(&cid, |t| { crate::expiry::park(t, &reason); Ok(Change::Write) })?;
+        return Ok(say(parked, format!("{cid}: {}", crate::expiry::waiting(&reason))));
+    }
     if stopped_at_limit(&cur) { return carry_on(&cid, false); }
     if cur.s("stage") == "failed" && cur.at("failure").s("stage") == "send" { return retry(&cid); }
     if cur.s("stage") == "nosummary" || (cur.s("stage") == "failed" && cur.at("failure").b("auth") && cur.at("failure").s("stage") == "agent") {
@@ -246,6 +250,9 @@ pub fn details(id: &str) -> Res<Value> {
     let plan = if t.at("plan").is_object() { let mut p = t.o("plan").cloned().unwrap_or_default(); p.del("home"); p.put("text", crate::plan::read_plan(&t)); Value::Object(p) } else { Value::Null };
     let mut out = obj(json!({
         "task": { "id": t.at("id"), "title": t.at("title"), "stage": t.at("stage"), "msg": t.at("msg"), "description": t.at("description") },
+        "stale": crate::expiry::reason(&t),
+        "noteExpires": t.at("noteExpires"),
+        "noteGate": crate::expiry::note_gate_status(&t),
         "failure": failure_of(&t),
         "review": current_review(&t).cloned(),
         "reviews": review_history(&t),

@@ -28,15 +28,15 @@ fn repo_name_of(t: &Task) -> String { let r = t.s("repo"); if !r.is_empty() { r.
 pub fn in_repo(t: &Task) -> bool { is_repo(&folder_of(t.s("id"))) }
 
 /// One place a setting can be said in, nearest first.
-pub struct Place { pub place: &'static str, pub from: String, values: OnceCell<Obj>, load: Option<Box<dyn Fn() -> Obj>> }
+pub struct Place { pub place: &'static str, pub from: String, pub expiries: Obj, values: OnceCell<Obj>, load: Option<Box<dyn Fn() -> Obj>> }
 impl Place {
-    fn now(place: &'static str, from: impl Into<String>, values: Obj) -> Place { let c = OnceCell::new(); let _ = c.set(values); Place { place, from: from.into(), values: c, load: None } }
-    fn later(place: &'static str, from: impl Into<String>, load: impl Fn() -> Obj + 'static) -> Place { Place { place, from: from.into(), values: OnceCell::new(), load: Some(Box::new(load)) } }
+    fn now(place: &'static str, from: impl Into<String>, values: Obj, expiries: Obj) -> Place { let c = OnceCell::new(); let _ = c.set(values); Place { place, from: from.into(), expiries, values: c, load: None } }
+    fn later(place: &'static str, from: impl Into<String>, load: impl Fn() -> Obj + 'static) -> Place { Place { place, from: from.into(), expiries: Obj::new(), values: OnceCell::new(), load: Some(Box::new(load)) } }
     /// What this place says: read only when a setting gets that far down.
     pub fn values(&self) -> &Obj { self.values.get_or_init(|| self.load.as_ref().map(|f| f()).unwrap_or_default()) }
 }
 pub struct Places { pub work: Vec<Place>, pub board: Vec<Place>, pub repo: Vec<Place>, pub no_repo: bool, pub problems: Vec<Problem> }
-fn builtin() -> Place { Place::now("builtin", "built in", SETTINGS.iter().map(|s| (s.name.clone(), s.builtin.clone())).collect()) }
+fn builtin() -> Place { Place::now("builtin", "built in", SETTINGS.iter().map(|s| (s.name.clone(), s.builtin.clone())).collect(), Obj::new()) }
 
 /// The places that count for a scope, worked out once for all the settings asked of it.
 pub fn places_of(scope: &Scope, mine: &Mine) -> Places {
@@ -54,15 +54,20 @@ pub fn places_of(scope: &Scope, mine: &Mine) -> Places {
             for (k, v) in t.o("settings").cloned().unwrap_or_default() { s.insert(k, v); }
             Value::Object(s)
         } else { t.at("settings").clone() };
-        work.push(Place::now("task", "this task", held(&said, "this task")));
+        let expires = if t.b("attemptOf") {
+            let mut e = read_obj(&dir_of(t.s("attemptOf")).join("task.json")).and_then(|p| p.o("settingsExpires").cloned()).unwrap_or_default();
+            for (k, v) in t.o("settingsExpires").cloned().unwrap_or_default() { e.insert(k, v); }
+            e
+        } else { t.o("settingsExpires").cloned().unwrap_or_default() };
+        work.push(Place::now("task", "this task", held(&said, "this task"), expires));
     }
     // Carried with the task from another machine: that machine's "you" and its entry for the repo, already worked out.
     if let Some(c) = task.filter(|t| t.b("carried")).map(|t| t.at("carried")) {
         let from = if c.s("from").is_empty() { "another machine".to_string() } else { c.s("from").to_string() };
-        work.push(Place::now("carried", format!("sent from {from}"), held(c.at("settings"), "sent with this task")));
+        work.push(Place::now("carried", format!("sent from {from}"), held(c.at("settings"), "sent with this task"), c.o("settingsExpires").cloned().unwrap_or_default()));
     } else {
-        if !name.is_empty() && repo_places { if let Some(r) = mine.repos.get(&name) { work.push(Place::now("repo", format!("your entry for {name}"), r.clone())); } }
-        work.push(Place::now("you", "you", mine.you.clone()));
+        if !name.is_empty() && repo_places { if let Some(r) = mine.repos.get(&name) { work.push(Place::now("repo", format!("your entry for {name}"), r.clone(), mine.repo_expires.get(&name).cloned().unwrap_or_default())); } }
+        work.push(Place::now("you", "you", mine.you.clone(), mine.you_expires.clone()));
     }
     if let (Some(t), true) = (task, repo_places) {
         let t = t.clone();
@@ -70,20 +75,20 @@ pub fn places_of(scope: &Scope, mine: &Mine) -> Places {
     }
     work.push(builtin());
     let mut own = vec![];
-    if !name.is_empty() { if let Some(r) = mine.repos.get(&name) { own.push(Place::now("repo", format!("your entry for {name}"), r.clone())); } }
+    if !name.is_empty() { if let Some(r) = mine.repos.get(&name) { own.push(Place::now("repo", format!("your entry for {name}"), r.clone(), mine.repo_expires.get(&name).cloned().unwrap_or_default())); } }
     if !name.is_empty() { if let Some(root) = known_repos().get(&name) { let root = PathBuf::from(text(root)); own.push(Place::later("file", "the repo's file", move || repo_file(&root, None).0)); } }
     own.push(builtin());
-    Places { work, board: vec![Place::now("you", "you", mine.you.clone()), builtin()], repo: own, no_repo: task.is_some() && !repo_places, problems }
+    Places { work, board: vec![Place::now("you", "you", mine.you.clone(), Obj::new()), builtin()], repo: own, no_repo: task.is_some() && !repo_places, problems }
 }
 
 #[derive(Clone, Debug)]
-pub struct Found { pub name: String, pub value: Value, pub place: String, pub from: String, pub applies: bool, pub parts: Vec<(String, Value)>, pub skipped: Vec<String> }
+pub struct Found { pub name: String, pub value: Value, pub place: String, pub from: String, pub applies: bool, pub parts: Vec<(String, Value)>, pub expiries: Vec<Value>, pub skipped: Vec<String> }
 
 /// A setting's value for a scope, with the place it came from. Instructions add up, broadest first; everything else
 /// is the nearest answer.
 pub fn lookup_at(name: &str, scope: &Scope, at: &Places) -> Res<Found> {
     let entry = known(name)?;
-    if at.no_repo && needs_repo(name) { return Ok(Found { name: name.into(), value: entry.builtin.clone(), place: "builtin".into(), from: "built in".into(), applies: false, parts: vec![], skipped: vec![] }); }
+    if at.no_repo && needs_repo(name) { return Ok(Found { name: name.into(), value: entry.builtin.clone(), place: "builtin".into(), from: "built in".into(), applies: false, parts: vec![], expiries: vec![], skipped: vec![] }); }
     let list = match entry.kind { Kind::Work => &at.work, Kind::Board => &at.board, Kind::Repo => &at.repo };
     let mut said: Vec<&Place> = list.iter().filter(|p| p.values().contains_key(name)).collect();
     // An effort and an access are right or wrong for one program: an answer that does not fit the program the role has
@@ -107,10 +112,16 @@ pub fn lookup_at(name: &str, scope: &Scope, at: &Places) -> Res<Found> {
         let near = said[0];
         let value = if parts.is_empty() { json!(NONE) } else { json!(parts.iter().map(|p| text(&p.values()[name])).collect::<Vec<_>>().join("\n\n")) };
         let from = if parts.len() > 1 { parts.iter().map(|p| p.from.clone()).collect::<Vec<_>>().join(" + ") } else { parts.first().copied().unwrap_or(near).from.clone() };
-        return Ok(Found { name: name.into(), value, place: near.place.into(), from, applies: true, parts: parts.iter().map(|p| (p.from.clone(), p.values()[name].clone())).collect(), skipped: vec![] });
+        let mut expiries = parts.iter().filter_map(|p| p.expiries.get(name).cloned()).collect::<Vec<_>>();
+        if scope.task.is_some() {
+            if let Some(task) = at.work.iter().find(|p| p.place == "task").filter(|p| !p.values().contains_key(name)) {
+                if let Some(expiry) = task.expiries.get(name) { expiries.push(expiry.clone()); }
+            }
+        }
+        return Ok(Found { name: name.into(), value, place: near.place.into(), from, applies: true, parts: parts.iter().map(|p| (p.from.clone(), p.values()[name].clone())).collect(), expiries, skipped: vec![] });
     }
     let p = said[0];
-    Ok(Found { name: name.into(), value: p.values()[name].clone(), place: p.place.into(), from: p.from.clone(), applies: true, parts: vec![], skipped })
+    Ok(Found { name: name.into(), value: p.values()[name].clone(), place: p.place.into(), from: p.from.clone(), applies: true, parts: vec![], expiries: p.expiries.get(name).cloned().into_iter().collect(), skipped })
 }
 pub fn lookup(name: &str, scope: &Scope, mine: &Mine) -> Res<Found> { lookup_at(name, scope, &places_of(scope, mine)) }
 /// A setting's value for one task (or for you, with none).
@@ -128,6 +139,14 @@ pub fn work(task: Option<&Task>) -> Obj {
     work_names().into_iter().filter_map(|n| lookup_at(n, &scope, &at).ok().map(|f| (n.to_string(), f.value))).collect()
 }
 /// What only the places above the repo's file say, for a repo: what travels with a task to another machine.
+pub fn to_send_expiries(repo: &str, mine: &Arc<Mine>) -> Obj {
+    let scope = if repo.is_empty() { Scope::you() } else { Scope::repo(repo) };
+    let mut out = Obj::new();
+    if let Ok(found) = lookup("worker.instructions", &scope, mine) {
+        if !found.expiries.is_empty() { out.insert("worker.instructions".into(), json!(found.expiries)); }
+    }
+    out
+}
 pub fn to_send(repo: &str, mine: &Arc<Mine>) -> Obj {
     let mut out = Obj::new();
     for n in work_names() {
