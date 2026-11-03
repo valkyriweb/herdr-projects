@@ -34,7 +34,7 @@ pub fn launch_extras(t: &Task, role: &str, kind: &str, round: i64, standing: &st
     set_token(t.s("id"), role, &token, round)?;
     let mut hook = None;
     if installed::hook_usable(kind) {
-        let h = adapter::Hook { shim: flow::send::shim().display().to_string(), id: t.t("id"), role: role.into(), token, round, dir: dir_of(t.s("id")), plan: role == "agent" && plan::plan_args(t, kind).is_some() };
+        let h = adapter::Hook { shim: flow::send::shim().display().to_string(), id: t.t("id"), role: role.into(), token, round, dir: dir_of(t.s("id")) };
         hook = adapter::hook_args(kind, &h).ok().flatten();
     }
     let session = if resume.is_none() { adapter::new_session(kind) } else { None };
@@ -54,7 +54,8 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
     let model = if took.kind == kind { took.model } else if who.kind == kind { who.model.clone() } else { String::new() };
     let level = start::effort_for(&kind, &model, &who.effort);
     let root = if t.b("root") { PathBuf::from(t.s("root")) } else { folder_of(t.s("id")) };
-    installed::pre_trust(&kind, &root, &who.access);
+    let cwd = Some(t.s("worktree")).filter(|w| !w.is_empty() && Path::new(w).exists()).map(PathBuf::from).unwrap_or_else(|| root.clone()); // where it starts
+    installed::pre_trust(&kind, &root, &cwd, &who.access);
     let taken: Vec<String> = api.agents().unwrap_or_default().iter().filter(|a| a.s("pane_id") != t.at("link").s("pane")).map(|a| a.t("name")).filter(|n| !n.is_empty()).collect();
     let name = agent_name(&t, &taken);
     if plan::planner(&t) { flow::tabs::name_tab(&api, t.at("link").s("tab"), flow::tabs::PLANNER_TAB); } else { flow::tabs::name_agent_tab(&api, t.at("link").s("tab"), Some(&t)); }
@@ -63,13 +64,18 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
     let args = |hooked: bool| -> Res<Vec<String>> {
         let mut extra = if hooked { x.hook.clone() } else { vec![] };
         extra.extend(x.rules.clone());
-        start::start_args(&kind, &start::StartOpts { model: model.clone(), effort: level.clone(), fast, access: who.access.clone(), plan: plan::plan_args(&t, &kind), resume: resume.unwrap_or("").into(), session: x.session.clone().unwrap_or_default(), extra })
+        start::start_args(&kind, &start::StartOpts { model: model.clone(), effort: level.clone(), fast, access: who.access.clone(), resume: resume.unwrap_or("").into(), session: x.session.clone().unwrap_or_default(), extra, folder: cwd.clone() })
     };
     let (mut blocked, mut hooked) = (false, x.hooked);
     let pane = t.at("link").t("pane");
+    // Its temporary folder, as TMPDIR and the rest: removed with all in it when the task ends (temp.rs).
+    let tmp = crate::temp::made(&t);
+    let _ = api.pane_run(&pane, &crate::temp::export_line(&t));
+    let mut used: Vec<String> = vec![]; // the arguments it was started on: built once a try (OpenCode 2 makes a conversation)
     let mut start_with = |with_hook: bool| -> Res<()> {
+        used = args(with_hook)?;
         // In a read-only mount while its plan waits (plan/sandbox.rs).
-        match plan::sandbox::start_program(&api, &t, &name, &kind, &pane, &args(with_hook)?) {
+        match plan::sandbox::start_program(&api, &t, &name, &kind, &pane, &used, "writer") {
             Ok(()) => Ok(()),
             Err(e) if e.code == "agent_not_ready" => { blocked = true; Ok(()) } // a dialog is in the way: the text waits in the inbox
             Err(e) => Err(e.into()),
@@ -81,16 +87,16 @@ pub fn start_agent(id: &str, g: &mut Guard, prompt: &str, resume: Option<&str>) 
         hooked = false; start_with(false)?;
     }
     // herdr calls the program ready before it has drawn anything; text typed that early loses its enter (submit.rs).
-    if !prompt.is_empty() && !blocked { let launch = std::iter::once(crate::agents::kinds::program(&kind).to_string()).chain(args(hooked)?).collect::<Vec<_>>().join(" "); crate::submit::settle(&api, &pane, &launch); }
+    if !prompt.is_empty() && !blocked { let launch = std::iter::once(crate::agents::kinds::program(&kind).to_string()).chain(used).collect::<Vec<_>>().join(" "); crate::submit::settle(&api, &pane, &launch); }
     // The send time arms the pipeline: nothing older than this counts as the turn's end.
-    let (session, version, plan_mode) = (resume.map(String::from).or(x.session.clone()), x.version.clone(), plan::plan_args(&t, &kind).is_some() || plan::sandbox::boxed(&t));
+    let (session, version, boxed) = (resume.map(String::from).or(x.session.clone()), x.version.clone(), plan::sandbox::boxed(&t));
     let t = g.set(|t| {
         t.put("stage", "working"); t.put("armedAt", now()); t.put("expectedWake", Value::Null); t.put("turnOpen", true); t.put("turnBy", "start"); t.put("msg", "");
         t.obj_mut("link").put("agent", name.clone());
         if !(t.i("workAt") >= t.i("since") && t.has("workAt")) { t.put("workAt", now()); }
-        t.put("startedAgentAt", now()); t.put("exitedAt", Value::Null);
+        t.put("startedAgentAt", now()); t.put("exitedAt", Value::Null); t.put("tmp", tmp.display().to_string());
         t.put("hooked", hooked); t.put("agentVersion", version.clone()); t.put("sent", Value::Null); t.put("unsent", Value::Null);
-        if plan::open(t) { t.obj_mut("plan").put("mode", plan_mode); }
+        if plan::open(t) { t.obj_mut("plan").put("mode", boxed); } // in the mount: started again after the yes (plan/build.rs)
         if t.at("failure").s("stage") == "send" { t.put("failure", Value::Null); }
         let s = session.clone().map(Value::String).unwrap_or(Value::Null);
         if s != *t.at("session") && !(s.is_null() && t.s("session").is_empty()) {

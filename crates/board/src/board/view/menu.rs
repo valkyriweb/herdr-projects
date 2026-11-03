@@ -3,7 +3,7 @@
 //! is whole (a long one wraps under itself); where the menu is longer than its room it scrolls, and says so.
 use super::fields::AUTO_MARK;
 use super::list::hl;
-use crate::board::keys::{pair, say, GROUPS, KEYS};
+use crate::board::keys::{group_name, pair, say, GROUPS, KEYS};
 use crate::board::state::State;
 use crate::board::tags::name_say;
 use crate::board::theme::Theme;
@@ -27,8 +27,9 @@ pub fn menu_lines(s: &mut State, t: &Theme, width: usize, h: usize) -> Vec<Inked
     let mut picked = (0usize, 0usize);
     for (group, gname) in GROUPS {
         if !lines.is_empty() { lines.push(Inked::new()); }
-        lines.push(Inked::plain(" ").add(Inked::of(gname, Ink::Soft)));
-        if group == "plain" { for (k, d) in &plain { lines.extend(entry(k, d)); } }
+        lines.push(Inked::plain(" ").add(Inked::of(group_name(group, gname), Ink::Soft)));
+        // Not a key of the board: typed first in the text box, it lists the skills of whom the chat talks to (skills.rs).
+        if group == "plain" { for (k, d) in &plain { lines.extend(entry(k, d)); } lines.extend(entry("/", "typed first: pick a skill of whom you talk to")); }
         for (n, it) in list.iter().enumerate() {
             if it.group != group { continue; }
             if n as i64 != at { lines.extend(entry(&it.key, &it.label)); continue; }
@@ -56,6 +57,9 @@ pub fn menu_lines(s: &mut State, t: &Theme, width: usize, h: usize) -> Vec<Inked
     }
     lines.extend(entry("PR#16", "its pull request: green when its checks pass, red when they fail"));
     lines.extend(entry("[auto]", "made by an automation; [research]: research only, nothing is merged"));
+    lines.extend(entry("[chat]", "a conversation: it changes nothing and ends when you say"));
+    // A machine's or a project's row is its coordinator's, with a task's marks; on autopilot, its tag and a line under it.
+    lines.extend(entry("[autopilot]", "a coordinator on autopilot (a machine's or a project's row): the line under it says what it does"));
     // The window: the title stays, and the picked line stays in view while the pick moves.
     let space = h.saturating_sub(1).max(1);
     let cut = lines.len() > space;

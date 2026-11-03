@@ -34,8 +34,9 @@ fn each_machine_has_its_board_in_the_section_named_as_the_web_ui_names_it_with_h
     let mut stuck = far::theirs(3); stuck["state"] = json!("blocked");
     far.tasks("vm-a", "0.2.0", json!([busy, far::theirs(2), stuck]));
     // asked before the other machine answered: it is being asked, and there is nothing to add up yet
+    // (and before herdr said which machines there are, no all machines: it would be this one again)
     let first = boards(pcs());
-    assert_eq!(first.arr("boards")[1].s("name"), "Mac", "this machine as the web UI names it");
+    assert_eq!(first.arr("boards").iter().find(|e| e.s("scope") == "").map(|e| e.t("name")).as_deref(), Some("Mac"), "this machine as the web UI names it");
     far::answered("t", 1);
     let b = boards(None);
     assert_eq!(entries(&b), vec![
@@ -47,20 +48,31 @@ fn each_machine_has_its_board_in_the_section_named_as_the_web_ui_names_it_with_h
 }
 
 #[test]
-fn a_board_with_nothing_going_on_is_all_quiet_its_archive_left_out_and_all_machines_is_there_also_with_no_other_machine() {
+fn a_board_with_nothing_going_on_is_all_quiet_its_archive_left_out_and_with_no_other_machine_there_is_no_all_machines() {
     let w = world();
-    std::fs::write(sw::store::files::data_dir().join("view.json"), json!({ "cwd": w.root_str() }).to_string()).unwrap();
+    let far = Far::new(&w.base);
+    far.tasks("vm-a", "0.2.0", json!([]));
+    std::fs::write(sw::store::files::data_dir().join("view.json"), json!({ "cwd": w.root_str(), "scope": "*" }).to_string()).unwrap();
     sw::actions::archive::archive(&w.add("Old")).unwrap();
-    // a web UI that names this machine only by its id, or none: the board's own words for it
+    // Which machines there are is only what the test tells: the list a new board asks herdr for on a thread of its own
+    // could come in at any moment (after the second machine, taking it away again), so it goes nowhere.
+    { let c = sw::webui::web::client("t"); c.lock().unwrap().inbox = std::sync::Arc::new(std::sync::Mutex::new(vec![])); }
+    // a web UI that names this machine only by its id, or none: the board's own words for it; this machine is the only
+    // one, so all machines would be this one again: it is not there
+    let told = |fx| { let c = sw::webui::web::client("t"); let mut g = c.lock().unwrap(); let fx = sw::board::update::update(&mut g.s, sw::board::update::Event::Machines(fx)); sw::webui::web::effects(&mut g, fx, false); };
+    told(vec![]);
     let b = boards(Some(vec![pc("local", "local", "", true)]));
     assert_eq!(b.at("boards"), &json!([
-        { "scope": "*", "name": "All machines", "dot": "quiet", "line": "all quiet", "title": "Every machine's board: all quiet" },
         { "scope": "", "name": "This machine", "dot": "quiet", "line": "all quiet", "title": "This machine's board: all quiet" },
     ]));
-    // picked, it stays picked when the board learns again that there is no other machine
-    assert_eq!(call("scope", json!({ "to": "*" }), None).unwrap().at("flags").s("scope"), "*");
-    { let c = sw::webui::web::client("t"); let mut g = c.lock().unwrap(); let fx = sw::board::update::update(&mut g.s, sw::board::update::Event::Machines(vec![])); sw::webui::web::effects(&mut g, fx, false); }
-    assert_eq!(boards(None).s("scope"), "*");
+    // the terminal board showed every machine: with no other one, the web shows this machine's own, and cannot pick it
+    assert_eq!(b.s("scope"), "", "{b}");
+    assert_eq!(call("scope", json!({ "to": "*" }), None).unwrap_err(), "There is no other machine: every machine's board is this one's.");
+    // a second machine: all machines is there again, at the top
+    let m = sw::remote::Machine { label: "vm-a".into(), target: "me@vm-a".into(), ..Default::default() };
+    told(vec![m]);
+    let names: Vec<String> = boards(None).arr("boards").iter().map(|e| e.t("name")).collect();
+    assert_eq!(names, vec!["All machines", "This machine", "vm-a"]);
 }
 
 #[test]
@@ -102,10 +114,12 @@ fn picking_an_entry_shows_that_machines_board_as_other_machines_does_and_the_two
     let s = call("scope", json!({ "to": "vm-a" }), None).unwrap();
     assert_eq!(s.at("flags").s("scope"), "vm-a");
     assert_eq!(s.at("list").at("head").s("only"), "vm-a");
-    assert!(s.at("msg").s("text").contains("Only vm-a"), "said as the board says it: {}", s.at("msg"));
+    assert!(s.at("msg").is_null(), "a board you picked is not confirmed by a line: the filter row says whose it is: {}", s.at("msg"));
     assert_eq!(boards(None).s("scope"), "vm-a", "the section highlights what the board shows");
     // the other way round: the board's own Other machines moves the section's highlight with it
     call("press", json!({ "id": "scope" }), None).unwrap();
+    assert_eq!(boards(None).s("scope"), "*", "after the last machine the round is back at every machine");
+    call("scope", json!({ "to": "" }), None).unwrap();
     assert_eq!(boards(None).s("scope"), "");
     call("scope", json!({ "to": "*" }), None).unwrap();
     assert_eq!(boards(None).s("scope"), "*");
@@ -165,6 +179,7 @@ fn only_a_board_picked_on_the_web_is_kept_another_change_leaves_the_web_followin
     assert_eq!(s.at("flags").s("scope"), "*");
     assert!(s.at("list").arr("groups").iter().any(|g| g.arr("rows").iter().any(|r| r.s("title") == "Theirs 1")), "{}", s.at("list"));
     // the scope key pressed on the web is a pick, as the sidebar's entry is
-    call("press", json!({ "id": "scope" }), None).unwrap();
-    assert_eq!(kept().at("ownScope"), &json!("vm-a"));
+    let s = call("press", json!({ "id": "scope" }), None).unwrap();
+    assert_ne!(s.at("flags").s("scope"), "*");
+    assert_eq!(kept().at("ownScope"), s.at("flags").at("scope"));
 }

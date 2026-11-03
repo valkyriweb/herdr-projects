@@ -11,13 +11,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The hook's call back into the board, at each turn end.
-pub struct Hook { pub shim: String, pub id: String, pub role: String, pub token: String, pub round: i64, pub dir: PathBuf, pub plan: bool }
+pub struct Hook { pub shim: String, pub id: String, pub role: String, pub token: String, pub round: i64, pub dir: PathBuf }
 fn hook_command(h: &Hook) -> Vec<String> {
     let mut c = vec![h.shim.clone(), "turn-ended".into(), "--id".into(), h.id.clone(), "--role".into(), h.role.clone(), "--token".into(), h.token.clone()];
     if h.role == "reviewer" { c.extend(["--round".to_string(), h.round.to_string()]); }
     c
 }
-fn write_private(file: &Path, text: &str) -> Res<()> {
+pub(crate) fn write_private(file: &Path, text: &str) -> Res<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut f = fs::OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(file)?;
     std::io::Write::write_all(&mut f, text.as_bytes())?;
@@ -27,18 +27,14 @@ fn write_private(file: &Path, text: &str) -> Res<()> {
 pub fn hook_args(kind: &str, h: &Hook) -> Res<Option<Vec<String>>> {
     match kind {
         // A settings file of the task's own, added to the user's settings for this one launch (the user's own hooks
-        // still run). The hooks are asynchronous, so a slow or failing one never holds the agent's turn. In plan mode
-        // the plan is presented with ExitPlanMode, which asks in the terminal: the board takes the plan there instead.
+        // still run). The hooks are asynchronous, so a slow or failing one never holds the agent's turn. Idle
+        // compaction is off: Claude Code would otherwise shrink a finished task's session left waiting an hour, which
+        // herdr sees as a turn.
         "claude" => {
             let command = hook_command(h).iter().map(|s| shq(s)).collect::<Vec<_>>().join(" ");
             let file = h.dir.join(format!("hook-{}.json", h.role));
             let one = json!([{ "hooks": [{ "type": "command", "command": command, "async": true }] }]);
-            let mut hooks = obj(json!({ "Stop": one, "StopFailure": one }));
-            if h.plan {
-                let plan_cmd = [h.shim.as_str(), "plan-written", "--id", &h.id, "--token", &h.token].iter().map(|s| shq(s)).collect::<Vec<_>>().join(" ");
-                hooks.put("PreToolUse", json!([{ "matcher": "ExitPlanMode", "hooks": [{ "type": "command", "command": plan_cmd }] }]));
-            }
-            write_private(&file, &json!({ "hooks": hooks }).to_string())?;
+            write_private(&file, &json!({ "hooks": { "Stop": one, "StopFailure": one }, "idleCompaction": false }).to_string())?;
             Ok(Some(vec!["--settings".into(), file.display().to_string()]))
         }
         // Codex runs one `notify` program at each turn end. Given at launch it would replace one the user configured,
@@ -109,9 +105,21 @@ pub fn transcript(kind: &str, session: &str, cwd: &Path) -> Option<PathBuf> {
             find_file(&claude_home().join("projects"), &|n| n == want, 1).into_iter().next()
         }
         "codex" => { let want = format!("{session}.jsonl"); find_file(&codex_home().join("sessions"), &|n| n.ends_with(&want), 4).into_iter().next() }
-        "pi" => { let want = format!("_{session}.jsonl"); find_file(&pi_home().join("sessions"), &|n| n.ends_with(&want), 1).into_iter().next() }
+        // Also where it was saved before its folder moved (the Coordinator's, under the board's old home).
+        "pi" => { let (want, was) = (format!("_{session}.jsonl"), crate::store::move_home::moved_from(cwd)); pi_files(&[Some(cwd), was.as_deref()].into_iter().flatten().collect::<Vec<_>>(), &|n| n.ends_with(&want)).into_iter().next() }
         _ => None,
     }
+}
+/// pi keeps each working folder's conversations in a folder of their own, named after its path (`--home-me-app--`).
+fn pi_folder(cwd: &Path) -> PathBuf { let p = cwd.display().to_string(); pi_home().join("sessions").join(format!("--{}--", p.strip_prefix(['/', '\\']).unwrap_or(&p).replace(['/', '\\', ':'], "-"))) }
+/// pi's conversations of these working folders (as given, and their real paths), newest first: only those folders are
+/// read, never every folder of a long history (#393).
+fn pi_files(cwds: &[&Path], test: &dyn Fn(&str) -> bool) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = vec![];
+    for d in cwds.iter().flat_map(|c| [real(c), c.to_path_buf()]).map(|c| pi_folder(&c)) { if !dirs.contains(&d) { dirs.push(d); } }
+    let mut hits: Vec<PathBuf> = dirs.iter().flat_map(|d| find_file(d, test, 0)).collect();
+    hits.sort_by_key(|f| std::cmp::Reverse(mtime_ms(f)));
+    hits
 }
 fn mtime_ms(f: &Path) -> Option<i64> { fs::metadata(f).and_then(|m| m.modified()).ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as i64) }
 fn first_line(s: &str) -> &str { s.split('\n').next().unwrap_or("") }
@@ -145,7 +153,7 @@ pub fn latest_session(kind: &str, cwd: &Path, since: i64, was: Option<&Path>) ->
             None
         }
         "pi" => {
-            for f in find_file(&pi_home().join("sessions"), &|n| n.ends_with(".jsonl"), 1) {
+            for f in pi_files(&[Some(cwd), was].into_iter().flatten().collect::<Vec<_>>(), &|n| n.ends_with(".jsonl")) {
                 if mtime_ms(&f).map(|m| m < since).unwrap_or(true) { return None; }
                 let head = head_of(&f, 8192);
                 let Ok(meta) = serde_json::from_str::<Value>(first_line(&head)) else { continue };
@@ -187,8 +195,6 @@ pub fn effort_args(kind: &str, e: &str) -> Vec<String> { super::kinds::kind(kind
 pub fn fast_args(kind: &str, on: bool) -> Vec<String> {
     match (kind, on) { ("codex", true) => vec!["-c".into(), "service_tier=\"fast\"".into()], ("codex", false) => vec!["-c".into(), "service_tier=\"default\"".into()], _ => vec![] }
 }
-/// In place of the access flags: the program's own plan mode, where an edit asks in the terminal.
-pub fn plan_mode_args(kind: &str) -> Option<Vec<String>> { (kind == "claude").then(|| vec!["--permission-mode".into(), "plan".into()]) }
 /// A headless command for the Watcher: the program, its arguments, and what goes in on its stdin.
 pub struct OneShot { pub command: String, pub args: Vec<String>, pub stdin: Option<String> }
 pub fn one_shot(kind: &str, model: &str, effort: &str, prompt: &str, system: &str, lean: bool) -> Option<OneShot> {
@@ -241,7 +247,8 @@ pub fn skill_dir(kind: &str) -> Option<PathBuf> {
 }
 /// Mark a repo as trusted in the program's own settings, so a new worktree starts without its "trust this folder?"
 /// dialog. Claude keeps trust per repository root in ~/.claude.json; Codex in ~/.codex/config.toml (a command-line
-/// override does not count, so the table is appended to the file once).
+/// override does not count, so the table is added to the file once: codex_trust.rs); pi in ~/.pi/agent/trust.json, per
+/// folder and the folders above it, so it is given the folder it starts in (pi_trust.rs).
 pub fn trust(kind: &str, root: &Path) -> bool {
     let root_s = root.display().to_string();
     match kind {
@@ -253,16 +260,9 @@ pub fn trust(kind: &str, root: &Path) -> bool {
             let tmp = PathBuf::from(format!("{}.{}.sw.tmp", file.display(), std::process::id()));
             write_private(&tmp, &serde_json::to_string_pretty(&j).unwrap_or_default()).is_ok() && fs::rename(&tmp, &file).is_ok()
         }
-        "codex" => {
-            let file = codex_file();
-            let text = match fs::read_to_string(&file) { Ok(t) => t, Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(), Err(_) => return false };
-            let head = format!("[projects.{}]", serde_json::to_string(&root_s).unwrap_or_default());
-            if text.contains(&head) { return true; }
-            if let Some(d) = file.parent() { let _ = fs::create_dir_all(d); }
-            let add = format!("{}\n{head}\ntrust_level = \"trusted\"\n", if !text.is_empty() && !text.ends_with('\n') { "\n" } else { "" });
-            fs::OpenOptions::new().create(true).append(true).open(&file).and_then(|mut f| std::io::Write::write_all(&mut f, add.as_bytes())).is_ok()
-        }
+        "codex" => super::codex_trust::trust(root),
+        "pi" => super::pi_trust::trust(root),
         _ => false,
     }
 }
-pub fn can_trust(kind: &str) -> bool { matches!(kind, "claude" | "codex") }
+pub fn can_trust(kind: &str) -> bool { matches!(kind, "claude" | "codex" | "pi") }

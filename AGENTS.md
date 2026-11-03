@@ -64,8 +64,8 @@ of date) and runs the tests, in several processes at once (`scripts/run-tests.sh
 exact code (every file of the folder, committed or not, and the compiler), and shares that with the reviewer and the
 board: asked again, it answers at once.
 
-- **Run cargo through the check**: it builds through the one build cache every worktree shares and takes this task's
-  share of the cores, not all of them (`scripts/build-cache.sh`, `scripts/share-cores.sh`).
+- **Run cargo through the check**: it builds through the one build cache every worktree shares and takes its share of
+  the cores, all of them when it runs alone (`scripts/build-cache.sh`, `scripts/share-cores.sh`).
 - **While you work, run the tests of what you touched**: `npm run check board-panel` runs one area's test files
   (`tests/board_panel.rs` and `tests/board_panel_*.rs`), `npm run check gate sync` several. A name that is no area runs
   the tests whose own names hold it (`npm run check textbox`): a second or two after the build. With no name it runs
@@ -93,5 +93,8 @@ board: asked again, it answers at once.
   purpose: `UPDATE_FRAMES=1 npm run check frames` writes them again; look at what changed before you commit it.
 - A look at the real thing (a real terminal, a browser screenshot) only for a task that changes what the board looks
   like.
+- Never write into the board's own folder (`~/.herdr-projects`) yourself or with a program of your own: change the
+  board only through its commands. Anything you run by hand on this code gets a scratch board:
+  `HERDR_PROJECTS_HOME=$TMPDIR/board` in front of it.
 
 How it works, and why: [docs/testing.md](docs/testing.md). You do not need it to start.

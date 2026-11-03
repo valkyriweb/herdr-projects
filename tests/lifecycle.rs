@@ -6,6 +6,11 @@ use common::*;
 use serde_json::json;
 use sw::json::*;
 
+/// A start whose runner was lost with the command that delegated it: tried again once, then failed; a keeper takes it.
+mod start_lost;
+/// A stop ends what the agent started (a command, a dev server, what runs from its folders) and keeps the agent.
+mod stop;
+
 #[test]
 fn at_most_board_agents_work_at_once_and_a_freed_slot_is_reused() {
     let w = world_with(Opts { repo: true, settings: json!({ "board.agents": 1, "review.when": "never" }), ..Default::default() });
@@ -42,7 +47,7 @@ fn archive_restore_a_reply_that_starts_it_again_and_clear_that_keeps_unsaved_wor
     let p = prompts(&w, t.at("link").s("pane"))[0].clone();
     assert!(p.contains("Continue from the state of this branch") && p.contains("Did v1.") && p.contains("one more thing"), "{p}");
     std::fs::write(std::path::Path::new(t.s("worktree")).join("unsaved.txt"), "x\n").unwrap();
-    let (_, kept) = sw::actions::archive::clear(&id).unwrap();
+    let (_, kept, _) = sw::actions::archive::clear(&id).unwrap();
     assert!(kept[0].contains("uncommitted changes"), "{kept:?}");
     assert!(std::path::Path::new(t.s("worktree")).exists());
     assert!(sw::store::tasks::get(&id).is_none());

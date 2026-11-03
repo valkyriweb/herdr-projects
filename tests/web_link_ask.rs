@@ -26,7 +26,7 @@ fn the_terminal_board_asks_once_whether_the_web_uis_link_may_go_through_the_fron
     let url = format!("https://{HOST}");
     offer(&mut b, &[&url]);
     let a = b.s.ask.clone().expect("asked");
-    assert_eq!(a.q, "Show this board in the herdr web UI?");
+    assert_eq!(a.q, "Show this board in the web UI (Ovis)?");
     assert!(a.detail.contains(&format!("The web UI's link ({url}) then goes through a small front door")), "{}", a.detail);
     assert!(b.text().contains("y = yes · n = no · esc = later"), "{}", b.text());
     b.press(&["esc"]); assert!(b.s.ask.is_none()); assert_eq!(extras().s("webUi"), "");
@@ -37,11 +37,11 @@ fn the_terminal_board_asks_once_whether_the_web_uis_link_may_go_through_the_fron
     offer(&mut busy, &[&url]); assert_eq!(busy.s.ask.as_ref().unwrap().q, "Other?"); assert!(!busy.s.web_ui_asked);
     // no: written down, never asked again
     let mut b = common::board::open(&w.root, 30); offer(&mut b, &[&url]); b.press(&["n"]);
-    assert_eq!(extras().s("webUi"), "no"); assert!(b.text().contains("Left as it is"), "{}", b.text());
+    assert_eq!(extras().s("webUi"), "no"); assert!(!b.text().contains("Left as it is"), "no confirmation under the chat: {}", b.text());
     assert!(sw::webui::command::offer().is_empty());
     // yes: done, and the board says how it went (here no web UI is installed, so it says that)
     note(json!({ "webUi": "" }));
     let mut b = common::board::open(&w.root, 30); offer(&mut b, &[&url]); b.press(&["y"]);
     assert!(b.s.ask.is_none());
-    assert!(b.text().contains("The herdr web UI plugin is not installed"), "{}", b.text());
+    assert!(b.text().contains("The web UI (Ovis) is not installed"), "{}", b.text());
 }

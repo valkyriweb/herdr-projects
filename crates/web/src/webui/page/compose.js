@@ -1,10 +1,11 @@
 // The box you type in, built as the herdr web UI builds its own chat input (its composer's card: Composer.tsx and
 // Composer.css there), from the same CSS variables and none of its code: a card with the message as its first row,
 // growing with the text, the files attached above it (files.js), and one row of controls under it, the add button, the
-// mic (voice.js) and who the words are for on the left and the round Send on the right. Its grip, its keys and its sizes are the web
+// mic (voice.js), the voice call's button beside it (callbtn.js) and who the words are for on the left and the round
+// Send on the right. Its grip, its keys and its sizes are the web
 // UI's (docs/web-chat-box.md says how that was measured). What it does with the words is chat.js's.
 /* global window, document, localStorage, getComputedStyle, setTimeout, clearTimeout */
-import { h, icon } from "./dom.js";
+import { h, icon, webUiSettings } from "./dom.js";
 import { filesEl } from "./files.js";
 import { voiceEl } from "./voice.js";
 
@@ -17,14 +18,14 @@ const keepHeight = (n) => { try { if (n == null) localStorage.removeItem(HEIGHT)
 // Enter sends and shift+enter is a new line, on a phone too, unless the web UI's own Settings → Chat says that
 // enter is a new line (then ctrl or cmd with enter sends). Read from where the web UI keeps it; if it ever keeps it
 // elsewhere, enter sends.
-export const enterSends = () => { try { return JSON.parse(localStorage.getItem("herdr-web-ui:settings") || "{}").enterSends !== false; } catch { return true; } };
+export const enterSends = () => webUiSettings().enterSends !== false;
 export const sendsOn = (e, enter = enterSends()) => e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.shiftKey && (enter ? !e.metaKey && !e.ctrlKey : !!(e.metaKey || e.ctrlKey));
 
 // `onSend(delegate)`: send what the box holds (true: and put an agent on what it adds). `onInput()`: its words changed.
-// `onTab()`: tab was pressed with words in the box; true when it sent them (then the focus stays in the box).
+// `onStart()`: ctrl+s was pressed with words in the box; true when it sent them (then the focus stays in the box).
 // `whom()`: who an attached file is for, `hold()`: its path must wait (files.js). `onGrow()`: its height was set again
-// (the room above a phone's keyboard may hold less: room.js).
-export function composeEl({ onSend, onInput, onTab = () => false, whom = () => null, hold = () => false, onGrow = () => {} }) {
+// (the room above a phone's keyboard may hold less: room.js). `call`: the voice call's button, beside the mic.
+export function composeEl({ onSend, onInput, onStart = () => false, whom = () => null, hold = () => false, onGrow = () => {}, call = null }) {
   let manual = savedHeight(), tapped = 0;
   const box = h("textarea.sw-input", { rows: 1, maxLength: LONGEST, spellcheck: false, autocapitalize: "off", autocorrect: "off", "aria-label": "Message" });
   const grip = h("div.sw-grip", { tabIndex: 0, role: "separator", "aria-orientation": "horizontal", "aria-label": "Resize message box", title: "Drag to resize · double-click to reset" });
@@ -37,7 +38,7 @@ export function composeEl({ onSend, onInput, onTab = () => false, whom = () => n
   const files = filesEl({ box, whom, hold, say, changed: () => { onInput(); grow(); } });
   // Dictated words go in as typed words do, without taking the focus.
   const voice = voiceEl({ box, say, write: (value, caret) => { box.value = value; box.setSelectionRange(caret, caret); onInput(); grow(); } });
-  const card = h("div.sw-card.sw-b-text", grip, files.strip, box, h("div.sw-controls.sw-controls-left", files.input, files.add, voice.el, to), h("div.sw-controls.sw-controls-right", also, send));
+  const card = h("div.sw-card.sw-b-text", grip, files.strip, box, h("div.sw-controls.sw-controls-left", files.input, files.add, voice.el, call, to), h("div.sw-controls.sw-controls-right", also, send));
   // As tall as its words, up to ten lines (the styles' limit), then it scrolls; or the height set with the grip.
   const grow = () => {
     box.classList.toggle("is-sized", manual != null); grip.classList.toggle("is-sized", manual != null);
@@ -74,8 +75,8 @@ export function composeEl({ onSend, onInput, onTab = () => false, whom = () => n
   box.addEventListener("input", () => { say(null); onInput(); grow(); });
   box.addEventListener("keydown", (e) => {
     if (sendsOn(e)) { e.preventDefault(); onSend(false); return; }
-    // Tab sends as the terminal board's does; with nothing typed, or where it does not apply, it moves on as tab does.
-    if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey && !e.isComposing && box.value.trim() && onTab()) e.preventDefault();
+    // Ctrl+S sends and starts, as the terminal board's start key does (and the browser saves no page for it).
+    if (e.key.toLowerCase() === "s" && e.ctrlKey && !e.altKey && !e.metaKey && !e.isComposing && box.value.trim() && onStart()) e.preventDefault();
   });
   files.dropOn(card);
   // Sending keeps the focus in the box, as the web UI's Send does: a button that took it would close a phone's

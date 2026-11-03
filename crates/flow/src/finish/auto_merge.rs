@@ -14,15 +14,16 @@ use crate::store::repos::folder_of;
 use crate::store::settings::lookup::setting;
 use crate::store::tasks::{update, Change, Task};
 
-/// Does this task merge by itself? Asked each time: the setting is read right before the merge.
-pub fn by_itself(t: &Obj) -> bool { setting("merge.by", Some(t)) == json!("itself") }
+/// Does this task merge by itself? Asked each time: the setting is read right before the merge. A task autopilot added
+/// whose change touches the repo's own settings file never does while `autopilot.repoFileWaits` held when it was added.
+pub fn by_itself(t: &Obj) -> bool { setting("merge.by", Some(t)) == json!("itself") && !crate::autopilot::care::held_for_you(t) }
 /// Is this task's work reviewed at all?
 pub fn reviewed(t: &Obj) -> bool { setting("review.when", Some(t)) != json!("never") }
 /// Green to merge: checked, reviewed past the gate (or not to be reviewed at all), up to date with main, and nothing
 /// that is yours to decide.
 pub fn green(t: &Obj) -> bool {
-    if t.s("stage") != "approval" || t.b("archivedAt") || !flow::task::is_agent_task(t) || !t.b("reviewedHead") || is_research(t) { return false; }
-    if ["failure", "prFailure", "syncBlocked", "mergeFailed", "requireApproval", "mergeIntent", "autoMerge", "chat"].iter().any(|k| t.b(k)) { return false; }
+    if t.s("stage") != "approval" || t.b("archivedAt") || !flow::task::is_agent_task(t) || !t.b("reviewedHead") || is_research(t) || crate::chat_only::is_chat(t) { return false; }
+    if ["failure", "syncBlocked", "mergeFailed", "requireApproval", "mergeIntent", "autoMerge", "chat"].iter().any(|k| t.b(k)) || crate::land::checks::stands(t, t.s("prHead")) { return false; }
     if over_now(t).is_some() { return false; } // at its token limit nothing merges by itself
     if t.at("review").is_object() { gate::passes(t.at("review")) } else { !reviewed(t) }
 }
@@ -34,7 +35,7 @@ fn pending(t: &Obj) -> bool { t.s("stage") == "merging" && t.b("autoMerge") && t
 pub fn auto_merge_pass(tasks: &[Obj], socket: &str) {
     lift_old_holds(tasks, socket);
     for seen in tasks {
-        if seen.at("link").s("socket") != socket || (seen.s("stage") != "approval" && !pending(seen)) || runner_alive(seen) { continue; }
+        if !crate::herdr::cli::same_socket(seen.at("link").s("socket"), socket) || (seen.s("stage") != "approval" && !pending(seen)) || runner_alive(seen) { continue; }
         if by_itself(seen) { if green(seen) { start(seen.s("id")); } } else if pending(seen) { hold(seen); }
     }
 }

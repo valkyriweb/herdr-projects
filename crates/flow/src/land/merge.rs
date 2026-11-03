@@ -1,5 +1,6 @@
 //! The merge itself, with the task in stage "merging": the last catch-up with main, then through the pull request (at
-//! the reviewed commit only) or locally into the branch your checkout is on, squashed by default.
+//! the reviewed commit only), by a push to the branch it started from by name (direct.rs), or locally into the branch
+//! your checkout is on, squashed by default.
 use super::cleanup::tidy;
 use crate::clock::now;
 use crate::err::Res;
@@ -45,12 +46,15 @@ pub(super) fn fail(g: &mut Guard, title: &str, detail: &str, next: &str, f: Fail
 pub(super) fn no_fix() -> Fail { Fail { agent_can_fix: false, auth: Some(false), keep_intent: false } }
 /// `head`: the commit that was merged. Nothing newer on the branch is taken for merged. `commit`: the commit it made on
 /// the branch it landed on, what a task that waited for it is told (after/handed.rs).
-fn landed(id: &str, g: &mut Guard, t: &Task, msg: &str, head: &str, commit: &str) -> Res<()> {
+pub(super) fn landed(id: &str, g: &mut Guard, t: &Task, msg: &str, head: &str, commit: &str) -> Res<()> {
     let mark = flow::spaces::tidy_mark(t, "always", head);
+    // The issues its work closes (`merge.closes`), only once something landed.
+    let closed = if head.is_empty() && commit.is_empty() { String::new() } else { super::closes::after_landing(t, &folder_of(t.s("id")), commit) };
     let d = g.set(|t| {
         if !commit.is_empty() { t.put("mergeCommit", commit); }
         // What GitHub's checks could not be read of (land/checks.rs) is said with it.
         let said = if t.b("checksUnread") { format!("{msg}. {}", t.s("checksUnread")) } else { msg.to_string() };
+        let said = if closed.is_empty() { said } else { format!("{}. {closed}", said.trim_end_matches('.')) };
         t.put("stage", "done"); t.put("mergedAt", now()); t.put("tidy", mark.clone().unwrap_or(Value::Null)); t.put("msg", said);
         for k in ["failure", "prFailure", "mergeIntent", "lineAt", "lineTurn", "checksWait"] { t.put(k, Value::Null); }
         for k in ["autoMerge", "autoMergeLocal", "mergeFailed", "requireApproval"] { t.put(k, false); }
@@ -60,19 +64,14 @@ fn landed(id: &str, g: &mut Guard, t: &Task, msg: &str, head: &str, commit: &str
     tidy(id, "always");
     Ok(())
 }
-fn reverify(id: &str, g: &mut Guard, t: &Task, why: &str, synced: Option<&sync::Synced>) -> Res<()> {
+pub(super) fn reverify(id: &str, g: &mut Guard, t: &Task, why: &str, synced: Option<&sync::Synced>) -> Res<()> {
     g.set(|t| t.put("msg", why))?;
     let summary = if t.b("summary") { t.t("summary") } else { "Branch updated with main.".into() };
     crate::finish::pipeline::pipeline(id, g, &summary, true, "sync", synced)
 }
-/// A task started from a named branch (`workspace.from develop`) lands there through its pull request only, and only
-/// while that merges into it. False: it may not merge, and that was said on the task.
-fn onto_named(id: &str, g: &mut Guard, t: &Task, root: &Path, tree: &str, b: &str) -> Res<bool> {
-    if !t.b("pr") && !tree.is_empty() {
-        fail(g, &format!("Lands on {b} only through a pull request"), &format!("This task started from {b} at the remote and keeps up with it. It has no pull request (merge.pr is off), and a local merge would land on the branch your checkout is on instead.\n\nNothing was merged."),
-            &format!("Turn merge.pr on for this task (herdr-projects set merge.pr true --task {}) and tell its agent to finish again: the board then opens its pull request into {b}.", task_ref(id, &repo_keys())), no_fix())?;
-        return Ok(false);
-    }
+/// A task started from a named branch (`workspace.from develop`) lands there: through its pull request only while that
+/// merges into it, and with none by a push of its own (direct.rs). False: it may not merge, and that was said on the task.
+fn onto_named(g: &mut Guard, t: &Task, root: &Path, b: &str) -> Res<bool> {
     if !t.b("pr") { return Ok(true); }
     let r = gh(&["pr", "view", &pr_number(t.s("pr")), "--json", "baseRefName"], root, 60000);
     let base = if r.status == 0 { serde_json::from_str::<Value>(&r.stdout).map(|v| v.t("baseRefName")).unwrap_or_default() } else { String::new() };
@@ -109,11 +108,14 @@ pub fn land_core(id: &str, g: &mut Guard) -> Res<()> {
     let root = folder_of(t.s("id"));
     let tree = sync::tree_of(&t);
     let how = setting_text("merge.method", Some(&t)); // read right before the merge. squash by default
-    if let Some(b) = sync::named_base(&root, &t) { if !onto_named(id, g, &t, &root, &tree, &b)? { return Ok(()); } }
+    if let Some(b) = sync::named_base(&root, &t) { if !onto_named(g, &t, &root, &b)? { return Ok(()); } }
+    // Started from a named branch (origin's main too) with no pull request: pushed there at origin (direct.rs), your
+    // checkout untouched.
+    let direct = sync::pushed_to(&root, &t).filter(|_| !tree.is_empty());
     if !tree.is_empty() {
         let tp = Path::new(&tree);
         let pre = (|| -> Res<Option<&'static str>> {
-            if !t.b("pr") && !flow::git::dirty(&root).is_empty() { fail(g, "Merge needs a clean checkout", &format!("Checkout: {}\n{}", root.display(), flow::git::dirty(&root)), "Commit, stash or move your own unsaved files, then approve again. The agent must not alter your checkout.", no_fix())?; return Ok(Some("done")); }
+            if !t.b("pr") && direct.is_none() && !flow::git::dirty(&root).is_empty() { fail(g, "Merge needs a clean checkout", &format!("Checkout: {}\n{}", root.display(), flow::git::dirty(&root)), "Commit, stash or move your own unsaved files, then approve again. The agent must not alter your checkout.", no_fix())?; return Ok(Some("done")); }
             if git_out(tp, &["symbolic-ref", "--short", "HEAD"])? != t.s("branch") { fail(g, "Task is on the wrong branch", &tree, "Restore the task's own branch before retrying.", no_fix())?; return Ok(Some("done")); }
             // Approve refuses unless the worktree is clean and its HEAD is exactly the commit that was checked and reviewed.
             let vh = t.at("mergeIntent").t("verifiedHead");
@@ -145,6 +147,7 @@ pub fn land_core(id: &str, g: &mut Guard) -> Res<()> {
         }
     }
     t = g.check()?;
+    if let Some(b) = &direct { return super::direct::land(id, g, &t, &tree, b, &how); }
     if t.b("pr") {
         // By number, not link: gh then uses the repo's own remote for the host.
         let pr = pr_number(t.s("pr"));
@@ -166,6 +169,17 @@ pub fn land_core(id: &str, g: &mut Guard) -> Res<()> {
         gh(&["pr", "ready", &pr], &root, 60000);
         // GitHub's own checks on it (`merge.checks`): still running it waits, failed it goes back (checks.rs).
         if !super::checks::before_merge(id, g, &t, &root)? { return Ok(()); }
+        // The issues it closes (`merge.closes`) as said now: on its body, and the board's lines of those it no longer
+        // names off it. A line that could not be added: closed with gh once it has merged. One that could not be taken
+        // off would close an issue the task no longer names: nothing merges (closes.rs).
+        match super::closes::onto_pr(&t, t.s("pr"), &root) {
+            Ok(on) => { g.set(|t| t.put("closesOnPr", json!(on)))?; }
+            Err(why) if !super::closes::stale(&t).is_empty() => {
+                let gone = super::closes::stale(&t).iter().map(|n| format!("Closes #{n}")).collect::<Vec<_>>().join(", ");
+                return fail(g, "Could not take an issue off the pull request", &format!("Pull request: {}\nmerge.closes no longer names: {gone}\n\ngh pr edit:\n{why}\n\nNothing was merged: GitHub would close that issue.", t.s("pr")), "Make sure gh is logged in and reaches GitHub (gh auth status), or take those lines off the pull request's description yourself, then approve again.", no_fix());
+            }
+            Err(_) => {}
+        }
         let mut a = vec!["pr", "merge", pr.as_str()];
         let how_flag = format!("--{how}");
         a.push(&how_flag);

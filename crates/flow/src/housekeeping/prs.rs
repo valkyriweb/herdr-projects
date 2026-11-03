@@ -127,7 +127,10 @@ fn poll_one(id: &str, pr: &str, j: &Value, via: &str) {
         if t.b("autoMerge") && t.b("checksWait") {
             // An empty list is not a pass: they have not started yet, or went from the list (checks::none_listed).
             let gone = checks::missing(t, &head, via, &checks);
-            if !failed.is_empty() || (!checks.is_empty() && all_good && gone.is_empty()) || ignored || checks::overdue(t) { t.put("autoMerge", false); t.put("autoMergeLocal", false); t.put("msg", "Merging"); then = Then::Land; }
+            // Nothing listed, with workflows waited for: the land step looks again once one that may not run has had its
+            // while to start (land/expected.rs).
+            let maybe_over = !strings(t.at("checksWait").at("flows")).is_empty() && crate::land::expected::waited_past(t, &head, crate::land::expected::MAYBE_MS);
+            if !failed.is_empty() || ((!checks.is_empty() || maybe_over) && all_good && gone.is_empty()) || ignored || checks::overdue(t) { t.put("autoMerge", false); t.put("autoMergeLocal", false); t.put("msg", "Merging"); then = Then::Land; }
             else if !checks.is_empty() && t.at("checksWait").s("head") == head {
                 // Still running: which ones is kept, so that one gone from the list later is still waited for.
                 let names = checks::unique(checks.iter().filter(|c| !CHECK_GOOD.contains(&checks::word(c).as_str())).map(checks::name).chain(gone));
@@ -140,7 +143,7 @@ fn poll_one(id: &str, pr: &str, j: &Value, via: &str) {
             }
             return Ok(Change::Write);
         }
-        if t.b("autoMerge") && !blocking && !t.b("prFailure") {
+        if t.b("autoMerge") && !blocking && !checks::stands(t, &head) {
             // The checks have passed (and a required review is there): the remembered merge is carried out now.
             if t.b("autoMergeLocal") && all_good && decision != "REVIEW_REQUIRED" { t.put("autoMerge", false); t.put("autoMergeLocal", false); t.put("msg", "Merging"); then = Then::Land; }
             return Ok(Change::Write);
@@ -160,7 +163,8 @@ fn poll_one(id: &str, pr: &str, j: &Value, via: &str) {
             }
             if t.s("stage") == "approval" && !t.b("failure") { let m = format!("{}: {why} Send details to the agent, or wait for remote confirmation", t.at("prFailure").s("title")); t.put("msg", m); }
         } else if t.b("prFailure") {
-            let confirmed = if t.at("prFailure").s("remoteKind") == "review" { decision == "APPROVED" } else { t.s("prState") == "passing" };
+            // Failed checks of an older commit are over once this one has none failing (#309).
+            let confirmed = if t.at("prFailure").s("remoteKind") == "review" { decision == "APPROVED" } else { t.s("prState") == "passing" || checks::stale(t, &head) };
             if confirmed {
                 t.put("prFailure", Value::Null);
                 if t.s("stage") == "approval" && !t.b("failure") {
@@ -187,6 +191,9 @@ fn poll_one(id: &str, pr: &str, j: &Value, via: &str) {
     let Ok(t) = res else { return };
     match then {
         Then::Merged => {
+            // The issues its work closes (`merge.closes`): GitHub's own, or closed here (land/closes.rs).
+            let closed = crate::land::closes::after_landing(&t, &root, t.s("mergeCommit"));
+            let t = if closed.is_empty() { t } else { update_wait(id, 10000, |t| { let m = format!("{}. {closed}", t.s("msg").trim_end_matches('.')); t.put("msg", m); Ok(Change::Write) }).unwrap_or(t) };
             tell_sidebar(&t);
             crate::land::cleanup::cleanup_job(id, mode);
             let t = get(id).unwrap_or(t);

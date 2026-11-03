@@ -2,7 +2,7 @@
 
 **An automation is a saved task plus a trigger.** Each time the trigger fires, the board adds an ordinary task and puts
 an agent on it at once. Nothing else: it chases no goal by itself, and it wakes nobody (nothing is sent to the
-Coordinator).
+Coordinator). A coordinator that works toward a goal by itself is [autopilot](autopilot.md).
 
 The easiest way to make one is to tell the Coordinator in plain words: "every Monday at nine, look for dependencies that
 are out of date", "after every merge, update the changelog". It runs the commands below.
@@ -90,10 +90,10 @@ herdr-projects automations add "Jira handoff" --prompt "Move the ticket to Done"
 herdr-projects automations                         the list
 herdr-projects automations add "<name>" --prompt "<what each task is to do>"
                 (--schedule "<when>" | --when <event> [--every-repo] [--if '<field> = <pattern>'])
-                [--repo NAME|PATH] [--<setting> VALUE ...] [--research|--no-research]
+                [--repo NAME|PATH] [--<setting> VALUE ...] [--research|--no-research] [--chat|--no-chat]
 herdr-projects automations show <name>             all of it: prompt, trigger, settings, last firings
 herdr-projects automations change <name> [--name NEW] [--prompt TEXT] [--schedule … | --when …]
-                [--if '…' | --if none] [--research | --no-research]
+                [--if '…' | --if none] [--research | --no-research] [--chat | --no-chat]
 herdr-projects automations on|off <name>
 herdr-projects automations run <name>              fire it now (through the same guards; never while it is off)
 herdr-projects automations firings <name>          when, what fired it, the task it made or why it was skipped
@@ -115,7 +115,8 @@ An automation may hold its own value for any setting a single task may hold: the
 `coordinator.*` or `watcher.*`.
 
 - Research only is one of them (`research.only`; `--research` on `automations add` and `automations change` is its short
-  form: [research-only tasks](research.md)).
+  form: [research-only tasks](research.md)). So is chat only (`chat.only`, `--chat` and `--no-chat`): each task it makes
+  is a conversation that ends when you say ([chat-only tasks](chat.md)).
 - It saves only the ones that differ. At a firing they become the new task's own settings, and everything else is looked
   up by the one rule, as for a task you typed ([settings](settings.md)). There is no place of its own in that order, and
   no setting that exists only for automations.
@@ -182,20 +183,20 @@ is no separate list behind a key any more: `Alt+O` is no key of the board.)
 
   One that turned itself off says why on a line under its row. One that is off is drawn as quietly as a done task. In a
   window too narrow for the trigger beside the name, the trigger goes on a line under it.
-- **A colour of its own**: the heading, the marks and the `[auto]` tag of a task one made are a purple that no status has
-  ([colours](colours.md)).
+- **A colour of its own**: the heading and the marks are a purple that no status has ([colours](colours.md)). The
+  `[auto]` tag of a task one made is dimmed, as every tag is.
 - **Keys**, once the row is selected (`↑` `↓` reach it where it stands, or a click):
 
   | Key | Does |
   |---|---|
   | `Enter` | open it |
   | `Space` | turn it on or off |
-  | `Tab` | fire it now |
+  | `Ctrl+S` | fire it now |
   | `Ctrl+X` | remove it (it asks first, as removing a task does; the tasks it made stay) |
   | `Ctrl+E` | its settings |
 
   The hint line shows these keys while such a row is selected, and only the ones that act (an automation that is off
-  never fires, so `Tab` is not offered). The `?` menu lists them in the same words. A key that acts on a task (approve,
+  never fires, so `Ctrl+S` is not offered). The `?` menu lists them in the same words. A key that acts on a task (approve,
   send back, archive, pin) does nothing on it.
 - **One automation, whole** (`Enter`, or `Alt+T`; beside the list with `Alt+P` on a wide screen): its state, its trigger,
   when it is next due, its repo, its prompt, its own settings (marked `*`), and its firings, newest first, each with the
@@ -207,7 +208,7 @@ is no separate list behind a key any more: `Alt+O` is no key of the board.)
 - **Making and rewording one** goes through the Coordinator's text box. On an automation's row no task is selected, so
   what you type goes where it goes with no task selected: to the Coordinator, or, with none on, added as a task word for
   word (then make the automation with the command).
-- **A task an automation made says so**: `[auto]` after its name on its row, in the automations' colour, and `Made by`
+- **A task an automation made says so**: `[auto]` after its name on its row, dimmed, and `Made by`
   in its panel's Status, naming the automation.
 - **Other machines' automations** show with their tasks, in that machine's part of the list
   ([other machines](other-machines.md)); one machine's own board shows only its own. The keys are the same from inside

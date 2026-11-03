@@ -1,6 +1,6 @@
 // The chat under the board's list. Its bar says who you talk to and flips it, as space does on the terminal board (the
-// Coordinator, or the selected task's agent: two choices of one switch), how they stand, and holds Call, Hide and Full
-// screen; under it the call's row while a call rings or is on. Under the bar is the web UI's own chat of whoever it is,
+// top row's coordinator, or the selected row's agent: two choices of one switch), how they stand, and holds Hide and Full
+// screen; under it the call's row while a call rings or is on. The Call button is in the box you type in, beside the mic. Under the bar is the web UI's own chat of whoever it is,
 // docked there (dock.js), or, where the web UI has none to show, the board's own: the conversation (said.js) and the
 // box (compose.js), with what the box does with your words: who they are for, kept with them until they are sent, and
 // who a file attached is for. The bar's grip sets how much of the screen the chat has. Who it is, what the box says
@@ -9,12 +9,12 @@
 import { h, icon, markEl } from "./dom.js";
 import { composeEl } from "./compose.js";
 import { saidEl } from "./said.js";
-import { talkNames } from "./talk.js";
 import { callEl } from "./callbtn.js";
 import { roomFor } from "./room.js";
 import { dockFor } from "./dock.js";
 
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+const possessive = (name) => (name.endsWith("s") ? `${name}'` : `${name}'s`);
 const DRAFT = "sw-draft";
 // What is kept is the draft with who it is for: words that came back after a reload without their recipient would be
 // sent to whoever the page shows then.
@@ -50,7 +50,7 @@ export function chatEl({ onSend, onPress, onDock }) {
     const sent = files.ids();
     voice.forget(); // sent as it is: a tidied version of dictated words that comes later is not put in
     mine(text);
-    const kept = await onSend(text, delegate, to ? { id: to.id, reply: to.reply, scope: to.scope || "" } : null);
+    const kept = await onSend(files.expand(text), delegate, to ? { id: to.id, reply: to.reply, scope: to.scope || "" } : null);
     busy = false;
     if (closed) return; // the board closed while it was on its way: a new box has the draft now
     if (!kept) {
@@ -59,7 +59,7 @@ export function chatEl({ onSend, onPress, onDock }) {
       box.value = edited ? box.value : box.value.slice(text.length).replace(/^\s+/, ""); files.clear(sent);
       if (edited) say("Sent as it was. Your changes made while it was sending stayed here and were not sent.");
       if (!box.value.trim() && !files.count()) to = null;
-      keep(box.value, to); grow();
+      keep(files.expand(box.value), to); grow();
     }
     files.place(); sync();
   };
@@ -73,7 +73,10 @@ export function chatEl({ onSend, onPress, onDock }) {
   };
   // A file attached is for whoever the words are for: attaching one locks that as typing does (sync).
   const whom = () => { const w = to || now; return w ? { id: w.id, reply: w.reply, scope: w.scope || "" } : null; };
-  const { el: compose, card, box, to: chip, send, also, grow, files, voice, say, destroy } = composeEl({ onSend: go, onInput: () => { if (closed) return; sync(); keep(box.value, to); }, onTab: () => { if (also.hidden || busy) return false; go(true); return true; }, whom, hold: () => busy, onGrow: () => room?.fit() });
+  // A voice call with whoever the chat talks to: its button in the box beside the mic, its row under the bar (callbtn.js).
+  // Docked, the button is in the web UI's box, beside its mic (dock.js); with the board's own chat, in the board's box.
+  const phone = callEl();
+  const { el: compose, card, box, to: chip, send, also, grow, files, voice, say, destroy } = composeEl({ onSend: go, onInput: () => { if (closed) return; sync(); keep(files.expand(box.value), to); }, onStart: () => { if (also.hidden || busy) return false; go(true); return true; }, whom, hold: () => busy, onGrow: () => room?.fit(), call: phone.btn });
   box.value = saved();
   if (box.value.trim()) to = savedTo(); // a reload brings the words back with who they were for
 
@@ -86,9 +89,7 @@ export function chatEl({ onSend, onPress, onDock }) {
   const grow2 = h("button.icon-button.sw-grow", { type: "button", onclick: () => setFull(!full) });
   const grip = h("div.sw-split", { tabIndex: 0, role: "separator", "aria-orientation": "horizontal", "aria-label": "Resize the chat", title: "Drag to give the chat more or less room" });
   const note = h("p.sw-chat-note", { hidden: true });
-  // A voice call with whoever the chat talks to: its button in the bar, its row under it (callbtn.js).
-  const phone = callEl();
-  const bar = h("div.sw-chatbar", grip, who, state, h("span.sw-chatbar-space"), phone.btn, hide, grow2);
+  const bar = h("div.sw-chatbar", grip, who, state, h("span.sw-chatbar-space"), hide, grow2);
   const said = saidEl();
   const own = h("div.sw-own", said.el, compose);
   let labels = { enter: "", delegate: "" };
@@ -103,8 +104,8 @@ export function chatEl({ onSend, onPress, onDock }) {
     // The frame's colour says who the box sends to: with a draft locked to somebody the page no longer shows (or
     // before the page knows who it shows, right after a reload), it is the plain one, never the open task's colour.
     card.className = `sw-card sw-b-${to && (moved || !now) ? "text" : tone}`;
-    chip.hidden = !moved; chip.className = "sw-to is-locked"; chip.textContent = moved ? `To: ${to.label}${to.reply ? " agent" : ""} · not who is shown above` : "";
-    send.disabled = !typing || busy || files.busy(); files.refresh(); voice.sync(); send.title = cap(l.enter) || "Send message"; also.hidden = !typing || !l.delegate; also.disabled = busy; also.title = l.delegate ? `${cap(l.delegate)} (Tab)` : "";
+    chip.hidden = !moved; chip.className = "sw-to is-locked"; chip.textContent = moved ? `To: ${to.label} · not who is shown above` : "";
+    send.disabled = !typing || busy || files.busy(); files.refresh(); voice.sync(); send.title = cap(l.enter) || "Send message"; also.hidden = !typing || !l.delegate; also.disabled = busy; also.title = l.delegate ? `${cap(l.delegate)} (Ctrl+S)` : "";
   }
   const el = h("footer.sw-chat", { "aria-label": "Chat" }, bar, phone.strip, note, own);
 
@@ -122,18 +123,25 @@ export function chatEl({ onSend, onPress, onDock }) {
     board.classList.toggle("is-docked", docked);
     board.classList.toggle("sw-chat-full", full);
     board.classList.toggle("sw-chat-hidden", !open && !full);
+    // Nothing said yet (a coordinator that never ran, a task with no agent): the board's own chat is only its bar and
+    // its box, and the list keeps the room an empty conversation would take.
+    const empty = !docked && !!showing && !showing.parts.length && !full;
+    board.classList.toggle("sw-chat-empty", empty);
     board.classList.toggle("is-side", side);
-    board.classList.toggle("sw-web-typing", webTyping);
+    // Typing in the web UI's box with the chat hidden, the board stays in view over it: the chat stays hidden.
+    const stepped = webTyping && (open || full);
+    board.classList.toggle("sw-web-typing", stepped);
     own.hidden = docked;
+    if (!docked && voice.el.nextSibling !== phone.btn) voice.el.after(phone.btn); // back from the web UI's box
     said.show(!docked && (open || full));
-    const sized = !full && !webTyping && !side;
+    const sized = !full && !stepped && !side;
     // Docked, the board ends where the web UI's chat begins: the chat's share of the screen under it, or with the chat
     // hidden only the web UI's box. With its own chat, the conversation's height is that share.
     const H = appHeight(), boxH = parseFloat(html.style.getPropertyValue("--sw-composer-h")) || 0;
-    if (docked && sized) board.style.setProperty("--sw-top-h", `${Math.round(open ? H - Math.max(boxH + 140, split * H) : H - boxH)}px`);
+    if (docked && sized) board.style.setProperty("--sw-top-h", `${Math.max(0, Math.round(open ? H - Math.max(boxH + 140, split * H) : H - boxH))}px`);
     else board.style.removeProperty("--sw-top-h");
     board.style.setProperty("--sw-chat-share", `${Math.round(split * H)}px`);
-    grip.hidden = !sized || !open;
+    grip.hidden = !sized || !open || empty;
     hide.replaceChildren(icon(open ? "down" : "up"));
     hide.title = open ? "Hide the chat" : "Show the chat"; hide.setAttribute("aria-label", hide.title); hide.setAttribute("aria-pressed", String(!open));
     // Full screen, the same button in the same place goes back (Hide has nothing to hide then).
@@ -169,29 +177,37 @@ export function chatEl({ onSend, onPress, onDock }) {
   });
   window.addEventListener("resize", layout);
 
-  // The bar's switch: the two you can talk to, the one you talk to now pressed. Each with how it stands where the board
-  // says so: the one you talk to by the chat's own mark, a task's agent by its row's.
+  // The bar's switch: the two you can talk to, as space flips them on the terminal board: the top row's coordinator
+  // (All machines, or the machine shown) and the selected row's agent (a task's, a machine's or a project's
+  // coordinator). The one you talk to is pressed, by its name in the status colour of where it stands (the box's frame
+  // has it too), then dimmed the kind of agent it is (· Agent, · Project coordinator), as the terminal box's edge says
+  // it. With nobody else to talk to (the top row selected, a status group, an automation) only that one.
   function drawWho(snap, c) {
-    const { is, other } = talkNames(snap);
-    const row = snap.list?.groups?.flatMap((g) => g.rows).find((r) => r.id === snap.list.selected);
-    const agentMark = row ? markEl(row.mark, row.color, row.markDim) : null;
-    const choice = (name, pressed, mark) => h(`button.sw-who-pick${pressed ? ".is-on" : ""}`, { type: "button", "aria-pressed": String(pressed), title: pressed ? `Talking to ${name}` : `Talk to ${name} instead`, onclick: () => { if (!pressed && !busy && now) onPress("talk"); } }, mark, h("span.sw-who-name", name));
+    const t = c.title, lit = t?.steps?.length ? t.steps[t.steps.length - 1] : c.name, edge = t?.edge || "text";
+    const said = t ? t.steps.join(" › ") : lit;
+    const other = c.toAgent ? c.top : c.row;
+    const kind = t?.kind ? h("span.sw-who-kind", `· ${t.kind}`) : null;
     const mark = markEl(c.mark.t, c.mark.c);
-    if (!other) { who.className = "sw-who is-one"; who.replaceChildren(h("span.sw-who-pick.is-on", mark, h("span.sw-who-name", is))); return; }
-    // The Coordinator first, the task's agent (or a heading's coordinator) second, whichever you talk to now.
-    const [coord, agent] = c.toAgent ? [other, is] : [is, other];
-    who.className = "sw-who segmented";
-    who.replaceChildren(choice(coord, !c.toAgent, c.toAgent ? null : mark), choice(agent, !!c.toAgent, c.toAgent ? mark : agentMark));
+    const choice = (name, pressed, m) => h(`button.sw-who-pick${pressed ? `.is-on.sw-e-${edge}` : ""}`, { type: "button", "aria-pressed": String(pressed), title: pressed ? `Talking to ${said}` : `Talk to ${name} instead`, onclick: () => { if (!pressed && !busy && now) onPress("talk"); } }, m, h("span.sw-who-name", name));
+    if (!other || other === lit) { who.className = "sw-who is-one"; who.replaceChildren(...[h(`span.sw-who-pick.is-on.sw-e-${edge}`, { title: said }, mark, h("span.sw-who-name", lit)), kind].filter(Boolean)); return; }
+    // The other one's mark: the selected task's row's, or the selected heading's coordinator's.
+    const row = snap.list?.groups?.flatMap((g) => g.rows).find((r) => r.id === snap.list.selected);
+    const head = snap.list?.groups?.find((g) => g.id === snap.list.selected)?.pilot?.mark?.find((x) => x.t.trim());
+    const rowMark = row ? markEl(row.mark, row.color, row.markDim) : head ? markEl(head.t, head.c, !!head.d) : null;
+    // The top row's coordinator first, the row's agent second, whichever you talk to now.
+    const [top, agent] = c.toAgent ? [choice(c.top, false, null), choice(lit, true, mark)] : [choice(lit, true, mark), choice(c.row, false, rowMark)];
+    who.className = "sw-who";
+    who.replaceChildren(...[h("span.sw-who-switch.segmented", top, agent), kind].filter(Boolean));
   }
   // Where the web UI's chat of them is asked again when who it is changes, and while the board's own stands in, when
   // how they stand changes (a Coordinator that has just started).
   let asked = "";
   const ask = (whose) => { if (whose === asked) return; asked = whose; onDock(); };
 
-  dock = dockFor({ boardOf: () => el.closest(".sw-board"), onChange: () => layout(), onTyping: (on) => { webTyping = on; layout(); },
+  dock = dockFor({ boardOf: () => el.closest(".sw-board"), onChange: () => layout(), onTyping: (on) => { webTyping = on; layout(); }, guest: phone.btn,
     // A coordinator's words in the web UI's box (the Coordinator's, a machine's or a repo's) go through the board; a
     // task's agent's as the web UI sends them.
-    route: () => (snapNow?.chat && now && (!now.reply || coordHead) && snapNow.role === "drive" ? { delegate: labels.delegate || "", send: (text, delegate) => onSend(text, delegate, { id: now.id, reply: now.reply, scope: now.scope || "" }) } : null) });
+    route: () => (snapNow?.chat && now && (!now.reply || coordHead) && snapNow.role === "drive" ? { send: (text) => onSend(text, false, { id: now.id, reply: now.reply, scope: now.scope || "" }) } : null) });
   // Above a phone's keyboard the board's own box stays whole, and the line you type on in view (room.js).
   room = roomFor({ chat: el, said: said.el, box });
   return {
@@ -210,14 +226,13 @@ export function chatEl({ onSend, onPress, onDock }) {
       snapNow = snap;
       el.hidden = !c;
       if (!c) return;
-      // A machine's or a repo's coordinator is drawn in its heading's colour: its name in the bar (chat.css).
-      if (c.tint) el.dataset.tint = c.tint; else delete el.dataset.tint;
       drawWho(snap, c);
       // Talking to a machine's or a repo's coordinator (on its heading), not to a task's agent.
       coordHead = !!c.toAgent && !!c.head && !(snap.list?.selected && snap.flags?.onTask !== false && c.task);
       // How they stand, as the terminal's line over the box says it, with the check's progress.
-      const words = cap([c.status, c.progress].filter(Boolean).join(" · "));
-      if (words !== status) { status = words; state.replaceChildren(words); state.title = words; }
+      const words = cap([c.status, c.progress].filter(Boolean).join(" · ")), kind = c.title?.kind || "";
+      // (On a narrow bar the kind of agent starts this line: chat.css.)
+      if (words + kind !== status) { status = words + kind; state.replaceChildren(...(kind ? [h("span.sw-status-kind", `${kind}${words ? " · " : ""}`)] : []), ...(words ? [h("span.sw-status-words", words)] : [])); state.title = [kind, words].filter(Boolean).join(" · "); }
       state.classList.toggle("is-plain", PLAIN.test(c.status || "") && !c.progress);
       open = !!c.open;
       note.hidden = !c.note; note.textContent = c.note;
@@ -230,17 +245,19 @@ export function chatEl({ onSend, onPress, onDock }) {
       showing = { parts, raw: !!c.raw, toAgent: !!c.toAgent };
       said.set(parts);
       // The box's frame says who gets your words, as on the terminal board: the plain text colour for the Coordinator,
-      // the task's status colour for its agent, a heading's colour for its coordinator.
+      // the task's status colour for its agent, a heading's coordinator's own colour for it.
       tone = c.box || "text"; // (drawn by `sync`, below, once who is shown now is known)
       box.placeholder = cap(snap.send.place || "");
       labels = snap.send;
       // Who a draft started now would be for: the task whose agent the chat names, or the Coordinator.
       // (Which machine's Coordinator, too: the view it was typed in is part of who it is for.)
-      now = { id: c.toAgent ? snap.list.selected : "", reply: !!c.toAgent, scope: snap.flags?.scope || "", label: c.toAgent ? c.tag || c.name : c.name, enter: snap.send.enter, delegate: snap.send.delegate };
+      // (Named as the terminal names an agent: `HP-12's agent`, `gtm's project coordinator`.)
+      const lit = c.title?.steps?.length ? c.title.steps[c.title.steps.length - 1] : "";
+      now = { id: c.toAgent ? snap.list.selected : "", reply: !!c.toAgent, scope: snap.flags?.scope || "", label: lit ? `${possessive(lit)} ${c.title.kind.toLowerCase()}` : c.name, enter: snap.send.enter, delegate: snap.send.delegate };
       box.disabled = snap.role !== "drive";
       if (snap.role !== "drive") box.placeholder = "This device can only watch";
       grow(); sync();
-      if (to) keep(box.value, to); // locked just now (words that were there before the board answered): kept with them
+      if (to) keep(files.expand(box.value), to); // locked just now (words that were there before the board answered): kept with them
       layout();
     },
   };

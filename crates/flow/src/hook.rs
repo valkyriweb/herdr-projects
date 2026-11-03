@@ -4,19 +4,22 @@
 //! Verified on herdr 0.9.3: plugin hooks do fire on agent status changes; HERDR_PLUGIN_EVENT_JSON carries
 //! {event, data: {pane_id, workspace_id, agent_status, agent}}; an agent exiting to its shell fires
 //! pane.agent_detected (released) and a status change to "unknown"; herdr does not replay missed events.
+mod lost;
 mod reconcile;
+pub use lost::{ask_start, retry_lost, GRACE_MS};
 pub use reconcile::{reconcile, same_dir};
 
 use crate::agents::{adapter::find_session, installed::read_turn_of};
 use crate::clock::now;
 use crate::delegate::task_line;
-use crate::flow::{git::{cancel_auto_merge, pr_number}, handled_turn::{reopened, same_turn}, live::see_terminal, sidebar::tell_sidebar, task::{is_agent_task, note_stat}};
-use crate::herdr::{cli::current_socket, Herdr};
+use crate::flow::{git::{cancel_auto_merge, pr_number}, handled_turn::{reopened, same_turn}, live::see_terminal, pane_owner::agents_pane, sidebar::tell_sidebar, task::{is_agent_task, note_stat}};
+use crate::leftovers::sweep::ended;
+use crate::herdr::{cli::{current_socket, same_socket}, Herdr};
 use crate::json::*;
 use crate::limits::run::granted;
 use crate::runner::{runner_alive, spawn_runner};
 use crate::store::{failures::failure_patch, files::{data_dir, has_tasks}, handovers::fresh_list, inbox::{pending_text, take_text, untake_text}, repos::cwd_of, tasks::{get, list, update_wait, Change, ListOpts, Task}};
-use crate::submit::{hand, not_started, note_sent, rest, took};
+use crate::submit::{hand, not_started, note_sent, rest, took, unconfirmed::taken};
 use std::path::Path;
 
 /// Stages in which a finished turn nobody saw start (a short turn, a herdr restart, a lock wait) still counts.
@@ -40,15 +43,20 @@ pub fn hook_main() {
     crate::housekeeping::housekeeping(&socket, crate::housekeeping::Force::No);
 }
 pub fn log(e: &str) { let _ = std::fs::OpenOptions::new().create(true).append(true).open(data_dir().join("hook.log")).and_then(|mut f| { use std::io::Write; writeln!(f, "{} {e}", crate::clock::iso(now())) }); }
-fn mine(socket: &str) -> Vec<Task> { list(ListOpts { attempts: true, ..Default::default() }).into_iter().filter(|t| is_agent_task(t) && t.at("link").s("socket") == socket).collect() }
+fn mine(socket: &str) -> Vec<Task> { list(ListOpts { attempts: true, ..Default::default() }).into_iter().filter(|t| is_agent_task(t) && same_socket(t.at("link").s("socket"), socket)).collect() }
 fn on_gone(socket: &str, matches: impl Fn(&Task) -> bool) { let api = Herdr::new(Some(socket.into())); for t in mine(socket) { if matches(&t) { reconcile(&t, &api); } } }
 
 /// The hook looks the pane up by herdr socket path plus pane id (pane ids repeat across herdr sessions) and does
 /// nothing when there is no match. Reviewer panes never trigger the finish line.
 pub fn on_pane(socket: &str, pane: &str) {
-    let Some(t) = mine(socket).into_iter().find(|t| t.at("link").s("pane") == pane) else { return };
+    let named: Vec<Task> = mine(socket).into_iter().filter(|t| t.at("link").s("pane") == pane).collect();
+    let Some(first) = named.iter().find(|t| !ended(t)).or(named.first()) else { return };
     let api = Herdr::new(Some(socket.into()));
-    let Ok(Some(a)) = api.agent_get(pane) else { return reconcile(&t, &api) };
+    let Ok(Some(a)) = api.agent_get(pane) else { return reconcile(first, &api) };
+    // A done task's old pane id, given to another pane since (a coordinator's): what runs there is not its agent. Nor is
+    // a coordinator's own, a task's not done yet included: its readings never go into a task's terminals.
+    if crate::flow::pane_owner::coordinators_pane(socket, pane, a.s("terminal_id")) { return; }
+    let Some(t) = named.into_iter().find(|t| !ended(t) || agents_pane(t, a.s("terminal_id"))) else { return };
     // Ids can change: a match also requires the pane to be in the task's working folder. No prompt is ever sent to a
     // pane that fails this check.
     let cwd = cwd_of(&t);
@@ -94,7 +102,7 @@ pub fn apply(id: &str, a: &Value, api: &Herdr) {
         if status == "working" { t.put("workedAt", now()); t.del("owedTurn"); } // herdr has seen it work: an idle after this is the end of a turn, not the wait before one (state.rs)
         // What the board typed in has been taken: the agent works, or has worked since.
         if t.at("sent").b("busy") { let r = rest(t.at("sent"), a); t.put("sent", r); } // typed into a running turn: only what it does once at rest says
-        else if t.at("sent").is_object() && took(t.at("sent"), Some(a), None) == Some(true) { t.put("sent", Value::Null); }
+        else if t.at("sent").is_object() && took(t.at("sent"), Some(a), None) == Some(true) { taken(t, a); } // on the counters' word alone, confirmed later (submit/unconfirmed.rs)
         // Told "not started", and now it works: you pressed enter in its terminal yourself.
         if t.b("unsent") && status == "working" && t.s("stage") == "failed" && t.at("failure").s("stage") == "send" { t.put("unsent", Value::Null); t.put("failure", Value::Null); }
         if a.at("agent_session").b("value") { let v = a.at("agent_session").at("value").clone(); t.put("session", v); }

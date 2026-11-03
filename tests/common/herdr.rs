@@ -4,6 +4,7 @@
 use serde_json::{json, Value};
 use std::cell::RefCell;
 use sw::herdr::cli::{Fake, Ran};
+use sw::herdr::procs::Wiring;
 use sw::json::*;
 
 pub struct FakeHerdr { pub st: RefCell<Value>, pub dir: std::path::PathBuf, pub script: RefCell<Value>, pub env: Vec<(String, String)> }
@@ -21,12 +22,32 @@ impl Fake for FakeHerdr {
         let Exit(status, stdout, stderr) = match r { Ok(e) | Err(e) => e };
         Ran { status, stdout, stderr }
     }
-    /// pid 1 is an agent with one process under it: 2, wired to it (an MCP server: `helper`, `servers`), or 3, which is
-    /// not (`child`, `wrapped`, `tool`)
-    fn kids(&self, pid: i64) -> Vec<i64> { if pid != 1 { vec![] } else if self.st.borrow().arr("panes").iter().any(|p| p.b("child") || p.b("wrapped") || p.b("tool")) { vec![3] } else { vec![2] } }
-    fn wired_to(&self, pid: i64, _group: &[i64]) -> Option<bool> { Some(pid == 2) }
-    /// Ending a fake agent's process: its pane is at its shell again.
-    fn kill(&self, pid: i64) { for p in self.st.borrow_mut()["panes"].as_array_mut().unwrap() { if p.at("agent").i("pid") == pid { p["agent"] = Value::Null; } } }
+    /// pid 1 is an agent with one process under it: 2, wired to it (an MCP server), or 3, which is not (`child`, `wrapped`).
+    /// A helper that is a language server (`helper: "lsp"`) has one of its own, 4, in a group of its own; one the agent
+    /// started in a group of its own (`helper: "own"`) is 5, wired to the agent
+    fn kids(&self, pid: i64) -> Vec<i64> { let h = |v: &str| self.st.borrow().arr("panes").iter().any(|p| p.s("helper") == v); if pid == 2 && h("lsp") { vec![4] } else if pid == 1 && h("own") { vec![5] } else if pid != 1 { vec![] } else if self.st.borrow().arr("panes").iter().any(|p| p.b("child") || p.b("wrapped")) { vec![3] } else { vec![2] } }
+    fn wired_to(&self, pid: i64, group: &[i64]) -> Option<bool> { self.wiring(pid, group).wired() }
+    /// 2 and 5 are wired to the agent (but 2 is a dev server, `tool`); 3 streams to the terminal, or (`child` says) is wired to a
+    /// file, closed, or cannot be looked at
+    fn wiring(&self, pid: i64, _group: &[i64]) -> Wiring {
+        if (pid == 2 && !self.st.borrow().arr("panes").iter().any(|p| p.b("tool"))) || pid == 5 { return Wiring::Agent; }
+        match self.st.borrow().arr("panes").iter().find(|p| p.b("child")).map(|p| p.t("child")).as_deref() { Some("file") => Wiring::Elsewhere, Some("closed") => Wiring::Closed, Some("unknown") => Wiring::Unknown, _ => Wiring::Terminal }
+    }
+    /// 2 is an MCP server, or a dev server the agent left running (`tool`); 3 a command; 4 a language server's own
+    fn command(&self, pid: i64) -> Option<String> {
+        let tool = self.st.borrow().arr("panes").iter().any(|p| p.b("tool"));
+        match pid { 2 if tool => Some("node /srv/app/dev-server.js --port 3000".into()), 2 => Some("node /opt/mcp/server.js --stdio".into()), 3 => Some("sleep 600".into()), 4 => Some("gopls telemetry".into()), 5 => Some("gopls".into()), _ => None }
+    }
+    /// Ending a fake agent's process: its pane is at its shell again. Every process ended is noted (`killed`).
+    fn kill(&self, pid: i64) {
+        let mut st = self.st.borrow_mut();
+        arr(&mut st, "killed").push(json!(pid));
+        for p in st["panes"].as_array_mut().unwrap() { if p.at("agent").i("pid") == pid { p["agent"] = Value::Null; } }
+    }
+    /// 2 and 3 run until they are ended
+    fn alive(&self, pid: i64) -> Option<bool> { [2, 3].contains(&pid).then(|| !self.st.borrow().arr("killed").contains(&json!(pid))) }
+    /// The herdr program cannot be found from here (`noProgram`): run where it is not on PATH nor anywhere usual.
+    fn found(&self) -> bool { !self.st.borrow().b("noProgram") }
 }
 impl FakeHerdr {
     pub fn ws_out(st: &Value, w: &Value) -> Value {
@@ -45,7 +66,8 @@ impl FakeHerdr {
         let a = p.at("agent");
         let mut o = json!({ "agent": a.at("kind"), "agent_status": a.at("status"), "name": a.at("name"), "pane_id": p.at("pane_id"), "workspace_id": p.at("workspace_id"), "tab_id": p.at("tab_id"), "terminal_id": p.at("terminal_id"), "cwd": p.at("cwd"), "foreground_cwd": p.at("cwd"), "state_change_seq": a.at("seq") });
         if p.b("display_agent") { o["display_agent"] = p.at("display_agent").clone(); }
-        if !a.at("completion").is_null() { o["completion_seq"] = a.at("completion").clone(); }
+        // As real herdr: no completion_seq while a turn is going, only once it has ended.
+        if !a.at("completion").is_null() && a.s("status") != "working" { o["completion_seq"] = a.at("completion").clone(); }
         if a.b("session") { o["agent_session"] = json!({ "kind": "id", "value": a.at("session") }); }
         o
     }

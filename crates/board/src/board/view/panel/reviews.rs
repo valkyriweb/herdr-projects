@@ -113,14 +113,22 @@ pub fn reviews(k: &mut Kit, c: &Ctx, r: &Obj) -> bool {
     k.parts.push(p);
     cut
 }
-/// The report: that a task is research only, and the link to the report its agent wrote.
+/// The report: that a task is research only (or a chat), and the link to the report its agent wrote.
 pub fn report(k: &mut Kit, c: &Ctx, r: &Obj) {
+    let chat = crate::chat_only::is_chat(r);
     let research = crate::research::is_research(r);
     let rep = r.at("report");
     let has = rep.is_object() && (rep.b("link") || rep.b("file"));
-    if !research && !has { return; }
-    let mut lines = vec![k.head(if research { "Research only" } else { "Report" }, None)];
-    if research { lines.extend(k.wrap(if has { "Changes nothing in the repo." } else { "Changes nothing in the repo. No report yet." }).into_iter().map(|l| l.recolor(Ink::Muted))); }
-    if has { lines.extend(artifact_rows(&json!({ "link": rep.at("link"), "caption": "Open report", "detail": if c.full { format!("{}{}", rep.s("file"), if rep.b("at") { format!(" · kept {} ago", age(c.now - rep.i("at"))) } else { String::new() }) } else { String::new() } }), if c.full { k.w } else { k.room + 2 }, c.full)); }
+    if !research && !chat && !has { return; }
+    let mut lines = vec![k.head(if chat { "Chat" } else if research { "Research only" } else { "Report" }, None)];
+    if chat { lines.extend(k.wrap("No change to the repo · ends when you say.").into_iter().map(|l| l.recolor(Ink::Muted))); }
+    else if research { lines.extend(k.wrap(if has { "Changes nothing in the repo." } else { "Changes nothing in the repo. No report yet." }).into_iter().map(|l| l.recolor(Ink::Muted))); }
+    let room = if c.full { k.w } else { k.room + 2 };
+    if has { lines.extend(artifact_rows(&json!({ "link": rep.at("link"), "caption": "Open report", "detail": if c.full { format!("{}{}", rep.s("file"), if rep.b("at") { format!(" · kept {} ago", age(c.now - rep.i("at"))) } else { String::new() }) } else { String::new() } }), room, c.full)); }
+    // How to open it: the board's key, or the terminal's own click on a link (the web board's link is a plain one).
+    if has && !c.web {
+        let click = if rep.s("link").starts_with("http") { format!(", or {}+click", if crate::board::key_style::mac() { "cmd" } else { "ctrl" }) } else { String::new() };
+        lines.extend(Kit::wrap_at(&format!("{} opens it{click}", key_name("openLink")), room.saturating_sub(2).max(1)).into_iter().map(|l| Inked::plain("  ").add(l.recolor(Ink::Muted))));
+    }
     k.part(lines);
 }

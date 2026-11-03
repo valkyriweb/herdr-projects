@@ -19,12 +19,24 @@ Every agent the board starts is told the same, in every repo:
   `~/.herdr-projects/reports/<repo>/<number>/` ([the home folder](home-folder.md)), as `index.html` (one page that
   stands by itself) or `report.md`. That folder is outside every repo, so the report cannot be committed by mistake, and
   it stays when the task's worktree goes.
+- **The folder is in its environment too**, as `HERDR_PROJECTS_TASK_REPORTS`, beside the task's id as
+  `HERDR_PROJECTS_ID` (the name `workspace.setup` has it by): the agent, its reviewers and the picker of
+  [attempts](attempts.md) all have both.
 - **When the agent finishes, the board gives the report a link**, served the way a review's evidence is: privately on
   your tailnet with `serve: tailscale`, on `127.0.0.1` with `serve: local` ([settings](settings.md)). The link opens
   `index.html` when there is one, else `report.html`, `report.md`, `README.md`, else the folder's first file.
 
-The task panel shows the link under **Report**, beside the list and full screen (`Open report`; full screen also shows
-the file's name and the full link). `herdr-projects details <id>` has it as `report`.
+The task panel shows the link under **Report**, beside the list and full screen (full screen also shows the file's name
+and the full link). `herdr-projects details <id>` has it as `report`. To open it:
+
+- **`Ctrl+D`** on the task opens its report in the browser of the machine the board runs on (`open` on macOS,
+  `xdg-open` on Linux with a display); on a task with no report it opens the pull request. A done task's hint line names
+  the key. Where nothing can open a link there (no opener, ssh without a display), the key copies the link to your
+  clipboard instead (OSC 52, as the board's copy does: [mouse](mouse.md)) and says so. The full list: [keys](keys.md).
+- **The terminal's own click on a link**: `Cmd`+click on a Mac, `Ctrl`+click in most other terminals. A plain click does
+  nothing, and some terminals do not pass the link through herdr at all. A report no page server serves (no
+  `serve` link) is a file's path, not a link: `Ctrl+D` opens that too.
+- **On the web board** the report is a plain link, and the task's "Open the link" button opens it in a new tab.
 
 This holds for any task. A task that changes code and also wrote a report has both: its change in the pull request, and
 its report on the task.
@@ -48,6 +60,7 @@ every setting is, nearest answer first: **the task → your entry for that repo 
   `the repo's file`, `built in`). `unset research.only` takes an answer away again.
 - The name reads as what the board calls it everywhere, "research only", in the dotted style of `merge.by` and
   `review.when`.
+- With [`chat.only`](chat.md) on as well, chat wins: the task is a conversation, research that never finishes by itself.
 
 ### On the board
 

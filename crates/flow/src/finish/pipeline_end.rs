@@ -3,6 +3,7 @@
 use super::auto_merge::by_itself;
 use super::hand_over::hand_over;
 use super::review::run_review;
+use super::review_screen::with_screen;
 use super::shared::{approval_message_with, fail, failure, first_line, FailHow};
 use crate::clock::now;
 use crate::err::Res;
@@ -22,19 +23,27 @@ pub struct Ctx<'a> {
     pub tree: &'a str, pub folder: &'a Path, pub root: &'a Path, pub check: &'a str, pub note: String, pub kept: Option<Value>, pub kept_how: Option<Value>,
 }
 fn finished(text: &str) -> String { let f = first_line(text); if f.is_empty() { "Finished".into() } else { f } }
-/// A pull-request blocker found by polling survives a passing local check: remote CI must confirm.
-fn hold_pr_failure(g: &mut Guard, t: &Task) -> Res<bool> {
+/// A pull-request blocker found by polling survives a passing local check: remote CI must confirm. Failed checks of an
+/// older commit than the one pushed now say nothing of it: they are cleared, and GitHub's checks are looked at anew (#309).
+fn hold_pr_failure(g: &mut Guard, t: &mut Task) -> Res<bool> {
+    if crate::land::checks::stale(t, t.s("prHead")) { *t = g.set(|t| { t.put("prFailure", Value::Null); if t.s("prState") == "failing" { t.put("prState", Value::Null); } })?; }
     if !t.b("prFailure") { return Ok(false); }
     let h = g.set(|t| { t.put("stage", "approval"); t.put("failure", Value::Null); let m = format!("Local checks passed; pull request still blocked: {}. Wait for remote confirmation or send the details to the agent", t.at("prFailure").s("title")); t.put("msg", m); })?;
     flow::sidebar::tell_sidebar(&h);
     Ok(true)
 }
-fn done(g: &mut Guard, t: &Task, msg: &str, review: Option<&Value>) -> Res<()> {
+pub fn done(g: &mut Guard, t: &Task, msg: &str, review: Option<&Value>) -> Res<()> {
     let mark = flow::spaces::tidy_mark(t, "merged", "");
     let d = g.set(|t| { t.put("stage", "done"); t.put("tidy", mark.clone().unwrap_or(Value::Null)); t.put("msg", one_line(msg, 2048)); t.put("failure", Value::Null); t.put("mergeIntent", Value::Null); if let Some(r) = review { t.put("review", r.clone()); } })?;
     flow::sidebar::tell_sidebar(&d);
     crate::land::tidy(d.s("id"), "merged"); // done with nothing to merge leaves herdr's sidebar like merged work does
     Ok(())
+}
+/// Work that is on main already (the agent merged it itself) closes its issues (`merge.closes`) as a merge does: the
+/// words for its line, after a space. Nothing for work that needed no change.
+fn on_main_closes(t: &Obj, root: &Path) -> String {
+    let closed = if t.s("doneWhy").starts_with("Already") { crate::land::closes::after_landing(t, root, "") } else { String::new() };
+    if closed.is_empty() { closed } else { format!(" {closed}") }
 }
 pub fn after_review(c: Ctx, g: &mut Guard) -> Res<()> {
     let id = c.id;
@@ -44,8 +53,8 @@ pub fn after_review(c: Ctx, g: &mut Guard) -> Res<()> {
     let ch = work(Some(&t));
     // Nothing to land: it is simply done, unless work outside a repo is reviewed too (review "always").
     if !to_land && ch.s("review.when") != "always" && !(c.research && ch.s("review.when") != "never") {
-        if hold_pr_failure(g, &t)? { return Ok(()); }
-        return done(g, &t, &format!("{}{}", finished(c.text), c.note), None);
+        if hold_pr_failure(g, &mut t)? { return Ok(()); }
+        return done(g, &t, &format!("{}{}{}", finished(c.text), c.note, on_main_closes(&t, c.root)), None);
     }
     // An adversarial review before it reaches you. Its settings are read now, as the review starts.
     let ch = work(get(id).as_ref());
@@ -65,7 +74,7 @@ pub fn after_review(c: Ctx, g: &mut Guard) -> Res<()> {
         // The task keeps every review it had. A review the provider cut off is not one: it is not on the list.
         if !r.cut { let entry = r.review.clone().map(Value::Object).unwrap_or_else(|| json!({ "error": r.error })); g.set(|t| log_review(t, &entry))?; }
         let Some(rv) = r.review else {
-            let mut f = failure("review", if r.auth { "Needs a login" } else { "Review failed" }, &format!("Review failed: {}", r.error), "Investigate the reviewer failure, then finish again for a fresh review. Do not bypass review or merge approval.");
+            let mut f = failure("review", if r.auth { "Needs a login" } else { "Review failed" }, &with_screen(&format!("Review failed: {}", r.error), &r.screen), "Investigate the reviewer failure, then finish again for a fresh review. Do not bypass review or merge approval.");
             if r.auth { f.put("auth", true); }
             f.put("msg", if r.auth { "The reviewer needs a login".to_string() } else { format!("Review failed: {}. Retry the task to review again", one_line(&r.error, 200)) });
             fail(g, f, FailHow { patch: obj(json!({ "review": null })), ..Default::default() })?;
@@ -130,17 +139,17 @@ pub fn after_review(c: Ctx, g: &mut Guard) -> Res<()> {
         }
         let stat = change.as_ref().map(|x| x.at("stat").clone()).unwrap_or(Value::Null);
         t = g.set(|t| { t.put("review", review.clone().unwrap_or(Value::Null)); t.put("stat", stat.clone()); t.put("reviewedHead", head_v.clone()); t.obj_mut("mergeIntent").put("verifiedHead", head_v.clone()); })?;
-        if hold_pr_failure(g, &t)? { return Ok(()); }
+        if hold_pr_failure(g, &mut t)? { return Ok(()); }
         g.set(|t| { t.put("stage", "merging"); t.put("msg", "Merging"); })?;
         return crate::land::land_core(id, g);
     }
     if !to_land {
-        let msg = format!("{}{}{}", review.as_ref().map(|r| format!("{} ", gate::sentence(r, "accept"))).unwrap_or_default(), finished(c.text), c.note);
+        let msg = format!("{}{}{}{}", review.as_ref().map(|r| format!("{} ", gate::sentence(r, "accept"))).unwrap_or_default(), finished(c.text), c.note, on_main_closes(&t, c.root));
         return done(g, &t, &msg, review.as_ref());
     }
     let stat = change.as_ref().map(|x| x.at("stat").clone()).unwrap_or(Value::Null);
     t = g.set(|t| { t.put("review", review.clone().unwrap_or(Value::Null)); t.put("stat", stat.clone()); t.put("reviewedHead", head_v.clone()); t.put("mergeFailed", false); })?;
-    if hold_pr_failure(g, &t)? { return Ok(()); }
+    if hold_pr_failure(g, &mut t)? { return Ok(()); }
     // A task that merges by itself (`merge.by`, read now) still wants a review that passed the gate.
     let skip = c.sync.map(|s| !sync::held_why(s).is_empty()).unwrap_or(false);
     if by_itself(&t) && !t.b("requireApproval") && !t.b("chat") && !skip && (!review_needed || (review.is_some() && passed)) {

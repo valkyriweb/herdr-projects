@@ -2,7 +2,8 @@
 //! its first prompt), restarting an exited agent, and reopening a task's space to go into it.
 use super::launch::{again_prompt, agent_now, exists, resumable, start_agent, unsent_prompt};
 use super::rules::{first_prompt, turned_words};
-use super::from::{base_ref, refuse_start};
+use super::config_lock::making;
+use super::from::{base_ref, named_start, refuse_start};
 use super::worktree::{copy_includes, exclude_rule_dir, free_branch};
 use crate::agents::start_failed as sf;
 use crate::board::keys::key_name;
@@ -33,7 +34,7 @@ fn fail_start(id: &str, title: &str, said: &str, again: &str) {
     let w = sf::explain(&sf::Start { kind: &kind, setting: if plan::planner(&t) { "plan.agent" } else { "worker.agent" }, again }, said, &screen);
     sf::tidy(&api, &pane, &screen);
     let log = dir_of(id).join("runner.log");
-    let look = if screen.is_empty() { String::new() } else { format!("Its terminal is still open: go into the task ({}) to see all of it. ", key_name("enter")) };
+    let look = if screen.is_empty() { String::new() } else { format!("Its terminal is still open: go into the task ({}) to see all of it. ", key_name("open")) };
     let detail = sf::detail(&w, said, &screen, &look, &log);
     sf::log(&log, &kind, &detail);
     let _ = update_wait(id, 10000, |t| {
@@ -71,15 +72,22 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
     let label = flow::sidebar::space_label(&t);
     // The plan has its yes: this start is the build's (plan/build.rs).
     if plan::approved(&t) && !t.at("plan").b("built") { return plan::build::start_build(id, g); }
+    // The plan was taken off while its step was open: the plan written is built as it stands (with none, the work starts).
+    if plan::open(&t) && plan::wanted(&t).is_empty() { return plan::build::start_build_by(id, g, "nobody"); }
+    // The step goes on: its worktree read-only again, where a stop made it writable.
+    if plan::open(&t) && !t.at("plan").b("locked") { plan::lock::set_locked(id, true); t = g.check()?; }
     // 1. A place to work, unless the task still has a live pane from an earlier run.
     let live_pane = if t.at("link").b("pane") { api.pane_get(t.at("link").s("pane")) } else { None };
     if live_pane.is_some() && api.agent_get(t.at("link").s("pane"))?.is_some() { // delegate again on a task whose agent is still there: just continue it
         t = g.set(|t| { let _ = r::starts_as(t); })?;
         let turned = turned_words(&t);
-        t = g.set(|t| { t.put("stage", "working"); t.put("armedAt", now()); t.put("turnOpen", true); t.put("turnBy", "start"); t.del("researchTurned"); })?;
+        t = g.set(|t| { t.put("stage", "working"); t.put("armedAt", now()); t.put("turnOpen", true); t.put("turnBy", "start"); t.del("researchTurned"); t.del("chatTurned"); })?;
         flow::send::deliver(&t, &flow::send::with_tail(&t, &[turned, "Continue this task.".into()].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")), None, false)?;
         return Ok(());
     }
+    // Room on the disk first: on a nearly full one the task waits in the queue, not fails half-way (leftovers/room.rs).
+    if let Err(line) = crate::leftovers::room::make_room(&t) { g.set(|t| crate::leftovers::room::wait(t, &line))?; return Ok(()); }
+    if t.b("diskWait") { t = g.set(|t| { t.del("diskWait"); })?; }
     if live_pane.is_none() {
         let mut copy = false;
         let (res, mut patch): (Value, Obj);
@@ -95,14 +103,17 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
                 git_out(&root, &["update-ref", "HEAD", &c])?;
             }
             let branch = free_branch(&root, &t);
+            // The worktree starts from the commit, not from `origin/main`: a branch made from a remote-tracking ref gets
+            // its upstream written into the repo's shared .git/config, which two starts at once fight over. The push
+            // at the finish sets the upstream (`push -u`).
+            let base = if from == "HEAD" { let h = flow::git::head_of(&root); if h.is_empty() { git_out(&root, &["rev-parse", &from])? } else { h } } else { git_out(&root, &["rev-parse", &from])? };
             // An attempt works in a tab of its task's one space; any other task in a space of its own.
-            res = if t.b("attemptOf") { crate::attempts::place::open_place(&api, &root, &t, &branch, &from)? } else { flow::spaces::opening_worktree(&api, &root, || api.worktree_create(&root.display().to_string(), &branch, &from, &label))? };
+            res = making(&root, &branch, &base, || Ok(if t.b("attemptOf") { crate::attempts::place::open_place(&api, &root, &t, &branch, &base)? } else { flow::spaces::opening_worktree(&api, &root, || api.worktree_create(&root.display().to_string(), &branch, &base, &label))? }))?;
             let dir = if res.at("worktree").b("path") { res.at("worktree").t("path") } else { res.at("workspace").at("worktree").t("checkout_path") };
             // The repo's own file, read from the commit the worktree starts from: its facts, and what it was refused.
-            let (facts, refused) = repo_file(&root, Some(&from));
+            let (facts, refused) = repo_file(&root, Some(&base));
             exclude_rule_dir(&root);
-            let base = if from == "HEAD" { let h = flow::git::head_of(&root); if h.is_empty() { git_out(&root, &["rev-parse", &from])? } else { h } } else { git_out(&root, &["rev-parse", &from])? };
-            patch = obj(json!({ "worktree": dir, "branch": branch, "from": from, "baseSha": base, "repoFile": facts, "repoRefused": refused, "fresh": true, "ownNote": true }));
+            patch = obj(json!({ "worktree": dir, "branch": branch, "from": from, "fromNamed": named_start(&t), "baseSha": base, "repoFile": facts, "repoRefused": refused, "fresh": true, "ownNote": true }));
             copy = true;
         } else {
             res = api.workspace_create(&root.display().to_string(), &label, &board_env())?;
@@ -158,7 +169,7 @@ fn delegate_steps(id: &str, g: &mut Guard, mut t: Task) -> Res<()> {
     let (resume, prompt) = if t.b("startedAgentAt") { again_prompt(&t, &[turned].into_iter().filter(|s| !s.is_empty()).chain(waiting.iter().cloned()).collect::<Vec<_>>()) }
         else { (None, std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n")) };
     if let Err(e) = start_agent(id, g, &prompt, resume.as_deref()) { if !waiting.is_empty() { untake_text(id, waiting.len())?; } return Err(e); }
-    if t.b("researchTurned") { g.set(|t| t.del("researchTurned"))?; }
+    if t.b("researchTurned") || t.b("chatTurned") { g.set(|t| { t.del("researchTurned"); t.del("chatTurned"); })?; }
     Ok(())
 }
 /// Restarting an exited agent: the same pane (or a new one in the task's workspace, reopened from the worktree if the

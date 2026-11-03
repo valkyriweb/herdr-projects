@@ -3,6 +3,7 @@
 use super::review::{close_reviewer, Reviewed};
 use super::review_brief::{parse_verdict, review_brief, Brief};
 use super::review_fallback::{reviewer_now, Cut};
+use super::review_screen::last_screen;
 use super::shared::{ms, review_until, timed_out};
 use crate::agents::{adapter, helpers::still_at_work, installed, start, start_failed};
 use crate::clock::now;
@@ -12,7 +13,7 @@ use crate::flow;
 use crate::gate;
 use crate::json::*;
 use crate::runner::{is_aborted, Guard};
-use crate::store::files::{artifacts_dir, board_env};
+use crate::store::files::artifacts_dir;
 use crate::store::handovers::{handover_line, last_handover, log_handover};
 use crate::store::marks::pending_events;
 use crate::store::repos::{cwd_of, folder_of, git_out};
@@ -66,11 +67,11 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
     let mut pane_tab: Option<(String, String)> = None;
     let (mut error, mut review, mut auth, mut cut, mut ended): (String, Option<Obj>, bool, Option<Cut>, bool) = (String::new(), None, false, None, false);
     let run = (|| -> Res<()> {
-        installed::pre_trust(&rkind, &if t.b("root") { PathBuf::from(t.s("root")) } else { folder_of(t.s("id")) }, &who.access);
+        installed::pre_trust(&rkind, &if t.b("root") { PathBuf::from(t.s("root")) } else { folder_of(t.s("id")) }, &folder, &who.access);
         close_reviewer(id); // a tab left over from an interrupted round
         // Its own tab, never focused: the human stays where they are, and the agent's tab and the board keep their size.
         let label = if plan.is_some() { Some(flow::tabs::PLAN_REVIEW_TAB) } else { None };
-        let made = flow::tabs::open_reviewer_tab(&api, &t, round, if other { &rkind } else { "" }, &folder.display().to_string(), &board_env(), label)?;
+        let made = flow::tabs::open_reviewer_tab(&api, &t, round, if other { &rkind } else { "" }, &folder.display().to_string(), &crate::temp::task_env(&t), label)?;
         let pane = made.pane.clone();
         pane_tab = Some((made.pane.clone(), made.tab.clone()));
         let taken: Vec<String> = api.agents().unwrap_or_default().iter().map(|a| a.t("name")).filter(|n| !n.is_empty()).collect();
@@ -79,12 +80,12 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
         if taken.contains(&name) { name = format!("{}-{:04}", name.chars().take(27).collect::<String>(), now() % 10000); }
         let started_at = now(); // a turn-end report older than this is from a try of this review that was cut off
         let x = launch_extras(&t, "reviewer", &rkind, round, "", None)?;
-        t = g.set(|t| { t.obj_mut("link").put("reviewer", json!({ "pane": pane, "tab": made.tab, "agent": name, "kind": rkind })); t.put("reviewSession", x.session.clone().map(Value::String).unwrap_or(Value::Null)); })?;
+        t = g.set(|t| { t.obj_mut("link").put("reviewer", json!({ "pane": pane, "tab": made.tab, "terminal": made.terminal, "agent": name, "kind": rkind })); t.put("reviewSession", x.session.clone().map(Value::String).unwrap_or(Value::Null)); })?;
         flow::sidebar::tell_sidebar(&t); // the reviewer's pane has its entry in herdr's sidebar from the start
-        let opts = |hook: Vec<String>| start::StartOpts { model: rmodel.clone(), effort: reffort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, ..Default::default() };
+        let opts = |hook: Vec<String>| start::StartOpts { model: rmodel.clone(), effort: reffort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, folder: folder.clone(), ..Default::default() };
         let start_with = |hook: Vec<String>| -> Res<()> {
             let args = start::start_args(&rkind, &opts(hook))?;
-            let r = if plan.is_some() { crate::plan::sandbox::start_program(&api, &get(id).unwrap_or(t.clone()), &name, &rkind, &pane, &args) } else { api.agent_start(&name, &rkind, &pane, &args, 60000).map(|_| ()) };
+            let r = if plan.is_some() { crate::plan::sandbox::start_program(&api, &get(id).unwrap_or(t.clone()), &name, &rkind, &pane, &args, "reviewer") } else { api.agent_start(&name, &rkind, &pane, &args, 60000).map(|_| ()) };
             match r { Ok(()) => { crate::submit::settle(&api, &pane, &std::iter::once(crate::agents::kinds::program(&rkind).to_string()).chain(args).collect::<Vec<_>>().join(" ")); Ok(()) } Err(e) if e.code == "agent_not_ready" => Ok(()),
                 Err(e) => Err(start_failed::say(&api, &start_failed::Start { kind: &rkind, setting: "reviewer.agent", again: "retry the review" }, &pane, &e.message, &crate::store::files::dir_of(id).join("runner.log")).into()) }
         };
@@ -135,7 +136,7 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
                 error = no_verdict(Some(r), ""); ended = true; break;
             }
             let a = api.agent_get(&pane).ok().flatten();
-            if a.is_none() && sent { error = no_verdict(None, "the reviewer exited without a verdict"); ended = true; break; }
+            if a.is_none() && sent { let gone = api.pane_get(&pane).is_none(); error = no_verdict(None, if gone { "the reviewer's terminal was closed" } else { "the reviewer exited without a verdict" }); ended = true; break; }
             if a.is_none() && api.pane_get(&pane).is_none() { error = "the reviewer's terminal was closed".into(); break; }
             // herdr status is used only to notice a reviewer that is blocked: "review needs you".
             let blocked = a.as_ref().map(|a| a.s("agent_status") == "blocked").unwrap_or(false);
@@ -179,6 +180,8 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
         if is_aborted(&e) { close_reviewer(id); if let Some((p, tb)) = &pane_tab { flow::tabs::close_reviewer_tab(&api, &json!({ "tab": tb, "pane": p })); } return Ok(Reviewed { aborted: true, ..Default::default() }); }
         error = crate::text::squash(&e.msg).chars().take(400).collect();
     }
+    // No verdict: what is on its screen says what stopped it (a dialog herdr did not see as one), read before its tab closes.
+    let screen = match (&pane_tab, &review, &cut) { (Some((p, _)), None, None) => last_screen(&api, p), _ => String::new() };
     // Put back anything the reviewer changed: what you approve is exactly what the agent committed. Not while you chat
     // with the agent: what changed may be its (flow/chat.rs), and the end of its turn decides.
     if to_land && !get(id).map(|c| crate::flow::chat::during(&c)).unwrap_or(false) && (flow::git::head_of(&folder) != head || !flow::git::dirty(&folder).is_empty()) { if git_out(&folder, &["reset", "--hard", &head]).is_ok() { let _ = git_out(&folder, &["clean", "-fd"]); } }
@@ -190,7 +193,7 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
         if let Err(e) = g.set(|t| { if plan.is_none() && t.i("reviewRound") == round { t.put("reviewRound", round - 1); } }) { if is_aborted(&e) { return Ok(Reviewed { aborted: true, ..Default::default() }); } }
         return Ok(Reviewed { cut: true, error, auth, by, cut_by: cut, ..Default::default() });
     }
-    let Some(mut rv) = review else { return Ok(Reviewed { error: if error.is_empty() { "no valid verdict".into() } else { error }, auth, by, ended, ..Default::default() }) };
+    let Some(mut rv) = review else { return Ok(Reviewed { error: if error.is_empty() { "no valid verdict".into() } else { error }, auth, by, ended, screen, ..Default::default() }) };
     gate::stamp(&mut rv, ch.s("review.mustFix"));
     rv.put("by", by.clone()); // who reviewed: the task's history keeps it
     if plan.is_some() { let _ = std::fs::remove_dir_all(&dir); rv.del("listed"); return Ok(Reviewed { review: Some(rv), by, ..Default::default() }); }

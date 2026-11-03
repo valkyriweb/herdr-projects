@@ -53,11 +53,6 @@ fn a_program_with_no_auto_mode_is_refused_at_its_start_and_never_started_with_fu
     assert!(why_not("claude", "auto").is_empty() && why_not("codex", "auto").is_empty());
     assert!(why_not("pi", "ask").contains("pi cannot do \"ask\": it never asks before it acts"));
     assert!(refused_start("pi", "ask").contains("never asks before it acts"), "ask as before");
-    // In plan mode the access flags give way to the plan's, but an auto that cannot be is refused before the plan.
-    let plan = |k: &str, access: &str| start_args(k, &StartOpts { access: access.into(), plan: Some(vec!["--plan".into()]), ..Default::default() });
-    assert!(plan("pi", "auto").unwrap_err().msg.contains("it has no auto mode"));
-    assert_eq!(plan("pi", "ask").unwrap(), ["--plan"], "ask in plan mode as before");
-    assert_eq!(plan("claude", "auto").unwrap(), ["--plan"]);
 }
 
 #[test]
@@ -154,7 +149,7 @@ fn on_the_settings_page_the_access_row_passes_over_a_value_its_program_cannot_do
     let mut b = common::board::open(&w.root, 44);
     b.s.sel = id.clone(); b.load();
     let r = b.s.current().unwrap().clone();
-    sw::board::update::edit::open(&mut b.s, Some(&r));
+    sw::board::update::edit::open(&mut b.s, Some(&r), &mut vec![]);
     let at = sw::board::update::edit::rows(&b.s).iter().position(|r| r.s("name") == "worker.access").unwrap();
     b.s.editing.as_mut().unwrap().at = at;
     b.press(&["enter"]);

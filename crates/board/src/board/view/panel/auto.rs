@@ -30,7 +30,8 @@ pub fn auto_panel(s: &mut State, t: &Theme, a: &Obj, width: usize, full: bool) -
     let key = if a.b("host") { String::new() } else { crate::store::keys::repo_keys().get(a.s("repo")).cloned().unwrap_or_default() };
     st.extend(k.fact_text("Repo", &format!("{} · {}", crate::board::tags::repo_with_key(a.s("repo"), &key), crate::store::marks::tilde(a.s("root")))));
     st.extend(k.fact_text("Last firing", row.s("last")));
-    if a.b("research") { st.extend(k.fact_text("Research", "only · its tasks change nothing in the repo")); }
+    if a.b("chat") { st.extend(k.fact_text("Chat", "only · its tasks are conversations that end when you say")); }
+    else if a.b("research") { st.extend(k.fact_text("Research", "only · its tasks change nothing in the repo")); }
     k.part(st);
     let prompt = k.wrap(a.s("prompt"));
     k.text("Prompt", prompt, 1, false);
@@ -68,8 +69,8 @@ pub fn auto_panel(s: &mut State, t: &Theme, a: &Obj, width: usize, full: bool) -
 }
 /// The whole automation, full screen, or its settings page in its place.
 pub fn auto_full(s: &mut State, t: &Theme, a: &Obj, width: usize, h: usize) -> Vec<Inked> {
-    let editing = s.editing.as_ref().map(|e| e.auto && e.id == a.s("row")).unwrap_or(false);
-    let (lines, at) = if editing { (super::page::settings_page(s, t, a, width.min(READ)), vec![]) } else { auto_panel(s, t, a, width.min(READ), true) };
+    let editing = s.editing.as_ref().map(|e| e.whose == crate::board::state::Whose::Auto && e.id == a.s("row")).unwrap_or(false);
+    let (lines, at) = if editing { (super::page::settings_page(s, t, Some(a), width.min(READ)), vec![]) } else { auto_panel(s, t, a, width.min(READ), true) };
     s.panel_height = h.saturating_sub(2).max(1); s.panel_length = lines.len();
     let keep = if editing { Some(s.edit_line) } else if s.auto_at >= 0 { at.get(s.auto_at as usize).copied() } else { None };
     if let Some(keep) = keep { s.panel_top = keep.min(s.panel_top.max((keep + 1).saturating_sub(s.panel_height))); }

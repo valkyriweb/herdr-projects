@@ -1,6 +1,9 @@
 //! Long jobs (delegate, finish line, land, restart) run in a detached runner so the board stays responsive and hook
 //! commands never hold herdr up. A runner marks itself in task.json as `runner: {pid, start, started, job}`; a marker
-//! whose process is gone is ignored. Each turn is a separate runner, so counters live in task.json.
+//! whose process is gone is ignored. Each turn is a separate runner, so counters live in task.json. One asked for from
+//! inside a sandbox, or by a command while a keeper runs, is started from outside it (runner/outside.rs).
+pub mod outside;
+
 use crate::err::{Error, Res};
 use crate::json::*;
 use crate::store::files::*;
@@ -25,14 +28,16 @@ pub fn detach(c: &mut Command) {
 /// until that ends: thousands a day, until the user's process limit fails everything (#212). Only this one pid is
 /// waited for, never any child (that would take the end of the commands others wait for themselves). Returns its pid,
 /// 0 when it did not start.
-pub fn start_reaped(c: &mut Command) -> u32 {
-    let Ok(mut ch) = c.spawn() else { return 0 };
+pub fn start_reaped(c: &mut Command) -> u32 { c.spawn().map(reap).unwrap_or(0) }
+/// Leave a started process to run, waited for by a small thread of this process when it ends (as `start_reaped`).
+pub fn reap(mut ch: std::process::Child) -> u32 {
     let pid = ch.id();
     let _ = std::thread::Builder::new().name("reap".into()).stack_size(64 << 10).spawn(move || { let _ = ch.wait(); });
     pid
 }
 /// Start a detached runner for one job on one task. Returns at once.
 pub fn spawn_runner(job: &str, id: &str, extra: &[&str]) -> u32 {
+    if crate::plan::sandbox::inside::boxed() || outside::hands_over() { return outside::ask(job, id, extra); }
     if inline() { JOBS.with(|j| j.borrow_mut().push((job.into(), id.into(), extra.iter().map(|s| s.to_string()).collect()))); return 0; }
     user_env();
     let dir = if id == "-" { data_dir() } else { dir_of(id) };
@@ -44,6 +49,24 @@ pub fn spawn_runner(job: &str, id: &str, extra: &[&str]) -> u32 {
     match log { Ok(f) => { let f2 = f.try_clone().ok(); c.stdout(f); if let Some(f2) = f2 { c.stderr(f2); } } Err(_) => { c.stdout(Stdio::null()).stderr(Stdio::null()); } }
     detach(&mut c);
     start_reaped(&mut c)
+}
+/// Start a runner for `job` unless one already has the task. The look and the marker are one step under the task lock,
+/// and the marker names the new process, which finds it its own when it claims the task: a second caller before that
+/// claim (another pass, or a pass started from a stale list) finds the task taken (#401). Returns whether it started one.
+pub fn spawn_claimed(job: &str, id: &str, extra: &[&str]) -> bool {
+    if crate::plan::sandbox::inside::boxed() || outside::hands_over() { spawn_runner(job, id, extra); return true; } // started out there, unseen
+    let mut started = false;
+    let _ = update_wait(id, 10000, |t| {
+        if runner_alive(t) { return Ok(Change::Keep); }
+        let pid = spawn_runner(job, id, extra) as i64;
+        // In a test the job runs later in this very process.
+        let mut m = if inline() { marker() } else if pid > 0 { obj(json!({ "pid": pid, "start": proc_start(pid), "started": crate::clock::now() })) } else { return Ok(Change::Keep) };
+        m.put("job", job);
+        t.put("runner", m);
+        started = true;
+        Ok(Change::Write)
+    });
+    started
 }
 /// Tests drain the jobs that would have been detached.
 pub fn drain_jobs(run: &dyn Fn(&str, &str, &[String])) {
@@ -88,7 +111,7 @@ pub fn release(id: &str, keep: bool) -> bool {
         if !mine(t.at("runner")) { return Ok(Change::Keep); }
         more = !pending_events(t).is_empty();
         if more && keep { return Ok(Change::Keep); }
-        t.put("runner", Value::Null);
+        t.put("runner", Value::Null); t.put("retried", 0); // its step was not lost: a later loss is tried again (hook/lost.rs)
         Ok(Change::Write)
     });
     if more && !keep { spawn_runner("finish", id, &[]); }

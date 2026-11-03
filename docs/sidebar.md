@@ -38,8 +38,8 @@ From the one list of status words (`crates/core/src/status_words.rs`):
 | `◐` the agent works | `agent · working` |
 | `◑` under review | `reviewer · under review` on the reviewer's entry, `agent · under review` on the agent's |
 | `◇` the board starts it, sets up, checks, pushes, merges, or waits on the way (its check's turn, its turn to merge, GitHub's checks) | `board · starting`, `board · setting up`, `board · checking`, `board · pushing`, `board · merging` |
-| `◌` waits for a free slot, `Q#2` | `queued`, and row 3 says `Q#2`: its place in the queue, where a working task has its percent |
-| `◌` queued after other tasks ([one task after another](after.md)) | `queued after SKL-6` |
+| `◷` waits for a free slot, `Q#2` | `queued`, and row 3 says `Q#2`: its place in the queue, where a working task has its percent |
+| `◷` queued after other tasks ([one task after another](after.md)) | `queued after SKL-6` |
 | `?` asks you | `asks you` |
 | `!` asks for your OK | `asks for your OK` |
 | the sign-in mark | `needs a login` |
@@ -52,8 +52,8 @@ From the one list of status words (`crates/core/src/status_words.rs`):
 | done, while its space is still open | `done` |
 
 - Somebody is named only while somebody is on it. A waiting task says what it waits for.
-- Then the review round and pull request as the row writes them (`R#1 PR#113`), the task's tags (`[research]`,
-  `[auto]`), and last the row's time: `6m` for how long it has worked, `2m ago` for how long it has waited.
+- Then the review round and pull request as the row writes them (`R#1 PR#113`), the task's tags (`[chat]`,
+  `[research]`, `[auto]`), and last the row's time: `6m` for how long it has worked, `2m ago` for how long it has waited.
 - The time is by the minute (`<1m` before the first): Herdr shows what it was last told, and the board does not write
   every second. It stands last, so a narrow sidebar cuts it first.
 
@@ -111,7 +111,7 @@ entry: its space, its tab, its name.
 - **The Coordinator's first row reads `~ · Coordinator`**, not `Coordinator` alone. It lives in a tab of the home space,
   and a sidebar row can hide a value only by the value itself: hiding `~` would hide it for every agent of yours in the
   home space.
-- **No marks of the board's own.** The row's `?`, `!`, `◑`, `◇`, `◌` and `◆` cannot be drawn: an entry's icon is Herdr's
+- **No marks of the board's own.** The row's `?`, `!`, `◑`, `◇`, `◷` and `◆` cannot be drawn: an entry's icon is Herdr's
   state icon, which only Herdr's own five states have. The words carry it.
 - **No colour by status.** Herdr can colour a value by rules on its text, set in your config. The plugin's rows only dim
   the Coordinator's message, as the board greys it.

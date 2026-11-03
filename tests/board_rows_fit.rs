@@ -25,7 +25,7 @@ fn ready(more: Value) -> Rec { rec(json!({ "state": "blocked", "kind": "permissi
 fn done(more: Value) -> Rec { rec(json!({ "state": "done", "stage": "done", "at": AT }), more) }
 fn todo(more: Value) -> Rec { rec(json!({ "state": "idle", "stage": "todo", "at": AT }), more) }
 fn group(r: &Obj) -> &'static str { if r.b("kind") { GROUPS[0] } else if r.s("state") == "working" { GROUPS[1] } else if r.s("state") == "done" { GROUPS[2] } else { GROUPS[3] } }
-fn board() -> State { sw::clock::set(Some(NOW)); State::new(Default::default(), Default::default()) }
+fn board() -> State { sw::clock::set(Some(NOW)); let mut s = State::new(Default::default(), Default::default()); s.whole = true; s } // every done row shows, as with all done
 fn skip(l: &str, n: usize) -> String { l.chars().skip(n).collect() }
 fn at(l: &str, b: usize) -> usize { l[..b].chars().count() }
 /// The list as the board draws it under its headings: each task's first line, in the order given, and where a name
@@ -34,7 +34,9 @@ struct Drawn { rows: Vec<String>, lead: usize }
 fn draw(s: &mut State, list: &[Rec], width: usize) -> Drawn {
     s.grouped = GROUPS.iter().map(|g| (g.to_string(), list.iter().filter(|r| group(r) == *g).cloned().collect())).collect();
     s.list_room = 0; // the list is folded again for these rows
-    let lines: Vec<String> = list_lines(s, &Theme::default_dark(false), width, 80, 200).iter().map(|l| l.text()).collect();
+    // Drawn a step wider and that step taken off: the rows stand one step in under the top row (update/depth.rs).
+    let k = if width + 2 >= 60 { 2 } else { 1 };
+    let lines: Vec<String> = list_lines(s, &Theme::default_dark(false), width + k, 80, 200).iter().map(|l| l.text().chars().skip(k).collect()).collect();
     let cells = number_cells(width, list_numbering(s, &[]));
     let lead = 3 + if cells > 0 { cells + 1 } else { 0 };
     let rows = list.iter().map(|r| { let head: String = r.s("title").chars().take(8).collect(); lines.iter().find(|l| skip(l, lead).starts_with(&head)).cloned().unwrap_or_default() }).collect();

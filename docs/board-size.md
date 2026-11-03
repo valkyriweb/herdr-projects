@@ -33,7 +33,7 @@ closing do nothing to a pane in the space you look at.
 
 A test holds the plugin to it (`tests/board_still_sight.rs`): every space and pane it opens is opened with `--no-focus`,
 it never focuses anything while a task runs, and it never splits or closes the board's own pane. Going into an agent on
-purpose (`Enter` on a task) is the one thing that moves Herdr's window, as before.
+purpose (`Alt+O` on a task) is the one thing that moves Herdr's window, as before.
 
 ## What does change it
 
@@ -88,8 +88,9 @@ fixed behaviour: there is no setting that turns it off.
 ## A view somebody is looking through keeps the terminal
 
 One kind of viewer is not disconnected: the board opened in the terminal view of Herdr's web UI, in a browser or on a
-phone. Disconnecting it only started a contest (seen on herdr-web-ui 0.4.8: the web UI reattached by itself, and the two
-took the terminal from each other every four seconds, so the board could not be used there).
+phone. Disconnecting it only started a contest (seen on herdr-web-ui 0.4.8, Ovis before its rename: the web UI
+reattached by itself, and the two took the terminal from each other every four seconds, so the board could not be used
+there).
 
 - **How it is recognised:** by its age. It was opened in the last twenty seconds, or it came back within twenty seconds
   of being disconnected. Once taken for one, it stays one for as long as it runs.

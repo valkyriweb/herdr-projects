@@ -8,7 +8,7 @@ use super::menu::Item;
 use super::Effect;
 use crate::board::job::Job;
 use crate::board::keys::{is, key_name, name, pair, typed, Press, KEYS, K};
-use crate::board::state::{Editing, State, Valid};
+use crate::board::state::{Editing, State, Valid, Whose};
 use crate::json::*;
 use crate::shown::ink::Ink;
 use crate::shown::words::clean;
@@ -19,7 +19,7 @@ const TASK_ONLY: [K; 4] = [K::Yes, K::SendBack, K::Archive, K::Pin];
 const OPEN_SAME: [K; 6] = [K::Menu, K::Close, K::Undo, K::ChatMessage, K::ChatScrollUp, K::ChatScrollDown];
 /// A plain key's line in the ? menu, where it does something else on an automation's row than on a task's.
 pub fn auto_help(k: K) -> Option<&'static str> {
-    match k { K::Enter => Some("send what is typed; with nothing typed, open this automation (on a firing in it: go to the task it made)"), K::Talk => Some("turn this automation on or off"), K::Delegate => Some("fire this automation now"), _ => None }
+    match k { K::Enter => Some("send what is typed; with nothing typed, open this automation (on a firing in it: go to the task it made)"), K::Talk => Some("turn this automation on or off"), _ => None }
 }
 pub fn firings(a: &Obj) -> Vec<Value> { a.at("shown").arr("firings").to_vec() }
 pub fn can_set(a: &Obj) -> bool { !a.b("host") || !a.at("shown").arr("settings").is_empty() }
@@ -45,9 +45,9 @@ pub fn remove(s: &mut State, a: &Obj) {
 pub fn fold(s: &mut State) { s.auto_open = !s.auto_open; s.full = false; s.editing = None; s.auto_at = -1; s.panel_top = 0; }
 pub fn settings(s: &mut State, a: &Obj) {
     if s.ctx.web { return super::web::auto_settings(s); }
-    if s.editing.as_ref().map(|e| e.auto).unwrap_or(false) { s.editing = None; s.panel_top = 0; return; }
+    if s.editing.as_ref().map(|e| e.whose == Whose::Auto).unwrap_or(false) { s.editing = None; s.panel_top = 0; return; }
     if !can_set(a) { return s.flash(format!("Its settings are changed on {}: herdr-projects set <name> <value> --automation \"{}\"", a.s("host"), a.s("name")), Ink::Yellow); }
-    s.editing = Some(Editing { id: a.t("row"), at: 0, typing: String::new(), auto: true }); s.auto_open = true; s.full = false; s.panel_top = 0;
+    s.editing = Some(Editing { id: a.t("row"), at: 0, typing: String::new(), whose: Whose::Auto }); s.auto_open = true; s.full = false; s.panel_top = 0;
 }
 /// Enter on a firing: to the task it made, on the board.
 pub fn go_to(s: &mut State, id: &str) {
@@ -82,15 +82,16 @@ pub fn key(s: &mut State, p: &Press, fx: &mut Vec<Effect>) -> bool {
 /// The ? menu on an automation's row: the keys that do something there, in the words of what they do there.
 pub fn menu_items(s: &State, a: &Obj) -> Vec<Item> {
     let words = |k: K| -> Option<String> { match k {
+        K::Delegate => Some("fire this automation now".into()),
         K::Stop => Some("remove this automation (it asks first)".into()),
         K::Settings => Some(if can_set(a) { "this automation's settings: see and change each one".into() } else { String::new() }),
         K::Panel => Some(if s.auto_open { "back to the list".into() } else { "show the whole automation, full screen".into() }),
         K::Side => Some(format!("{} the side panel: this automation, beside the list", if s.side { "hide" } else { "show" })),
         _ => None } };
     KEYS.iter().filter(|k| (k.group == Some("ctrl") || k.group == Some("alt")) && !TASK_ONLY.contains(&k.id) && (!s.auto_open || words(k.id).is_some() || OPEN_SAME.contains(&k.id)))
-        .map(|k| Item { id: k.id, group: k.group.unwrap(), key: name(k.id), label: words(k.id).unwrap_or_else(|| super::menu::label(s, k.id, None)) }).filter(|i| !i.label.is_empty()).collect()
+        .map(|k| Item { id: k.id, group: k.group.unwrap(), key: name(k.id), mine: false, label: words(k.id).unwrap_or_else(|| super::menu::label(s, k.id, None)) }).filter(|i| !i.label.is_empty()).collect()
 }
 pub fn run_menu(s: &mut State, k: K, fx: &mut Vec<Effect>) {
     let Some(a) = s.auto().cloned() else { return };
-    match k { K::Stop => remove(s, &a), K::Settings => settings(s, &a), K::Panel => fold(s), K::Side => super::actions::toggle_side(s, fx), _ => super::keys::run(s, k, None, fx) }
+    match k { K::Delegate => fire(s, &a, fx), K::Stop => remove(s, &a), K::Settings => settings(s, &a), K::Panel => fold(s), K::Side => super::actions::toggle_side(s, fx), _ => super::keys::run(s, k, None, fx) }
 }

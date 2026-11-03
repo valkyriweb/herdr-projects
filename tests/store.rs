@@ -10,6 +10,9 @@ use sw::store::settings::change::{set_value, unset_value};
 use sw::store::settings::lookup::{setting, Scope};
 use sw::store::tasks::{create, find, list, update, Change};
 
+/// The cache a look at every task reads the task files through.
+mod cache;
+
 fn o(v: Value) -> Obj { v.as_object().cloned().unwrap() }
 fn has(text: &str, re: &str) -> bool { regex::Regex::new(re).unwrap().is_match(text) }
 
@@ -70,7 +73,7 @@ fn settings_the_built_in_values_your_own_one_tasks_own() {
     assert_eq!(t.at("settings"), &json!({}));
     assert_eq!(set_value("worker.agent", &json!("codex"), &Scope::task(&task(t.s("id")))).unwrap().value, json!("codex"));
     assert_eq!(unset_value("worker.agent", &Scope::task(&task(t.s("id")))).unwrap().value, json!("claude"));
-    for s in SETTINGS.iter() { assert!(!s.name.is_empty() && !s.doc.is_empty() && !s.builtin.is_null() && [Kind::Work, Kind::Board, Kind::Repo].contains(&s.kind), "{}", s.name); }
+    for s in SETTINGS.iter() { assert!(!s.name.is_empty() && !s.doc.is_empty() && !s.builtin.is_null() && [Kind::Work, Kind::Board, Kind::Repo, Kind::Coord].contains(&s.kind), "{}", s.name); }
 }
 
 #[test]

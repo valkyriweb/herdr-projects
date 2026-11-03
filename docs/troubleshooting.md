@@ -10,7 +10,8 @@
 | `herdr-projects doctor` | the health check: every problem below in one run, each with what to do ([the health check](#the-health-check)) |
 | `herdr-projects install` | writes the `herdr-projects` launcher again, and says if something else of that name comes first on your PATH ([installing](install.md)) |
 | `herdr-projects models [program]` | the model names each agent program takes here, or why its list cannot be read ([models](models.md)) |
-| `herdr-projects machines` | whether each other machine answers, and why not ([other machines](other-machines.md)) |
+| `herdr-projects machines` | whether each other machine answers, how much disk each has free, and why not ([other machines](other-machines.md)) |
+| `herdr-projects sweep` | removes what ended tasks left behind now, and says what ([disk space](disk-space.md)) |
 | `herdr-projects show <id>` | every setting a task runs on, and where each value comes from ([settings](settings.md)) |
 | `herdr-projects details <id>` | everything about one task: reviews, hand-overs, limits, what it waits for |
 | `herdr workspace list` | whether Herdr itself runs and answers |
@@ -31,7 +32,8 @@ with `✗` is a problem, with what to do under it. It exits 1 when there is a pr
 | plan approval | a plan's writer cannot run in its read-only mount here (bubblewrap missing or user namespaces not allowed on Linux; `sandbox-exec` not usable on macOS), while your settings ask for plans (`plan.approve`). With no setting asking, it is said as a fact | install bubblewrap; on macOS start Herdr outside any sandbox; or `herdr-projects set plan.approve none` ([a plan first](plan.md)) |
 | other machines | one does not answer, runs an older version, or cannot ask this one | what `herdr-projects machines` says ([other machines](other-machines.md)) |
 | disk space | under 10 GB free on a disk that holds the board's data, your repos, worktrees, build caches or temporary files: a task's setup may fail there | free some space, starting with the leftovers below |
-| leftovers | the worktree of a done or archived task (a clean-up keeps one with unsaved work), a worktree on a task branch no task has, one git still lists whose folder is gone, an old warm build in `~/.cache/herdr-projects` | the `git worktree remove`, `git worktree prune` or `rm -rf` it names. It never removes anything itself |
+| leftovers | the worktree of a done or archived task (a clean-up keeps one with unsaved work), a worktree on a task branch no task has, one git still lists whose folder is gone, an old warm build in `~/.cache/herdr-projects` | the `git worktree remove`, `git worktree prune` or `rm -rf` it names. It never removes anything itself; `herdr-projects sweep` removes what is provably an ended task's ([disk space](disk-space.md)) |
+| coordinators' queues | a message waits undelivered for more than a minute, as when `coordinator tell` ran where herdr could not be found | open the board in Herdr, which delivers it; in that shell, set `HERDR_BIN_PATH` to herdr's full path ([the Coordinator](coordinator.md)) |
 | older installs | herdr-superwork or herdr-projects 0.2 still in the way | it takes over what it can, and says what is left ([older installs](old-installs.md)) |
 
 Other machines are asked only when there are some, and each for at most 5 seconds. A done task's worktree is no
@@ -45,6 +47,15 @@ The full table of reasons and fixes: [when an agent could not start](could-not-s
 
 **First time with a program?** Start it once yourself, in a terminal, in a folder of a repo: log in, finish its first
 setup, and trust the folder if it asks ([agent programs](agents.md#before-a-programs-first-task)).
+
+## No space left on device
+
+| You see | What it is | What to do |
+|---|---|---|
+| a task's setup or check failed with `No space left on device` | the disk filled up during its build | `herdr-projects sweep`, then `herdr-projects doctor` for what else can go; then finish or delegate it again |
+| `Disk nearly full on vm-str: … free on …; this task starts once 5.0 GB is free` | the board kept the task from starting on a nearly full disk (`board.diskFree`) | the same; it starts by itself once there is room |
+
+Ended tasks clean up after themselves, and the board sweeps what they left once a day: [disk space](disk-space.md).
 
 ## A model name is refused
 
@@ -94,6 +105,7 @@ Find what its row says:
 | `Agent's connection dropped, trying again in 2m` | the provider cut the turn off | nothing: the board retries by itself ([a turn cut off by the provider](provider-errors.md)) |
 | `Agent stopped` | an error waiting cannot fix: a usage limit, a refusal | read the reason in the panel; reply, or `Ctrl+R` |
 | `Agent stopped: … can't be used with your ChatGPT sign-in` | its program refused its model | choose a model, then `Ctrl+L` ([above](#cant-be-used-with-your-chatgpt-sign-in-while-the-agent-works)) |
+| `Plan ready` · `The plan's review could not run (…): yours to judge` | the reviewer of a plan (`plan.approve reviewer`) could not start or gave no verdict | read the plan; `Ctrl+L` builds it, a reply sends it back, `herdr-projects retry <id>` has the reviewer look again ([a plan first](plan.md#the-reviewers-look)) |
 | `Needs a login` | the agent's program is logged out | log in (go into the agent with `Enter`), then reply or `Ctrl+R` |
 | `stopped at its 2h limit` | it reached `limit.time` or `limit.tokens` | `Ctrl+R` to continue, a higher limit, or `Ctrl+L` to take it as it is ([limits](limits.md)) |
 | `resolving a conflict with main` | main changed under it; its agent is fixing that | wait |
@@ -117,18 +129,28 @@ task panel ends in `Kept:` and says why:
 |---|---|---|
 | `(uncommitted changes)` | its checkout has files that were never committed | look at them; reply to the task, or remove the worktree yourself |
 | `(unmerged work on <branch>)` | its branch holds commits that were not merged | merge them, or reply to the task to go on with them |
-| `(its space is in use again)` | a turn in its agent's terminal, a command still running in one of its panes, or an agent Herdr cannot place | nothing: it is tried again about every half minute and closes once the space is free |
+| `(its space is in use: a turn in its agent's terminal)` | you talked to its agent in its own terminal | nothing: it is tried again about every half minute, and closes once the agent has been quiet a while |
+| `(its space is in use beside its agent: <process> (pid <n>) <why>)` | a process runs in the agent's pane that is not one of its helpers; `<why>` says what is wrong with it (below) | end it if it is yours, and the space closes on the next try |
+| `(its space is in use in another of its panes: <process> (pid <n>) runs in it)` | a command runs in another pane of its space | end it, or close that pane |
+| `(its space is in use: herdr cannot tell whether its agent works, …)` | Herdr calls the agent's status unknown, and the rest of the line says what is not settled yet (its screen still moves, its last turn has not ended) | nothing: it closes once the agent has been still a while |
+| `(its space is in use: herdr does not answer for its agent)` (or `for its space`) | Herdr did not answer | nothing: it is tried again |
 | `(unpublished commits on <branch>: push them or set workspace.cleanup false)` | no ref of the remote (the pull request's head, main, the branch) holds its commits | push the branch from its terminal, which stays open for it; it is looked at again after the quiet time |
 | `(origin could not be asked whether <branch> is published: …)` | the remote did not answer `git ls-remote` | nothing: it is asked again after the quiet time |
 | `(its herdr session cannot be reached)` | the Herdr session it ran in is not running | start that session; it is tried again |
 
+- **What `<why>` means**: a process in the agent's own process group is one of its helpers (an MCP server) only when
+  its input and output are wired to the agent and its errors go to no terminal. Otherwise it `streams to the terminal`,
+  `is not wired to its agent` (a file, `/dev/null`, a pipe nobody in the agent's group holds), `has its input or output
+  closed`, or `cannot be looked at` (the system does not say). A process under the agent in a group of its own (a dev
+  server it started) `runs in a group of its own` (one wired to the agent, or under a helper, is its own, and keeps nothing); one its
+  pane's shell runs `runs in the background of its shell`.
+- **`; and 2 more`**: the line names the first thing only. `herdr-projects details <id>` lists every one, under `inUse`.
+- **It names one of the agent's own helpers** (an MCP server, a language server): that is a bug. Please open an issue
+  with the `Kept:` line and the `inUse` list of `herdr-projects details <id>`.
 - **Nothing says `Kept:`, and the space still stays**: `herdr-projects show <id>` tells whether `workspace.cleanup` was
   turned off, and where. `herdr-projects set workspace.cleanup true` turns it on again.
 - **An agent with MCP servers used to stay `in use` for good**: its servers counted as a command still running. Since
-  this was fixed, the next pass closes those spaces by itself. The same held for a known program's helpers in process
-  groups of their own (pi's tool driver, codex's servers); fixed the same way.
-- **A task done while `workspace.cleanup` was off** (or by an older version) stays open after it is turned on: fixed; the
-  next pass cleans it up like any other.
+  this was fixed, the next pass closes those spaces by itself.
 - **To close one at once**: archive the task (`Ctrl+A`); what is kept on disk stays, and the task says where.
 
 ## Behind main: main could not be fetched
@@ -177,6 +199,10 @@ The task panel shows most of this already. `herdr-projects details <id>` prints 
 
 - **`herdr-projects` is not found**: open the board once from Herdr (the plugin's action "Open the work board"), then add
   `~/.herdr-projects/data/bin` to your PATH ([installing](install.md#the-command-on-your-path)).
+- **`herdr` is not found although it is installed**: a command run over plain SSH (`ssh host herdr-projects …`) gets
+  no login shell, so its PATH often lacks `~/.local/bin`. When PATH has no `herdr`, the board looks in
+  `~/.local/bin`, `~/.cargo/bin`, `~/bin`, `/usr/local/bin` and `/opt/homebrew/bin`, then in a login shell's PATH. Herdr
+  somewhere else: set `HERDR_BIN_PATH` to its full path.
 - **The board key does nothing**: a popup of another plugin may be open (close it first), or the key is not bound. The
   board offers the key on its first screen ([installing](install.md#the-first-run)).
 - **The board looks cut off or half empty**: another Herdr window on the same session (a second device, a browser tab)

@@ -86,7 +86,7 @@ fn a_program_that_is_not_installed_says_so_and_what_to_do() {
     assert_eq!(f.s("title"), "Could not start the agent");
     assert!(f.s("next").starts_with("Install codex so that `codex` runs in a terminal here, or choose another program (worker.agent), then delegate again ("), "{}", f.s("next"));
     let log = sw::store::files::dir_of(&id).join("runner.log");
-    for part in ["Codex is not installed here.", "What herdr said: timed out waiting for agent startup", "bash: codex: command not found", "Its terminal is still open: go into the task (enter)", &format!("This is also written to {}.", log.display())] {
+    for part in ["Codex is not installed here.", "What herdr said: timed out waiting for agent startup", "bash: codex: command not found", &format!("Its terminal is still open: go into the task ({})", sw::board::keys::key_name("open")), &format!("This is also written to {}.", log.display())] {
         assert!(f.s("detail").contains(part), "{part:?} in {}", f.s("detail"));
     }
     assert!(read(&log).contains("could not start codex:\nCodex is not installed here."), "{}", read(&log));
@@ -141,5 +141,25 @@ fn each_reason_is_said_in_plain_words() {
         let w = explain(&s, said, screen);
         assert_eq!((w.short.as_str(), w.next.as_str()), (short, next), "{said} / {screen}");
         assert_eq!(w.auth, short.contains("logged in"));
+    }
+}
+
+#[test]
+fn an_installed_agent_is_not_called_missing_for_another_commands_not_found_line() {
+    let _w = world();
+    let s = Start { kind: "codex", setting: "worker.agent", again: "delegate again" };
+    // #412: a terminal full of a stray command's noise, while codex is installed: herdr's own reason is said.
+    let noise = "17M35: command not found\n42: command not found\nfoo: No such file or directory";
+    let w = explain(&s, "agent target pane w8M:p1 is not an available shell (tried 4 times in 7 s)", noise);
+    assert_eq!(w.short, "its terminal was not at its shell prompt");
+    // So is an old line of codex's own on it, from a start before it was installed.
+    assert_eq!(explain(&s, "agent target pane w8M:p1 is not an available shell", "bash: codex: command not found").short, "its terminal was not at its shell prompt");
+    // The shell saying that codex itself is not there still is "not installed", in either shell's words.
+    for screen in ["bash: codex: command not found", "zsh: command not found: codex", "/bin/sh: 1: codex: not found", "bash: /usr/local/bin/codex: No such file or directory", "fish: Unknown command: codex"] {
+        assert_eq!(explain(&s, "timed out waiting for agent startup", screen).short, "codex is not installed here", "{screen}");
+    }
+    // Another program, or a file named like it that another program did not find: not codex missing.
+    for screen in ["codexx: command not found", "ls: cannot access '/tmp/codex': No such file or directory", "cat: codex/notes: No such file or directory"] {
+        assert_eq!(explain(&s, "timed out waiting for agent startup", screen).short, "codex did not come up within a minute", "{screen}");
     }
 }

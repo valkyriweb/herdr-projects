@@ -30,7 +30,7 @@ pub fn begin(g: &mut Guard, t: Task, api: &Herdr) -> Res<Task> {
     // In a repo the plan's writer runs in a read-only mount. Where none can be made, no plan is written and nothing starts.
     let dir = cwd_of(&t);
     let repo = is_repo(&dir);
-    if repo && !sandbox_ok() { crate::fail!("{}", no_mount(t.s("id"))); }
+    if repo && !sandbox_ok() { crate::fail!("{}", no_mount(t.s("id"), "writer")); }
     let who = agent_of(&setting_text("plan.agent", Some(&t)));
     // A planner that is not installed here: the working agent plans, and the task says so.
     let own = !who.kind.is_empty() && installed(&who.kind);
@@ -74,9 +74,14 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
     let mut t = g.check()?;
     let api = flow::task::h(&t);
     if !approved(&t) { t = g.set(|t| { let p = t.obj_mut("plan"); p.put("approvedAt", now()); p.put("approvedBy", if by.is_empty() { "you" } else { by }); })?; }
+    // The build is a start too: on a nearly full disk it waits in the queue with its yes kept (leftovers/room.rs).
+    if let Err(line) = crate::leftovers::room::make_room(&t) { g.set(|t| crate::leftovers::room::wait(t, &line))?; return Ok(()); }
+    if t.b("diskWait") { t = g.set(|t| { t.del("diskWait"); })?; }
     // Once more, right before the first change may be made.
     let Some(undone) = put_back(&t) else { fail(g, held_failure(&t), FailHow::default())?; return Ok(()); };
-    unlock(&t);
+    // Writable before anything is started: a start that fails leaves no read-only worktree behind.
+    if !unlock(&t) { crate::fail!("The task's worktree could not be made writable again for the build ({}). Make it and its git folder writable (chmod -R u+w), then retry.", t.s("worktree")); }
+    g.set(|t| t.obj_mut("plan").put("locked", false))?;
     if !undone.is_empty() { g.set(|t| t.obj_mut("plan").put("undone", json!({ "list": undone.iter().take(30).collect::<Vec<_>>(), "n": undone.len(), "at": now() })))?; }
     // The writer's conversation is counted onto the task before it is let go.
     crate::limits::spent::count(id, "agent", 10000);
@@ -111,7 +116,8 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
             t = g.set(|t| { t.put("stage", "working"); t.put("armedAt", now()); t.put("expectedWake", Value::Null); t.put("turnOpen", true); t.put("turnBy", "start"); t.put("msg", ""); t.put("watch", Value::Null); t.del("kind"); })?;
             flow::send::deliver(&t, &flow::send::with_tail(&t, &words), None, false)?;
         } else {
-            // In its own plan mode, or in the read-only mount: neither ends by itself. Ended, and started again.
+            // In the read-only mount (or, started by an older board, in Claude Code's own plan mode): neither ends by
+            // itself. Ended, and started again.
             if a.is_some() && !api.pane_quit(t.at("link").s("pane"), 6000) { crate::fail!("The agent's program could not be ended to leave its plan step. Close its terminal, then retry."); }
             if resumable(&t) { start_agent(id, g, &flow::send::with_tail(&t, &words), Some(t.s("session")))?; }
             else { start_agent(id, g, &std::iter::once(first_prompt(&t)).chain(waiting.iter().cloned()).collect::<Vec<_>>().join("\n\n"), None)?; }
@@ -127,7 +133,7 @@ pub fn start_build_by(id: &str, g: &mut Guard, by: &str) -> Res<()> {
 /// of its own. The worktree, the branch and the tab the plan was written in are attempt A's.
 fn fan_out(g: &mut Guard, agents: &[String]) -> Res<Task> {
     let t = g.check()?;
-    let place: Obj = ["worktree", "branch", "from", "baseSha", "repoFile", "repoRefused", "root", "ownNote"].iter().filter(|k| t.contains_key(**k)).map(|k| (k.to_string(), t.at(k).clone())).collect();
+    let place: Obj = ["worktree", "branch", "from", "fromNamed", "baseSha", "repoFile", "repoRefused", "root", "ownNote"].iter().filter(|k| t.contains_key(**k)).map(|k| (k.to_string(), t.at(k).clone())).collect();
     let l = t.at("link").clone();
     let mut made = vec![];
     for (n, agent) in agents.iter().enumerate() {
@@ -146,7 +152,7 @@ fn fan_out(g: &mut Guard, agents: &[String]) -> Res<Task> {
         let s = t.at("link").at("socket").clone(); let w = t.at("link").at("workspace").clone();
         t.put("link", json!({ "socket": s, "workspace": w, "ownsWorkspace": true }));
         let p = t.obj_mut("plan"); p.put("built", now()); p.put("locked", false); p.del("ignored");
-        for k in FORGET.iter().chain(["worktree", "branch", "from", "baseSha", "startedOnce"].iter()) { t.del(k); }
+        for k in FORGET.iter().chain(["worktree", "branch", "from", "fromNamed", "baseSha", "startedOnce"].iter()) { t.del(k); }
     })?;
     flow::sidebar::tell_sidebar(&t);
     Ok(t)

@@ -31,7 +31,7 @@ whether the chat's message shows, and `Space` never opens or folds it, at any wi
  Settings ───────────────────────────────────────────
  Agent        claude · opus * · default effort
  Plan first   off
- Reviewer     codex · default model · default effort · fast
+ Reviewer     codex · default model · default effort
  Review when  in a repo · with evidence
  Send back    major or worse · 5 rounds max
  Check        npm test · 15m at most
@@ -111,7 +111,7 @@ usual ones.
 | `Review when` | `in a repo`, `always` or `never`, and whether the reviewer brings evidence | `review.when`, `review.evidence` |
 | `Send back` | how bad a finding sends the work back, and how many rounds go by themselves | `review.mustFix`, `review.rounds` |
 | `Check` | the check's command and how long it may run | `check.command`, `check.timeout` |
-| `Merge` | after your yes or by itself, how it lands, and whether a pull request is opened. A research-only task has `Research` here instead: it merges nothing | `merge.by`, `merge.method`, `merge.pr`, `research.only` |
+| `Merge` | after your yes or by itself, how it lands, and whether a pull request is opened. A research-only task has `Research` here instead: it merges nothing. A [chat-only](chat.md) one has `Chat` (`no change to the repo · ends when you say`), and no `Reviewer`, `Review when`, `Send back` or `Check` rows: none of them runs | `merge.by`, `merge.method`, `merge.pr`, `research.only`, `chat.only` |
 | `Limits` | the longest run and the most tokens, both of them (`2h a run · no token limit`); only where one is set, or somebody said `none` | `limit.time`, `limit.tokens` |
 | `Workspace` | what the worktree starts from, what sets it up, is copied in and tears it down, and whether it is removed when done | `workspace.*` |
 | `Also` | in a word each, what has no row of its own while it is nothing: `one attempt`, `not research only`, `no limits`, `no fallback` | |
@@ -170,8 +170,35 @@ here either: `herdr-projects show <id>` says it.
 - **A setting that cannot apply is not offered**: fast mode, for a program that has none (only Codex has one); a repo's
   setting, for a task in no repo. One that is this task's own all the same still shows, so it can be put back.
 - Only this page's keys act while it is open, and the hint line is its own ([keys](keys.md)).
-- Board settings are yours only and are not on this page (`herdr-projects show`). A task on another machine is changed
-  there. An archived task's settings can be read, not changed.
+- Board settings are yours only and are not on this page: they are on yours (below). A task on another machine is
+  changed there. An archived task's settings can be read, not changed.
+
+### Your own settings
+
+`Ctrl+E` on this machine's heading (or a status group's), or `your own settings` in the `?` menu, opens the same page
+for your settings: what every task starts from, board settings too (`Settings  yours: what every task starts from`).
+On a repo's heading it is your entry for that repo. The keys are the page's; `Enter` saves as `herdr-projects set` does
+and `Ctrl+U` as `unset`. `*` marks what you set, and every other row says where its value comes from (`built in`, or on
+a repo's entry `you`). `Esc` goes back to the list. On another machine's heading the board says to change them there
+([settings](settings.md)).
+
+## A coordinator in the panel
+
+On a coordinator's row (a machine's or a project's row) the panel shows that
+coordinator, in the same form:
+
+- **Status**: `State` (its chat's, `idle` or `working`; on [autopilot](autopilot.md), autopilot's word), `Last`, its
+  latest message as the chat shows it, and while on, `Goal` and `Today` (`2 of 5 added · 1 of 2 under way`).
+- **Settings**: `Agent` (its program, model and effort), and while on, `Wakes`, `Limits`, `May set`, `May touch` and the
+  rest, in plain words. `*` marks this time's values, with `* this time only` under them.
+- While autopilot is off, nothing of it shows.
+- A `coordinator.*` value changed while its chat runs says `from its next fresh chat`, here and on its settings page.
+- `Alt+T` shows it whole, and while on its last 20 wakes: when, why, and whether it answered.
+
+`Ctrl+E` there opens its settings page, in this page's form and keys: its own rows first, under `This coordinator`,
+then on this machine's row your own settings, on a project's row your entry for that repo. While autopilot is on,
+`Enter` on an autopilot row other than the goal saves it for this time only, and a line under the rows says so. Another
+machine's coordinator's page is shown whole, to read; it is changed on that machine.
 
 ## The reviews
 

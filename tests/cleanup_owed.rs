@@ -10,6 +10,8 @@ use sw::herdr::cli::{Fake, Ran};
 use sw::json::*;
 use sw::store::tasks::{update, Change};
 
+mod published;
+
 /// The world's fake herdr, with two more ways to fail: `closeFails` (a close herdr did not do) and `wsGetOk` (it
 /// answers this many lookups of a space, then none).
 struct Flaky(Rc<herdr::FakeHerdr>);
@@ -196,7 +198,7 @@ fn a_done_task_with_no_note_that_clean_up_is_owed_is_cleaned_up_all_the_same_onc
     let q = w.add("Asks you");
     delegate(&q);
     assert_eq!(settle(&q).s("stage"), "working");
-    sw::actions::filing::report(&q, sw::actions::filing::Report { state: "blocked".into(), kind: "question".into(), msg: "Which one?".into(), as_agent: true, ..Default::default() }).unwrap();
+    sw::actions::filing::report(&q, sw::actions::filing::Report { state: "blocked".into(), kind: "question".into(), msg: "Which one?".into(), own: "agent", ..Default::default() }).unwrap();
     agent_pane(&w, task(&q).at("link").s("workspace"), |p| p["agent"]["status"] = json!("idle"));
     let c = task(&q);
     assert_eq!(c.s("stage"), "asks"); assert!(c.at("link").b("pane") && !c.b("tidy") && !c.b("cleaned") && !c.b("kept"));

@@ -15,7 +15,7 @@ use crate::json::*;
 use crate::research::{is_research, report_folder};
 use crate::runner::{claim, is_aborted, Guard};
 use crate::store::attempts::attempts_of;
-use crate::store::files::{board_env, dir_of};
+use crate::store::files::dir_of;
 use crate::store::marks::pending_events;
 use crate::store::repos::folder_of;
 use crate::store::settings::lookup::work;
@@ -93,12 +93,12 @@ fn compare(id: &str, g: &mut Guard, t: &Task) -> Res<Obj> {
     let writes = is_research(t) && t.at("comparing").s("pick") == "reviewer";
     let brief = format!("{}\n\n{}{}", task_line_as(t, "reviewer", 0), compare_brief(t, &passed, writes), if who.instructions.is_empty() { String::new() } else { format!("\n\n{}", start::own_words(&who.instructions)) });
     let cwd = passed.first().map(|c| c.t("worktree")).filter(|w| !w.is_empty() && Path::new(w).exists()).map(PathBuf::from).unwrap_or_else(|| folder_of(t.s("id")));
-    installed::pre_trust(&k, &folder_of(t.s("id")), &who.access);
+    installed::pre_trust(&k, &folder_of(t.s("id")), &cwd, &who.access);
     close_picker(id);
     let ws = t.at("link").t("workspace");
     let err = |e: &str| Ok(obj(json!({ "error": e, "by": k })));
     if ws.is_empty() || api.workspace_get(&ws).is_none() { return Ok(obj(json!({ "error": "the task's space is gone, so nobody compared the attempts" }))); }
-    let made = api.tab_create(&ws, &cwd.display().to_string(), flow::tabs::PICKER_TAB, &board_env())?;
+    let made = api.tab_create(&ws, &cwd.display().to_string(), flow::tabs::PICKER_TAB, &crate::temp::task_env(t))?;
     let tab = if made.at("tab").b("tab_id") { made.at("tab").t("tab_id") } else { made.at("root_pane").t("tab_id") };
     let pane = if made.at("root_pane").is_object() { made.at("root_pane").t("pane_id") } else { api.panes(Some(&ws))?.into_iter().find(|p| p.s("tab_id") == tab).map(|p| p.t("pane_id")).unwrap_or_default() };
     if pane.is_empty() { if !tab.is_empty() { api.tab_close(&tab); } return Ok(obj(json!({ "error": "herdr opened no terminal for the comparison" }))); }
@@ -110,7 +110,7 @@ fn compare(id: &str, g: &mut Guard, t: &Task) -> Res<Obj> {
     let x = launch_extras(t, "reviewer", &k, 0, "", None)?;
     g.set(|t| { t.obj_mut("link").put("reviewer", json!({ "pane": pane, "tab": tab, "agent": name, "kind": k })); t.put("reviewSession", x.session.clone().map(Value::String).unwrap_or(Value::Null)); })?;
     let start_with = |hook: Vec<String>| -> Res<()> {
-        let args = start::start_args(&k, &start::StartOpts { model: model.clone(), effort: effort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, ..Default::default() })?;
+        let args = start::start_args(&k, &start::StartOpts { model: model.clone(), effort: effort.clone(), fast: Some(who.fast), access: who.access.clone(), session: x.session.clone().unwrap_or_default(), extra: hook, folder: cwd.clone(), ..Default::default() })?;
         match api.agent_start(&name, &k, &pane, &args, 60000) { Ok(_) => { crate::submit::settle(&api, &pane, &std::iter::once(crate::agents::kinds::program(&k).to_string()).chain(args).collect::<Vec<_>>().join(" ")); Ok(()) } Err(e) if e.code == "agent_not_ready" => Ok(()),
             Err(e) => Err(crate::agents::start_failed::say(&api, &crate::agents::start_failed::Start { kind: &k, setting: "reviewer.agent", again: "pick again" }, &pane, &e.message, &crate::store::files::dir_of(t.s("id")).join("runner.log")).into()) }
     };
