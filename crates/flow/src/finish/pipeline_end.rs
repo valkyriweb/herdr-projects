@@ -63,12 +63,20 @@ pub fn after_review(c: Ctx, g: &mut Guard) -> Res<()> {
         let r = run_review(id, g, c.text, change.as_ref(), to_land, &ch, c.check)?;
         if r.aborted { return Ok(()); }
         // The task keeps every review it had. A review the provider cut off is not one: it is not on the list.
-        if !r.cut { let entry = r.review.clone().map(Value::Object).unwrap_or_else(|| json!({ "error": r.error })); g.set(|t| log_review(t, &entry))?; }
+        // One that ran out of time is kept whole: its timeout verdict and partial findings stand as the task's review.
+        if !r.cut { let entry = r.review.clone().or_else(|| r.timeout.clone()).map(Value::Object).unwrap_or_else(|| json!({ "error": r.error })); g.set(|t| log_review(t, &entry))?; }
         let Some(rv) = r.review else {
-            let mut f = failure("review", if r.auth { "Needs a login" } else { "Review failed" }, &format!("Review failed: {}", r.error), "Investigate the reviewer failure, then finish again for a fresh review. Do not bypass review or merge approval.");
+            let mut f = failure("review", if r.auth { "Needs a login" } else if r.timeout.is_some() { "Review timed out" } else { "Review failed" }, &format!("Review failed: {}", r.error), "Investigate the reviewer failure, then finish again for a fresh review. Do not bypass review or merge approval.");
             if r.auth { f.put("auth", true); }
             f.put("msg", if r.auth { "The reviewer needs a login".to_string() } else { format!("Review failed: {}. Retry the task to review again", one_line(&r.error, 200)) });
-            fail(g, f, FailHow { patch: obj(json!({ "review": null })), ..Default::default() })?;
+            if let Some(x) = &r.timeout {
+                let kept = x.at("timeout").i("bytes");
+                f.put("resume", true);
+                f.put("detail", format!("Review failed: {}. The reviewer was stopped after {} with {kept} bytes of its work in hand; the task keeps them as its review.{}", r.error, crate::shown::words::age(x.at("timeout").i("elapsed")), if x.s("partial").is_empty() { " It had produced nothing the board could read.".to_string() } else { format!("\n\nWhat it had so far:\n{}", x.s("partial").chars().take(4000).collect::<String>()) }));
+                f.put("next", "Retry the task: the review starts again on the same commit, the check is not run again, and the next reviewer takes up what this one had so far. Do not bypass review or merge approval.");
+                f.put("msg", format!("Review timed out after {}{}. Retry resumes the review", x.at("timeout").s("limit"), if x.s("partial").is_empty() { "" } else { " with partial findings kept" }));
+            }
+            fail(g, f, FailHow { patch: obj(json!({ "review": r.timeout.map(Value::Object).unwrap_or(Value::Null) })), ..Default::default() })?;
             return Ok(());
         };
         let rv = Value::Object(rv);

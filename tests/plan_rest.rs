@@ -70,7 +70,7 @@ fn plan_ready_is_said_everywhere_the_worktree_stays_untouched_and_the_work_is_re
     std::fs::write(tree.join("f.txt"), "v1\n").unwrap(); // the builder can write now
     // The review of the work is told of the plan, and says where the build left it: kept with the review, and shown.
     let ch = sw::store::settings::lookup::work(Some(&t));
-    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "" });
+    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "", resumed: None });
     assert!(brief.contains("built from a plan that was approved before the work began"), "{brief}");
     let mut v = sw::finish::review_brief::parse_verdict(&json!({ "meets": true, "text": "As planned.", "findings": [], "offPlan": ["The check was not run by hand."] }).to_string(), "", None, &[]).unwrap().unwrap();
     sw::gate::stamp(&mut v, "major");

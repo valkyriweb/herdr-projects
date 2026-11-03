@@ -102,8 +102,11 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
         if !s.ok { fail(g, failure("setup", "Setup still fails", &format!("Command: {setup}\nFolder: {}\n\n{}", folder.display(), s.out), "Fix the setup problem and finish again. Setup must pass before the check."), FailHow::default())?; return Ok(()); }
         g.set(|t| t.put("setupPending", false))?;
     }
-    // The chosen attempt of several: its check passed on this very commit, as that attempt. Not run twice.
-    let proven = t.b("checkedHead") && !tree.is_empty() && t.s("checkedWith") == check && flow::git::head_of(Path::new(&tree)) == t.s("checkedHead");
+    // The chosen attempt of several: its check passed on this very commit, as that attempt. Not run twice. Nor on a
+    // retry that resumes a review (actions/finish_line.rs: retry), while the full check's commit is still this one.
+    let again = t.b("reviewAgain") && !tree.is_empty() && t.at("checkPassed").s("with") == check && flow::git::head_of(Path::new(&tree)) == t.at("checkPassed").s("head");
+    if t.b("reviewAgain") { t = g.set(|t| t.put("reviewAgain", Value::Null))?; }
+    let proven = again || (t.b("checkedHead") && !tree.is_empty() && t.s("checkedWith") == check && flow::git::head_of(Path::new(&tree)) == t.s("checkedHead"));
     // On a later round, the shorter check where it may stand in for the full one (check_again.rs).
     let run = choose(&t, &ch, &check, &tree, &root);
     let ran = run.shown();

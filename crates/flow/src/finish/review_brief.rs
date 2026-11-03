@@ -9,7 +9,8 @@ use crate::research::{is_research, review_rule};
 use crate::review_page::link_mode;
 
 /// What the brief is about: the work's own words, its change, whether it lands, the settings, the round before.
-pub struct Brief<'a> { pub text: &'a str, pub change: Option<&'a Value>, pub to_land: bool, pub ch: &'a Obj, pub earlier: Option<&'a [Value]>, pub check: &'a str }
+/// `resumed`: the review before ran out of time on this commit, and this is what it left (review_salvage.rs).
+pub struct Brief<'a> { pub text: &'a str, pub change: Option<&'a Value>, pub to_land: bool, pub ch: &'a Obj, pub earlier: Option<&'a [Value]>, pub check: &'a str, pub resumed: Option<&'a Value> }
 pub fn review_brief(t: &Obj, b: &Brief) -> String {
     let dir = review_dir(t).display().to_string();
     let share = if link_mode() == "tailscale" {
@@ -35,6 +36,7 @@ pub fn review_brief(t: &Obj, b: &Brief) -> String {
             if open.is_empty() { "Earlier findings: none of the task's own.".to_string() } else { format!("Earlier findings:\n{}", open.iter().map(|f| format!("- {} {}", f.s("id"), gate::finding_line(f))).collect::<Vec<_>>().join("\n")) },
             if known.is_empty() { String::new() } else { format!("\n{known}") })
     } else { known.clone() };
+    let resumed = b.resumed.map(|e| format!("A reviewer before you ran out of time on this same commit (its limit was {}, and it was stopped after {}). You take the review up where it stopped, you do not start over: read what it had so far, below, verify what it claims rather than trust it, and spend your time on what it had not reached. Save your verdict well before the limit.\n\nWhat it had so far:\n{}", e.at("timeout").s("limit"), crate::shown::words::age(e.at("timeout").i("elapsed")), e.s("partial").chars().take(12000).collect::<String>())).unwrap_or_default();
     let verdict = format!("Last of all, save your verdict as JSON in {dir}/verdict.json, then stop. The board waits for that file. Its shape: {{\"commit\": \"{}\", \"meets\": <true or false>, \"text\": \"<two or three plain sentences: your overall judgement>\", \"findings\": [{{{}\"severity\": \"<critical, major, minor or trivial>\", \"subject\": \"<one sentence: what is wrong>\", \"where\": \"<the file or place>\", \"proof\": \"<what you ran or saw; may be empty>\", \"preexisting\": <true or false>}}, ...], \"checks\": [\"<what you actually exercised and the result>\", ...], \"limitations\": [\"<important areas you could not verify>\", ...], {}\"artifacts\": [{{\"file\": \"<file name you saved in that folder>\" or \"url\": \"<link to try it>\", \"caption\": \"<what it shows, a few words>\", \"detail\": \"<why it matters or what to try>\"}}, ...]}}  (findings and artifacts may be empty lists; do not invent findings, checks or proof)",
         if head.is_empty() { "<the commit you reviewed>".to_string() } else { head.clone() },
         if b.earlier.is_some() { "\"id\": \"<the earlier finding's id; leave out for a new one>\", " } else { "" },
@@ -50,7 +52,7 @@ pub fn review_brief(t: &Obj, b: &Brief) -> String {
         format!("First answer one fixed question, true or false: {} All of it, and working. That answer is `meets`. It decides nothing by itself: whatever makes you answer false, report it as a finding with the severity it deserves. Only an answer of false with no finding at all is counted as a critical finding.", gate::QUESTION),
         "Then report what you found as a list of findings, one fault each. A finding has a `subject` (one sentence saying what is wrong), a `where` (the file or the place), a `proof` (what you actually ran or saw that shows it; leave it empty if you did not show it), `preexisting` (true when the fault was already there before this change and the task did not cause it: such a finding is a note for the human, it never sends the work back and nothing else is done with it) and a `severity`. Choose the severity by what the fault does, never by whether you would like this merged:\n- critical: only one of these four. A fault a user of this would hit in ordinary use; data that is lost or wrong; something unsafe; or a requirement the task states plainly that is not built. Nothing else is critical: not a missing picture or recording, not a line of a document, not a test or proof that cannot be had on this machine, not something the task did not plainly ask for.\n- major: a real fault in an unusual case; or a claim that is not proven (a fix not shown to work, a test that cannot catch the bug it is for); or a document that states something false.\n- minor: correct but could be better: wording, naming, a small inaccuracy, a narrow gap.\n- trivial: a note. Nothing to do.".into(),
         format!("You do not decide whether this {} or goes back, and you give no score: the board decides from your findings by a fixed rule. A critical finding with an empty proof is counted as major. If nothing qualifies, return an empty list and say so. Do not invent findings to have something to report.", if b.to_land { "merges" } else { "is accepted" }),
-        later, verdict,
+        later, resumed, verdict,
     ].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join("\n\n")
 }
 /// The board's rules applied to whatever the reviewer wrote. None: a verdict for another commit (ignored).

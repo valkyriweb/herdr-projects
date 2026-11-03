@@ -12,7 +12,12 @@ pub fn review_round(t: &Task) -> i64 { t.f("reviewRound").floor().max(0.0) as i6
 fn review_entry(rv: &Value, round: i64, at: &Value) -> Value {
     let mut e = obj(json!({ "round": round, "at": at }));
     if rv.b("by") { e.put("by", rv.at("by").clone()); }
-    if rv.b("error") { e.put("error", one_line(&rv.t("error"), 400)); return Value::Object(e); }
+    if rv.b("error") {
+        e.put("error", one_line(&rv.t("error"), 400));
+        // A review that ran out of time keeps what its reviewer had (finish/review_salvage.rs): the next one takes it up.
+        if rv.at("timeout").is_object() { e.put("timeout", rv.at("timeout").clone()); e.put("partial", rv.at("partial").clone()); e.put("head", rv.at("head").clone()); }
+        return Value::Object(e);
+    }
     if is_tagged(rv) {
         for k in ["meets", "findings", "gate", "pass"] { e.put(k, rv.at(k).clone()); }
         e.put("left", if rv.b("left") { rv.at("left").clone() } else { json!(0) });

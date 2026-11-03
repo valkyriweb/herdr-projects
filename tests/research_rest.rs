@@ -13,7 +13,7 @@ const NAME: &str = "research.only";
 fn add_research(w: &World, title: &str) -> String { filing::add(&w.root, title, filing::AddOpts { research: Some(true), ..Default::default() }).unwrap().t("id") }
 fn all_prompts(w: &World, t: &Obj) -> String { prompts(w, t.at("link").s("pane")).join("\n---\n") }
 fn has(text: &str, re: &str) -> bool { regex::Regex::new(re).unwrap().is_match(text) }
-fn brief(t: &Obj) -> String { let ch = sw::store::settings::lookup::work(Some(t)); sw::finish::review_brief::review_brief(t, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "" }) }
+fn brief(t: &Obj) -> String { let ch = sw::store::settings::lookup::work(Some(t)); sw::finish::review_brief::review_brief(t, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "", resumed: None }) }
 fn changes(t: &Obj, dir: &Path) -> Vec<String> { changes_of(t, dir).unwrap_or_else(|| panic!("no mark")) }
 
 #[test]

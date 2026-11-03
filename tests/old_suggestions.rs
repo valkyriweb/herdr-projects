@@ -66,7 +66,7 @@ fn agents_reviewers_and_the_coordinator_are_told_the_same_plain_thing_work_found
     assert!(told.contains("Work you merely come across is a line in your closing note or report, never a task."), "{told}");
     assert!(!has(&told, "herdr-projects suggest|accept|dismiss"));
     let change = json!({ "head": "abc" });
-    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "done", change: Some(&change), to_land: true, ch: &Obj::new(), earlier: None, check: "" });
+    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "done", change: Some(&change), to_land: true, ch: &Obj::new(), earlier: None, check: "", resumed: None });
     assert!(brief.contains("such a finding is a note for the human, it never sends the work back and nothing else is done with it"), "{brief}");
     assert!(brief.contains("one that was there before this change is marked `preexisting`: it is a note for the human in your review"), "{brief}");
     assert!(!has(&brief, "suggest|becomes a task"));

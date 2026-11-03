@@ -3,6 +3,7 @@
 use super::review::{close_reviewer, Reviewed};
 use super::review_brief::{parse_verdict, review_brief, Brief};
 use super::review_fallback::{reviewer_now, Cut};
+use super::review_salvage::{resumed_from, salvage, Left};
 use super::shared::{ms, review_until, timed_out};
 use crate::agents::{adapter, helpers::still_at_work, installed, start, start_failed};
 use crate::clock::now;
@@ -60,11 +61,13 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
     let before: Vec<Value> = if plan.is_some() { vec![] } else { review_history(&t).into_iter().filter(gate::is_tagged).collect() };
     let earlier: Option<Vec<Value>> = if t.i("reviewRounds") > 0 && !before.is_empty() { Some(before.last().unwrap().arr("findings").to_vec()) } else { None };
     let used: Vec<String> = before.iter().flat_map(|e| e.arr("findings").iter().map(|f| f.t("id")).collect::<Vec<_>>()).collect();
-    let body = match plan { Some(p) => (p.brief)(&t, &dir), None => review_brief(&t, &Brief { text, change, to_land, ch, earlier: earlier.as_deref(), check }) };
-    let brief = format!("{}\n\n{body}{}", task_line_as(&t, "reviewer", round), if who.instructions.is_empty() { String::new() } else { format!("\n\n{}", start::own_words(&who.instructions)) });
     let head = if to_land { change.map(|c| c.t("head")).unwrap_or_default() } else { String::new() };
+    // The review before this one ran out of time on this same commit: this one takes up what it left.
+    let resumed = if plan.is_some() { None } else { resumed_from(&t, &head) };
+    let body = match plan { Some(p) => (p.brief)(&t, &dir), None => review_brief(&t, &Brief { text, change, to_land, ch, earlier: earlier.as_deref(), check, resumed: resumed.as_ref() }) };
+    let brief = format!("{}\n\n{body}{}", task_line_as(&t, "reviewer", round), if who.instructions.is_empty() { String::new() } else { format!("\n\n{}", start::own_words(&who.instructions)) });
     let mut pane_tab: Option<(String, String)> = None;
-    let (mut error, mut review, mut auth, mut cut, mut ended): (String, Option<Obj>, bool, Option<Cut>, bool) = (String::new(), None, false, None, false);
+    let (mut error, mut review, mut auth, mut cut, mut ended, mut timeout): (String, Option<Obj>, bool, Option<Cut>, bool, Option<Obj>) = (String::new(), None, false, None, false, None);
     let run = (|| -> Res<()> {
         installed::pre_trust(&rkind, &if t.b("root") { PathBuf::from(t.s("root")) } else { folder_of(t.s("id")) }, &who.access);
         close_reviewer(id); // a tab left over from an interrupted round
@@ -123,7 +126,13 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
                     Err(e) => { error = crate::text::squash(&e.msg).chars().take(400).collect(); if error.is_empty() { error = "no valid verdict".into(); } break; }
                 }
             }
-            if until.is_some_and(|u| now() > u) { error = timed_out("review", ch); break; }
+            // Out of time: what the reviewer produced so far is kept with the failure, before its tab is closed.
+            if until.is_some_and(|u| now() > u) {
+                error = timed_out("review", ch);
+                let session = get(id).map(|c| c.t("reviewSession")).unwrap_or_default();
+                timeout = Some(salvage(&Left { api: &api, pane: &pane, kind: &rkind, session: &session, folder: &folder, dir: &dir, started_at, head: &head }, &error, ch.s("review.timeout")));
+                break;
+            }
             let cur = get(id).ok_or("the task is gone")?;
             // The reviewer's own turn-end report for this round, and still no verdict: the review failed, at once.
             let rev = pending_events(&cur).into_iter().find(|e| e.s("role") == "reviewer" && e.i("round") == round && !e.b("side") && e.i("at") >= started_at && !waited.contains(&e.i("n")));
@@ -190,7 +199,8 @@ pub fn review_once(id: &str, g: &mut Guard, text: &str, change: Option<&Value>, 
         if let Err(e) = g.set(|t| { if plan.is_none() && t.i("reviewRound") == round { t.put("reviewRound", round - 1); } }) { if is_aborted(&e) { return Ok(Reviewed { aborted: true, ..Default::default() }); } }
         return Ok(Reviewed { cut: true, error, auth, by, cut_by: cut, ..Default::default() });
     }
-    let Some(mut rv) = review else { return Ok(Reviewed { error: if error.is_empty() { "no valid verdict".into() } else { error }, auth, by, ended, ..Default::default() }) };
+    if let Some(x) = timeout.as_mut() { x.put("by", by.clone()); }
+    let Some(mut rv) = review else { return Ok(Reviewed { error: if error.is_empty() { "no valid verdict".into() } else { error }, auth, by, ended, timeout, ..Default::default() }) };
     gate::stamp(&mut rv, ch.s("review.mustFix"));
     rv.put("by", by.clone()); // who reviewed: the task's history keeps it
     if plan.is_some() { let _ = std::fs::remove_dir_all(&dir); rv.del("listed"); return Ok(Reviewed { review: Some(rv), by, ..Default::default() }); }
