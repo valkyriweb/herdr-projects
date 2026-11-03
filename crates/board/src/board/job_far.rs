@@ -1,6 +1,7 @@
 //! The longer jobs of the board: what goes to another machine (an action on its task, words for its Coordinator),
 //! a setting changed from the settings page, going into an agent's pane, and the first run's answers.
 use super::job::{Done, Then};
+use super::state::Whose;
 use crate::board::keys::key_name;
 use crate::herdr::Herdr;
 use crate::json::*;
@@ -32,6 +33,9 @@ pub fn dispatch(m: Machine, text: String, delegate: bool, about: String, to: Str
 }
 /// One of the exact actions, on a task or an automation that lives on another machine.
 pub fn far(m: &Machine, host: &str, action: &str, req: Value, quiet: bool) -> Done {
+    if crate::remote::projects::is_project_action(action) { return project(m, host, action == "project-archive", &req); }
+    // A machine or a project pinned there: that machine says so with its tasks (remote/pins.rs).
+    if crate::remote::pins::is_pin_action(action) { return match crate::remote::pins::ask_there(m, &req) { Ok(j) => Done::say(j.t("msg"), Ink::Muted), Err(e) => Done::fail(e.msg) }; }
     let mut req = obj(req);
     req.put("action", action);
     // A task's work settings travel with whatever starts its agent: what this machine says for it is worked out here.
@@ -40,11 +44,11 @@ pub fn far(m: &Machine, host: &str, action: &str, req: Value, quiet: bool) -> Do
     if action == "tell" {
         match carry(m, &req.t("text"), &For::Task(req.t("id"))) { Ok(t) => req.put("text", t), Err(e) => return Done::fail(format!("{e} Nothing was sent.")) }
     }
-    let ms = if action == "reopen" { 60000 } else { 20000 };
+    let ms = if action == "reopen" || action == "coordinator-open" { 60000 } else { 20000 };
     match ask(m, "do", Some(&Value::Object(req.clone())), ms) {
         Err(why) => Done::fail(unanswered(host, &why)),
         Ok(j) if !j.b("ok") => Done::fail(j.t("msg")),
-        Ok(j) if action == "reopen" => {
+        Ok(j) if action == "reopen" || action == "coordinator-open" => {
             // In a herdr window: that machine's herdr put it in front (`focus`); the window goes there when you pick
             // that machine in its sidebar, as herdr has no command that switches a window to another machine.
             if j.b("focused") { return Done::default().and(Then::OpenedThere { id: format!("{host}:{}", req.t("id")), host: host.into(), agent: j.b("hasAgent") }); }
@@ -62,10 +66,36 @@ pub fn far(m: &Machine, host: &str, action: &str, req: Value, quiet: bool) -> Do
         }
     }
 }
-/// A setting of one task (or automation) from the settings page: a value, or none to put the row back.
-pub fn set(id: &str, name: &str, value: Option<String>, auto: bool) -> crate::err::Res<Done> {
+/// A project of another machine archived or restored there (remote/projects.rs), asked from what the board saw of it.
+fn project(m: &Machine, host: &str, archive: bool, req: &Value) -> Done {
+    let seen = req.at("seen").is_object().then(|| crate::remote::projects::Seen { tasks: req.at("seen").i("tasks").max(0) as usize, asked: req.at("seen").b("asked") });
+    match crate::remote::projects::ask_there(m, archive, req.s("repo"), seen) {
+        Err(e) => Done::fail(e.msg),
+        Ok(j) => {
+            let said = if archive { format!(" {} shows it; {} there brings it back.", key_name("archiveView"), key_name("archive")) } else { String::new() };
+            Done::say(format!("{host}: {}{said}", j.s("msg")), if j.s("msg").contains("Still on the board") { Ink::Yellow } else { Ink::Green })
+        }
+    }
+}
+/// Going into a coordinator of this machine: herdr goes to its pane (started first when it is not running), or, outside
+/// a herdr client, this terminal attaches to it.
+pub fn coord_open(to: &str, name: &str, popup: bool) -> Done {
+    let co = crate::coordinator::co::Co::of(&crate::herdr::cli::current_socket(), to);
+    if !crate::herdr::cli::in_herdr() {
+        let v = crate::coordinator::look::look(&co);
+        if v.pane.is_empty() || v.status.is_none() { return Done::say(format!("{} is not running: your first message starts it.", crate::board::update::top::sentence(name)), Ink::Yellow); }
+        let args = vec![format!("HERDR_SOCKET_PATH={}", co.socket), crate::herdr::cli::bin(), "agent".into(), "attach".into(), v.pane];
+        return Done::default().and(Then::Attach { command: "env".into(), args, id: String::new() });
+    }
+    match crate::coordinator::look::go_in(&co, 30000) { Ok(_) => if popup { Done::default().and(Then::Leave) } else { Done::default() }, Err(e) => Done::fail(e.msg) }
+}
+/// A setting of one task (or automation) from the settings page: a value, or none to put the row back. Yours and your
+/// entry for a repo are changed as `set` and `set --repo` change them, with the same checks.
+pub fn set(id: &str, name: &str, value: Option<String>, whose: &Whose) -> crate::err::Res<Done> {
     use crate::automations::list as l;
-    let (value, from, later) = if auto {
+    if let Whose::Coord(key, _) = whose { return set_coord(name, value, key); }
+    if whose.mine() { return set_mine(name, value, whose.repo()); }
+    let (value, from, later) = if *whose == Whose::Auto {
         let r = match &value { Some(v) => l::set_setting(id, name, &json!(v))?, None => l::unset_setting(id, name)? };
         let r = r.ok_or_else(|| crate::err::Error::from("that setting is not an automation's"))?;
         (r.value, r.from, String::new())
@@ -79,6 +109,32 @@ pub fn set(id: &str, name: &str, value: Option<String>, auto: bool) -> crate::er
     let label = entry_of(name).map(|e| e.label.to_string()).unwrap_or_else(|| name.to_string());
     let shown = match &value { Value::Bool(true) => "on".to_string(), Value::Bool(false) => "off".to_string(), v => say(v).lines().next().unwrap_or("").to_string() };
     Ok(Done::say(format!("{}{}", crate::store::settings::show::saved_words(&label, &shown, &from), if later.is_empty() { String::new() } else { format!(" · {later}") }), Ink::Green).and(Then::Saved(name.to_string())))
+}
+/// One of a coordinator's own rows: while autopilot is on an autopilot value (not its goal) is this time's, else the
+/// coordinator's own, as `set … --project-coordinator <repo>` sets it.
+fn set_coord(name: &str, value: Option<String>, key: &str) -> crate::err::Res<Done> {
+    let co = crate::coordinator::co::Co::of(&crate::herdr::cli::current_socket(), if key == "main" { "" } else { key });
+    if crate::autopilot::record::is_on(&co) && name.starts_with("autopilot.") && name != crate::store::settings::coord::GOAL {
+        let said = crate::autopilot::switch::set_once(&co, name, value.map(|v| json!(v)))?;
+        return Ok(Done::say(said, Ink::Green).and(Then::Saved(name.to_string())));
+    }
+    use crate::actions::settings::{settings_command, Where};
+    let cmd = if value.is_some() { "set" } else { "unset" };
+    let w = Where { task: None, repo: None, automation: None, coord: Some(key.to_string()) };
+    let (j, _) = settings_command(cmd, &[cmd.to_string(), name.to_string()], &w, value.map(|v| json!(v)))?;
+    let label = entry_of(name).map(|e| e.label.to_string()).unwrap_or_else(|| name.to_string());
+    let running = crate::coordinator::state::get(&co).map(|c| c.b("run")).unwrap_or(false) && name.starts_with("coordinator.");
+    Ok(Done::say(format!("{label}: {}, for the {} only{}", say(j.at("value")).lines().next().unwrap_or(""), co.name(), if running { " · from its next fresh chat" } else { "" }), Ink::Green).and(Then::Saved(name.to_string())))
+}
+fn set_mine(name: &str, value: Option<String>, repo: &str) -> crate::err::Res<Done> {
+    use crate::actions::settings::{settings_command, Where};
+    let cmd = if value.is_some() { "set" } else { "unset" };
+    let w = Where { task: None, repo: (!repo.is_empty()).then(|| repo.to_string()), automation: None, coord: None };
+    let (j, _) = settings_command(cmd, &[cmd.to_string(), name.to_string()], &w, value.map(|v| json!(v)))?;
+    let label = entry_of(name).map(|e| e.label.to_string()).unwrap_or_else(|| name.to_string());
+    let shown = match j.at("value") { Value::Bool(true) => "on".to_string(), Value::Bool(false) => "off".to_string(), v => say(v).lines().next().unwrap_or("").to_string() };
+    let note = if j.s("note").is_empty() { String::new() } else { format!(" · {}", j.s("note")) };
+    Ok(Done::say(format!("{label}: {shown}{note}"), Ink::Green).and(Then::Saved(name.to_string())))
 }
 /// Into a task's agent: its real herdr pane. Its space may have been closed (archive closes it): it is reopened from
 /// the worktree first. Outside a herdr client (plain SSH) this terminal attaches to that one agent instead.
@@ -129,12 +185,12 @@ pub fn web_open(id: &str, far: Option<(Machine, String, String, String)>) -> Don
             Err(why) => Done::fail(unanswered(&host, &why)),
             Ok(j) if !j.b("ok") => Done::fail(j.t("msg")),
             Ok(j) => { let p = if j.b("pane") { j.t("pane") } else { pane }; let ws = if j.b("workspace") { j.t("workspace") } else { p.split(':').next().unwrap_or("").to_string() };
-                Done::default().and(Then::Go(json!({ "machine": pc, "pane": p, "workspace": ws, "view": if j.at("hasAgent") == &json!(false) { "terminal" } else { "chat" } }))) }
+                Done::default().and(Then::Go(json!({ "machine": pc, "pane": p, "workspace": ws, "view": if j.at("hasAgent") == &json!(false) { "terminal" } else { "chat" }, "space": format!("{host}: {id}") }))) }
         };
     }
     let Some(t) = get(id) else { return Done::fail(format!("{id} is gone.")) };
     if let Err(e) = crate::flow::live::assert_live(&t) { return Done::fail(e.msg); }
     let (pane, _, _) = match crate::delegate::jobs::reopen(id, false) { Ok(x) => x, Err(e) => return Done::say(e.msg, Ink::Yellow) };
     let has_agent = Herdr::new(Some(t.at("link").t("socket"))).agent_get(pane.s("pane_id")).ok().flatten().is_some();
-    Done::default().and(Then::Go(json!({ "pane": pane.t("pane_id"), "workspace": pane.t("workspace_id"), "view": if has_agent { "chat" } else { "terminal" } })))
+    Done::default().and(Then::Go(json!({ "pane": pane.t("pane_id"), "workspace": pane.t("workspace_id"), "view": if has_agent { "chat" } else { "terminal" }, "space": crate::flow::sidebar::space_label(&t) })))
 }

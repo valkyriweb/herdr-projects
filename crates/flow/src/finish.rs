@@ -4,6 +4,7 @@
 pub mod already;
 pub mod auto_merge;
 pub mod chat;
+pub mod chat_only;
 pub mod check_again;
 pub mod check_run;
 pub mod commit;
@@ -19,6 +20,7 @@ pub mod review;
 pub mod review_once;
 pub mod review_brief;
 pub mod review_fallback;
+pub mod review_screen;
 pub mod shared;
 pub mod sync_job;
 pub mod turn_ended;

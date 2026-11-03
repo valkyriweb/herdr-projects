@@ -1,6 +1,6 @@
 //! The finish line's keys: approve, send the review or the failure back, finish anyway, retry.
 use super::limits::{carry_on, take_as_is};
-use super::plan::{approve_plan, awaits_plan};
+use super::plan::{approvable, approve_plan, awaits_plan, review_again};
 use super::shared::{say, Said};
 use super::start::delegate;
 use super::talk::tell;
@@ -34,8 +34,9 @@ pub fn approve(id: &str, seen: Option<(Value, Value)>, anyway: bool) -> Res<Said
     };
     moved(&cur)?;
     if cur.s("stage") == "asks" && cur.s("kind") == "permission" { return tell(cur.s("id"), "Yes, go ahead.", false); }
-    if awaits_plan(&cur) { return approve_plan(cur.s("id")); }
+    if approvable(&cur) { return approve_plan(cur.s("id")); }
     if cur.s("stage") == "pick" { crate::fail!("{0} waits for you to pick one of its attempts, not for a merge: herdr-projects pick {0} <letter>", cur.s("id")); }
+    if crate::chat_only::is_chat(&cur) { crate::fail!("{0} is chat only: nothing of it is merged. To end the conversation: herdr-projects finish {0}", cur.s("id")); }
     if is_research(&cur) { crate::fail!("{0} is research only: nothing of it is merged. To merge its change after all, turn that off (herdr-projects set research.only false --task {0}) and delegate it again.", cur.s("id")); }
     let t = update(cur.s("id"), |t| {
         if t.s("stage") != "approval" { crate::fail!("{} is not waiting for an approval to merge.", t.s("id")); }
@@ -86,12 +87,15 @@ fn login_of(t: &Task) -> bool { (t.s("stage") == "failed" && t.at("failure").b("
 pub fn can_send_error(t: &Task) -> bool {
     (t.s("stage") == "nosummary" || (t.s("stage") == "failed" && (!t.at("failure").b("auth") || t.at("failure").s("stage") == "agent"))) && flow::task::is_agent_task(t) && !t.b("archivedAt")
 }
-pub fn send_error(id: &str) -> Res<Said> {
+pub fn send_error(id: &str) -> Res<Said> { send_error_noted(id, "") }
+/// The same, with a note of what to do differently (`retry <id> <note>`, as an autopilot wake retries).
+pub fn send_error_noted(id: &str, note: &str) -> Res<Said> {
     let cur = find(id)?;
     assert_unarchived(&cur)?;
     let cid = cur.t("id");
     if stopped_at_limit(&cur) { return carry_on(&cid, false); }
     if cur.s("stage") == "failed" && cur.at("failure").s("stage") == "send" { return retry(&cid); }
+    if awaits_plan(&cur) && cur.at("plan").b("reviewFailed") { return review_again(&cid); } // a plan whose review could not run
     if cur.s("stage") == "nosummary" || (cur.s("stage") == "failed" && cur.at("failure").b("auth") && cur.at("failure").s("stage") == "agent") {
         let out = tell(&cid, &flow::send::with_tail(&cur, "You stopped before the work was finished. Continue the task where you left off."), false)?;
         return Ok(say(out.task, format!("{cid}: told the agent to continue")));
@@ -99,7 +103,7 @@ pub fn send_error(id: &str) -> Res<Said> {
     if !can_send_error(&cur) { crate::fail!("{cid} has no agent error to send. Login blockers need the human first."); }
     let why = if cur.at("failure").b("detail") { cur.at("failure").t("detail") } else if cur.b("msg") { cur.t("msg") } else { "No details were saved.".into() };
     let title = if cur.at("failure").b("title") { format!("{}\n\n", cur.at("failure").t("title")) } else { String::new() };
-    let out = tell(&cid, &format!("This task ran into an error:\n\n{title}{why}\n\nInvestigate and fix the cause, then finish again. Run the checks before finishing. If a login, permission or human decision is needed, report blocked instead of retrying it yourself."), false)?;
+    let out = tell(&cid, &format!("This task ran into an error:\n\n{title}{why}\n\nInvestigate and fix the cause, then finish again. Run the checks before finishing. If a login, permission or human decision is needed, report blocked instead of retrying it yourself.{}", if note.trim().is_empty() { String::new() } else { format!("\n\n{}", note.trim()) }), false)?;
     update(&cid, |t| { if t.at("failure").is_object() { t.obj_mut("failure").put("sentAt", now()); } Ok(Change::Write) })?;
     Ok(say(out.task, format!("{cid}: sent to the agent to fix")))
 }
@@ -167,14 +171,16 @@ pub fn finish_anyway(id: &str) -> Res<Said> {
     assert_unarchived(&cur)?;
     if stopped_at_limit(&cur) { return take_as_is(cur.s("id")); }
     if cur.s("stage") == "working" { return super::finish_stuck::finish_stuck(&cur); }
-    if cur.s("stage") != "nosummary" { crate::fail!("{} did not stop without a summary.", cur.s("id")); }
+    // A chat-only task ends when you say so: from its wait for your next message (finish/chat_only.rs).
+    let chat = |t: &Task| crate::chat_only::is_chat(t) && t.s("stage") == "asks" && !["permission", "auth"].contains(&t.s("kind"));
+    if cur.s("stage") != "nosummary" && !chat(&cur) { crate::fail!("{} did not stop without a summary.", cur.s("id")); }
     let t = update(cur.s("id"), |t| {
-        if t.s("stage") != "nosummary" || runner_alive(t) { crate::fail!("{} is busy.", t.s("id")); }
+        if (t.s("stage") != "nosummary" && !chat(t)) || runner_alive(t) { crate::fail!("{} is busy.", t.s("id")); }
         t.put("stage", "checking"); t.put("msg", ""); t.put("since", now());
         Ok(Change::Write)
     })?;
     spawn_runner("pipeline", t.s("id"), &[]);
-    let msg = format!("{}: taking the work as it is", t.s("id"));
+    let msg = if chat(&cur) { format!("{}: ending the chat", t.s("id")) } else { format!("{}: taking the work as it is", t.s("id")) };
     Ok(say(t, msg))
 }
 fn go_on(cur: &Task) -> Res<Said> {
@@ -197,6 +203,7 @@ pub fn retry(id: &str) -> Res<Said> {
     if stopped_at_limit(&cur) { return carry_on(&cid, false); }
     // The agent said it needs a login: you have signed in, and it is told to carry on.
     if cur.s("stage") == "asks" && cur.s("kind") == "auth" { return go_on(&cur); }
+    if awaits_plan(&cur) && cur.at("plan").b("reviewFailed") { return review_again(&cid); } // its review could not run: once more
     if cur.s("stage") != "failed" { crate::fail!("{cid} has nothing to retry."); }
     // None of its attempts passed: trying again is starting over, with fresh attempts.
     if cur.at("failure").s("stage") == "attempts" { let t = delegate(&cid, vec![])?; return Ok(say(t, format!("{cid}: starting over with fresh attempts"))); }
@@ -234,7 +241,7 @@ pub fn ask_approve(id: &str, socket: &str, to: &str) -> Res<()> {
 }
 pub fn take_approve(socket: &str, me: &str) -> String {
     let Some(q) = read_obj(&approve_file()) else { return String::new() };
-    if q.s("socket") != socket { return String::new(); }
+    if !crate::herdr::cli::same_socket(q.s("socket"), socket) { return String::new(); }
     let fresh = now() - q.i("at") < 15000;
     if fresh && q.b("to") && !me.is_empty() && q.s("to") != me { return String::new(); } // the other board's
     let _ = std::fs::remove_file(approve_file());
@@ -252,14 +259,19 @@ pub fn details(id: &str) -> Res<Value> {
         "agent": if t.b("on") { t.at("on").clone() } else if t.b("agent") { t.at("agent").clone() } else { Value::Null },
         "handovers": handovers(&t).iter().map(|h| { let mut x = h.as_object().cloned().unwrap_or_default(); x.put("words", handover_line(h)); Value::Object(x) }).collect::<Vec<_>>(),
         "research": is_research(&t),
+        "chat": crate::chat_only::is_chat(&t),
         "report": t.at("report"),
         "plan": plan,
         "pr": if t.b("pr") { t.at("pr").clone() } else { Value::Null },
         "worktree": if t.b("worktree") { t.at("worktree").clone() } else { Value::Null },
         "branch": if t.b("branch") { t.at("branch").clone() } else { Value::Null },
+        "kept": if t.b("kept") { t.at("kept").clone() } else { Value::Null },
+        "stillRunning": if t.b("stillRunning") { t.at("stillRunning").clone() } else { Value::Null }, // what its clean-up or archive left for you to end
+        "inUse": if t.at("tidy").b("inUse") { t.at("tidy").at("inUse").clone() } else { Value::Null }, // what keeps its space in use, every thing
         "limits": limits_detail(&t, now()),
+        "addedBy": crate::autopilot::history::added_by(&t), // you, an automation, a coordinator's autopilot, or which coordinator you asked
     }));
-    // Waiting for a free slot: its place in the queue, and in words ("waiting for a free slot, Q#2").
+    // Waiting in the queue: its place, and in words ("waiting for a free slot, Q#2", "waiting for disk space, Q#1").
     if let Some(n) = crate::flow::live::queue_place(&t) { let mut q = t.clone(); q.put("queuePlace", n); out.put("queue", json!({ "place": n, "words": crate::shown::queue::words(&q) })); }
     // A merge that waits for GitHub's checks: which ones, each once (the row says only how far they are).
     if t.b("checksWait") { let w = t.at("checksWait"); out.put("checksWaitingFor", json!(crate::land::checks::unique(strings(w.at("names")).into_iter().chain(strings(w.at("flows")))))); }

@@ -1,10 +1,12 @@
 //! Keeping a task's branch current with main, in the task's own worktree. The board does this by itself, in code:
-//! before a finished turn is checked and reviewed, again whenever main moves while the task waits for you, and one last
-//! time after you approve (land/). The agent hears about it only when a real conflict exists. A merge attempt that
-//! fails is always rolled back, and the human's checkout is never touched.
+//! before a finished turn is checked and reviewed, again whenever main moves while the task waits for you (under
+//! `merge.sync approve` only a test merge then, sync/probe.rs), and one last time after you approve (land/). The agent
+//! hears about it only when a real conflict exists. A merge attempt that fails is always rolled back, and the human's
+//! checkout is never touched.
 pub mod conflict;
 pub mod conflict_log;
 pub mod merge_only;
+pub mod probe;
 pub use conflict::{conflict_back, conflict_failure, conflict_message};
 pub use merge_only::merge_only;
 use crate::flow::git::{has_origin, head_of};
@@ -34,11 +36,16 @@ pub fn named_base(root: &Path, t: &Obj) -> Option<String> {
     let b = t.s("from").strip_prefix("origin/").filter(|b| *b != "HEAD")?;
     (b != default_branch(root)).then(|| b.to_string())
 }
+/// The branch a task's start named (`fromNamed`), origin's main too.
+fn by_name(t: &Obj) -> Option<String> { t.s("from").strip_prefix("origin/").filter(|b| t.b("fromNamed") && *b != "HEAD").map(str::to_string) }
+/// The branch a task with no pull request lands on by a push of its own (land/direct.rs): the one it started from by
+/// name, also when that is origin's main. Never the branch your checkout is on.
+pub fn pushed_to(root: &Path, t: &Obj) -> Option<String> { if t.b("pr") { None } else { named_base(root, t).or_else(|| by_name(t)) } }
 /// Where a task lands decides what "main" is for it: through its pull request, the remote's main (or the branch it was
 /// started from by name, always); otherwise the branch your checkout is on.
-pub fn via_remote(root: &Path, t: &Obj) -> bool { t.b("pr") || (setting("merge.pr", Some(t)) == json!(true) && has_origin(root)) || (has_origin(root) && named_base(root, t).is_some()) }
+pub fn via_remote(root: &Path, t: &Obj) -> bool { t.b("pr") || (setting("merge.pr", Some(t)) == json!(true) && has_origin(root)) || (has_origin(root) && pushed_to(root, t).is_some()) }
 /// "main", or the branch a task lands on when it was started from one by name: for the words that name it.
-pub fn main_word(t: &Obj) -> String { named_base(&folder_of(t.s("id")), t).unwrap_or_else(|| "main".into()) }
+pub fn main_word(t: &Obj) -> String { named_base(&folder_of(t.s("id")), t).or_else(|| by_name(t)).unwrap_or_else(|| "main".into()) }
 /// The branch a task's work lands on, in words, for the question that asks before a merge.
 pub fn lands_on(t: &Obj) -> String {
     let root = folder_of(t.s("id"));
@@ -74,7 +81,7 @@ fn remote_main(root: &Path, t: &Obj, tree: &Path) -> Result<(String, String), St
     let mut b = main_branch(root, t);
     let mut fetched = fetch_main(tree, &b);
     // Origin's main is not called main and was never named here (no origin/HEAD): asked of origin once.
-    if fetched.as_ref().is_err_and(|e| fetch::no_such_branch(&e.msg)) && named_base(root, t).is_none() && fetch::learn_origin_head(root) {
+    if fetched.as_ref().is_err_and(|e| fetch::no_such_branch(&e.msg)) && named_base(root, t).is_none() && by_name(t).is_none() && fetch::learn_origin_head(root) {
         let d = default_branch(root);
         if d != b { b = d; fetched = fetch_main(tree, &b); }
     }
@@ -86,12 +93,16 @@ fn remote_main(root: &Path, t: &Obj, tree: &Path) -> Result<(String, String), St
         (Ok(()), Err(e)) => Err(format!("origin/{b} could not be read after the fetch.\n\nWhat git said:\n{}", e.msg)),
     }
 }
-/// What a sync found: current, merged, conflict, skip or error, with what it looked at.
+/// What a sync found: current, merged, conflict, skip or error (and clean, for a test merge), with what it looked at.
 #[derive(Clone, Debug, Default)]
 pub struct Synced { pub status: &'static str, pub target: String, pub seen: String, pub base: String, pub onto: Option<String>, pub adopt: bool, pub head: String, pub before: String, pub overlap: Option<Vec<String>>, pub files: String, pub restored: bool, pub out: String, pub want: String, pub detail: String }
 /// Fetch main and merge it into the task's branch. Every result that looked at main carries `seen`: where main stood in
 /// the form known_target gives it, for exactly the commit that was merged here.
-pub fn sync_main(t: &Task, tree: &str) -> Synced {
+pub fn sync_main(t: &Task, tree: &str) -> Synced { look(t, tree, false) }
+/// The same, merged only in memory (sync/probe.rs): nothing in the worktree, the branch or at the remote changes. The
+/// task's own branch is what is test-merged, wherever its worktree stands.
+pub fn test_main(t: &Task, tree: &str) -> Synced { look(t, tree, true) }
+fn look(t: &Task, tree: &str, test: bool) -> Synced {
     let root = folder_of(t.s("id"));
     let tree = Path::new(tree);
     let (target, base, onto, adopt);
@@ -113,9 +124,11 @@ pub fn sync_main(t: &Task, tree: &str) -> Synced {
         onto = Some(on); adopt = ad;
     }
     let seen = match &onto { None => target.clone(), Some(o) => format!("{target} {o}") };
-    let before = head_of(tree);
+    let tip = if test && !t.s("branch").is_empty() { format!("refs/heads/{}", t.s("branch")) } else { "HEAD".into() };
+    let before = if test { git_out(tree, &["rev-parse", "--verify", "-q", &tip]).unwrap_or_default() } else { head_of(tree) };
     let r = Synced { target: target.clone(), seen, base, onto, adopt, ..Default::default() };
-    if git_out(tree, &["merge-base", "--is-ancestor", &target, "HEAD"]).is_ok() { return Synced { status: "current", head: before, ..r }; }
+    if git_out(tree, &["merge-base", "--is-ancestor", &target, &tip]).is_ok() { return Synced { status: "current", head: before, ..r }; }
+    if test { return probe::test_merge(tree, &tip, Synced { before, ..r }); }
     if let Err(e) = git_out(tree, &["merge", "--no-edit", &target]) {
         let files = git_out(tree, &["diff", "--name-only", "--diff-filter=U"]).unwrap_or_default();
         // Rolled back means: no merge is in progress any more and the branch is where it was.
@@ -138,7 +151,11 @@ pub fn skip_why(r: &Synced) -> String { format!("your checkout is on {}, not on 
 pub fn held_why(r: &Synced) -> String {
     match r.status {
         "skip" => skip_why(r),
-        "error" => { let f: String = r.detail.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(300).collect(); format!("main could not be fetched ({})", if f.is_empty() { "git fetch failed" } else { f.trim_end_matches('.') }) }
+        "error" => {
+            let f: String = r.detail.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").chars().take(300).collect();
+            if f.starts_with("main could not be test-merged") { return f.trim_end_matches('.').into(); }
+            format!("main could not be fetched ({})", if f.is_empty() { "git fetch failed" } else { f.trim_end_matches('.') })
+        }
         _ => String::new(),
     }
 }

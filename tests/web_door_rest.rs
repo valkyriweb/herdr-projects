@@ -59,7 +59,7 @@ fn the_web_uis_pcs_reach_the_board_with_only_what_it_needs_with_the_pc_the_page_
     assert_eq!(machines(), 0);
     let body = r#"{"id":"allDone"}"#;
     assert_eq!(ask(&up, &format!("POST /herdr-projects/api/press?client=abc HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: {}\r\n{PAGE}\r\n{body}", body.len())).0, 200);
-    let far = Pc { id: "pc-1".into(), name: "far".into(), local: false, profile: String::new(), to: "me@far.example".into(), port: 2200, session: String::new(), connected: true, state: "connected".into() };
+    let far = Pc { id: "pc-1".into(), name: "far".into(), local: false, profile: String::new(), to: "me@far.example".into(), port: 2200, session: String::new(), connected: true, state: "connected".into(), panes: Some(vec!["w1:p1".into()]) }; // its panes by their ids alone
     {
         let c = sw::webui::web::client("abc"); let g = c.lock().unwrap();
         let pcs = g.s.web.pcs.clone().expect("the web UI's PCs were passed on");
@@ -82,7 +82,7 @@ fn the_sidebars_boards_come_through_the_door_with_the_web_uis_names_and_picking_
     assert_eq!(ask(&up, &get("/herdr-projects/api/boards?client=side", "")).0, 401, "not logged in, nothing of the board");
     let (st, _, body) = ask(&up, &get("/herdr-projects/api/boards?client=side", "cookie: token=good\r\n"));
     let j: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!((st, j.at("boards")[1].s("name")), (200, "home"), "this machine as the web UI names it, under All machines: {body}");
+    assert_eq!((st, j.at("boards")[0].s("name")), (200, "home"), "this machine as the web UI names it, alone (no All machines with no other one): {body}");
     let pick = r#"{"to":""}"#;
     assert_eq!(ask(&up, &format!("POST /herdr-projects/api/scope?client=side HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-length: {}\r\n{PAGE}\r\n{pick}", pick.len())).0, 200);
     assert!(sw::webui::door::LOOKS.contains(&"scope"), "a device that only watches may pick a board");

@@ -36,8 +36,8 @@ pub fn has_agent(r: &Obj) -> bool { is_agent(r) && (r.b("host") || crate::flow::
 
 // ---- enter and tab ---------------------------------------------------------------------------------------------------
 pub fn enter(s: &mut State, text: &str, r: Option<&Obj>, fx: &mut Vec<Effect>) {
-    if text.is_empty() { if let Some(r) = r { open_agent(s, r, fx); } return; } // with nothing typed, enter opens the selected task's agent
-    if let Some(t) = super::coords::talking(s) { let w = s.value(); return super::coords::send(s, &t, w.trim(), false, fx); }
+    if text.is_empty() { return; } // with nothing typed, enter does nothing on a task's row: the open key goes into its agent
+    if let Some(t) = super::coords::talking(s) { let w = s.value(); return super::coords::send(s, &t, w.trim(), fx); }
     // Who gets it is who the chat names: the selected task's agent after space, the Coordinator otherwise.
     if s.reply { if let Some(r) = r {
         if r.b("archivedAt") { return s.flash(read_only(), Ink::Yellow); }
@@ -57,8 +57,8 @@ pub fn enter(s: &mut State, text: &str, r: Option<&Obj>, fx: &mut Vec<Effect>) {
     s.input.set_text("");
 }
 pub fn tab(s: &mut State, text: &str, r: Option<&Obj>, fx: &mut Vec<Effect>) {
-    if let Some(t) = super::coords::talking(s).filter(|_| !text.is_empty()) { let w = s.value(); return super::coords::send(s, &t, w.trim(), true, fx); }
-    if !text.is_empty() { if (s.reply && r.is_some()) || s.mode != crate::board::state::Mode::New { return; } let w = s.value(); dispatch(s, w.trim(), true, None, fx); s.input.set_text(""); return; }
+    // Words for a coordinator go with enter alone, and it decides what to start: the delegate key does nothing with them.
+    if !text.is_empty() { if super::coords::talking(s).is_some() || s.talks_to_coord() || (s.reply && r.is_some()) || s.mode != crate::board::state::Mode::New { return; } let w = s.value(); dispatch(s, w.trim(), true, None, fx); s.input.set_text(""); return; }
     let Some(r) = r else { return };
     if r.b("archivedAt") { return s.flash(read_only(), Ink::Yellow); }
     let n = name(s, r);
@@ -147,6 +147,8 @@ pub fn yes(s: &mut State, r: &Obj, fx: &mut Vec<Effect>) {
     }
     let simple = |s: &mut State, action: &str, local: Job, fx: &mut Vec<Effect>| act(s, r, action, json!({}), local, fx);
     if is_agent(r) && r.s("state") == "blocked" && r.s("kind") == "permission" { return simple(s, "approve", Job::Approve { id, seen: None, anyway: false }, fx); }
+    // A chat-only task that waits for your next message: yes ends the conversation, as it is (finish/chat_only.rs).
+    if st("asks") && r.s("kind") != "auth" && crate::chat_only::is_chat(r) { return simple(s, "finish", Job::FinishAnyway { id }, fx); }
     // Stopped at a limit, without a summary, or with the board stuck at "Finishing": yes takes the work as it is,
     // through the check and the review.
     if (st("stopped") && r.b("limitStop")) || st("nosummary") || stuck_finishing(r) { return simple(s, "finish", Job::FinishAnyway { id }, fx); }
@@ -205,9 +207,9 @@ pub fn undo(s: &mut State, fx: &mut Vec<Effect>) {
             let title = s.items.iter().find(|r| r.s("id") == d.to).map(|r| r.t("title")).or_else(|| super::coords::of_head(s, &d.to).map(|c| c.name)).unwrap_or_else(|| d.to.clone());
             let nm = format!("\"{}\"", crate::text::cut(&clean(&title), 40));
             s.draft_away = Some(d.clone());
-            return s.flash(if d.to.is_empty() { format!("Those words were for the Coordinator. {} goes back to it, then {} brings them back.", key_name("talk"), key_name("undo")) }
+            return s.flash(if d.to.is_empty() { format!("Those words were for {}. {} goes back to it, then {} brings them back.", super::top::top(s).map(|t| t.name).unwrap_or_else(|| "the top row's coordinator".into()), key_name("talk"), key_name("undo")) }
                 else if !now.is_empty() { format!("Those words were for {nm}. Move to it, then {} brings them back.", key_name("undo")) }
-                else if super::heads::is_head(&d.to) { format!("Those words were for the {}. Select its heading and press {}, then {} brings them back.", clean(&title), key_name("talk"), key_name("undo")) }
+                else if super::heads::is_head(&d.to) { format!("Those words were for {}. Select its row and press {}, then {} brings them back.", clean(&title), key_name("talk"), key_name("undo")) }
                 else { format!("Those words were for the agent on {nm}. Select it and press {}, then {} brings them back.", key_name("talk"), key_name("undo")) }, Ink::Yellow);
         }
         s.draft_away = None;
@@ -257,7 +259,7 @@ pub fn toggle_side(s: &mut State, fx: &mut Vec<Effect>) {
     s.flash(if s.side { format!("Side panel on. {} hides it.", key_name("side")) } else { format!("Side panel off. {} shows it.", key_name("side")) }, Ink::Muted);
 }
 pub fn fold_panel(s: &mut State) { s.full = false; s.editing = None; s.panel_top = 0; relist(s); }
-pub fn open_panel(s: &mut State) { if s.current().is_none() && s.job().is_none() { return s.flash("Select a task first.", Ink::Muted); } s.full = true; s.panel_top = 0; }
+pub fn open_panel(s: &mut State) { if s.current().is_none() && s.job().is_none() && super::pilot::selected(s).is_none() { return s.flash("Select a task first.", Ink::Muted); } s.full = true; s.panel_top = 0; }
 pub fn scroll_panel(s: &mut State, by: i64) { let last = s.panel_length.saturating_sub(s.panel_height) as i64; s.panel_top = (s.panel_top as i64 + by).clamp(0, last.max(0)) as usize; }
 pub fn free_size(s: &mut State, fx: &mut Vec<Effect>) {
     let by: Vec<i64> = s.held.as_ref().filter(|_| !s.guest).map(|h| h.by.iter().map(|b| b.0).collect()).unwrap_or_default();

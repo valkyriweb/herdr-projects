@@ -37,10 +37,11 @@ fn a_machine_of_the_board_and_a_pc_of_the_web_ui_are_the_same_one_by_herdrs_id_o
     assert_eq!(pc_of(&named, &[to("me@vm-b", 0)]), None);
     assert_eq!(machine_of(&to("vm-a", 0), &[m.clone(), named.clone()]), Some(named.clone()));
     assert_eq!(machine_of(&to("nowhere", 0), &[m, named]), None);
-    // what the web UI answers, down to what the board needs; an answer that is no list of PCs is none
-    let list = read_pcs(&json!({ "machines": [{ "id": "local", "name": "home", "kind": "local", "enabled": true, "state": "connected", "snapshot": { "panes": [1, 2] } }, { "id": "p", "name": "far", "kind": "ssh", "herdr_profile_id": "79cd", "target": { "destination": "me@far", "port": 22, "session": "work" }, "enabled": false, "state": "disconnected" }, { "name": "no id" }] }).to_string());
-    assert_eq!(list, Some(vec![Pc { id: "local".into(), name: "home".into(), local: true, connected: true, state: "connected".into(), ..Default::default() },
-        Pc { id: "p".into(), name: "far".into(), local: false, profile: "79cd".into(), to: "me@far".into(), port: 22, session: "work".into(), connected: false, state: "turned off".into() }]));
+    // what the web UI answers, down to what the board needs (the panes it knows there: none said, none known); an answer
+    // that is no list of PCs is none
+    let list = read_pcs(&json!({ "machines": [{ "id": "local", "name": "home", "kind": "local", "enabled": true, "state": "connected", "snapshot": { "panes": [{ "pane_id": "w1:p1" }, { "pane_id": "w3:p1" }, 2] } }, { "id": "p", "name": "far", "kind": "ssh", "herdr_profile_id": "79cd", "target": { "destination": "me@far", "port": 22, "session": "work" }, "enabled": false, "state": "disconnected" }, { "name": "no id" }] }).to_string());
+    assert_eq!(list, Some(vec![Pc { id: "local".into(), name: "home".into(), local: true, connected: true, state: "connected".into(), panes: Some(vec!["w1:p1".into(), "w3:p1".into()]), ..Default::default() },
+        Pc { id: "p".into(), name: "far".into(), local: false, profile: "79cd".into(), to: "me@far".into(), port: 22, session: "work".into(), connected: false, state: "turned off".into(), panes: None }]));
     for bad in ["", "not json", "{}", r#"{"machines":{}}"#, r#"{"error":{"code":"bridge_only"}}"#] { assert_eq!(read_pcs(bad), None, "{bad}"); }
 }
 
@@ -68,7 +69,8 @@ fn the_web_board_goes_with_the_web_ui_on_another_pc_it_is_that_machines_board_an
     assert_eq!(scope(&board("pc-a", Some(pcs.clone()))), chosen);
     // back on this machine: what the board showed before it went
     assert_eq!(scope(&board("", Some(pcs.clone()))), "");
-    assert_eq!(scope(&call("c", "press", json!({ "id": "scope" }), "", Some(pcs.clone()))), "*");
+    // a pick of every machine, of your own (the scope key's round would go on to vm-a after this machine)
+    assert_eq!(scope(&call("c", "scope", json!({ "to": "*" }), "", Some(pcs.clone()))), "*");
     assert_eq!(scope(&board("pc-a", Some(pcs.clone()))), "vm-a");
     assert_eq!(scope(&board("local", Some(pcs.clone()))), "*");
     // a PC the board has no machine for: said, and the board stays as it is

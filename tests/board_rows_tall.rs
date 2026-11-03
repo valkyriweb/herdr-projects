@@ -30,6 +30,7 @@ fn board(list: &[Rec], sel: &str, scope: &str) -> State {
     sw::clock::set(Some(NOW));
     let mut s = State::new(Default::default(), Default::default());
     s.sel = sel.into(); s.scope = scope.into();
+    s.whole = true; // every done row shows, as with all done: these tests are about how rows look
     s.grouped = GROUPS.iter().map(|g| (g.to_string(), list.iter().filter(|r| group_of(r) == *g).cloned().collect())).collect();
     s.rows = fold_rows(&mut s);
     s
@@ -99,7 +100,8 @@ fn the_third_line_is_there_under_80_columns_of_screen_and_gone_from_80_on_for_ev
     assert_eq!(heights(&mut s, 60, 120), [2, 2, 2, 2, 1, 1]);
     // The list: headings and one-line rows as ever, a one-line row's tags still beside its name. Its time is not: on a
     // narrow screen its name has that room.
-    let list = |s: &mut State, w: usize| list_lines(s, &t(), w, 40, w).iter().map(|l| l.text()).collect::<Vec<_>>();
+    // (Drawn a step wider and that step taken off: the rows stand a step in under the top row, update/depth.rs.)
+    let list = |s: &mut State, w: usize| { let k = if w + 2 >= 60 { 2 } else { 1 }; list_lines(s, &t(), w + k, 40, w + k).iter().map(|l| l.text().chars().skip(k).collect::<String>()).collect::<Vec<_>>() };
     let (narrow, wide) = (list(&mut s, 60), list(&mut s, 80));
     let count = |v: &[String]| v.iter().filter(|l| !l.trim().is_empty()).count();
     assert_eq!(count(&narrow) - count(&wide), 3, "one more line for each live row that has columns for it: three of the four");

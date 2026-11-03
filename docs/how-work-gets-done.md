@@ -16,6 +16,10 @@ All of this runs with the board open or closed.
 - **In a git repo**, the plugin asks Herdr for a worktree space (`herdr worktree create`), on its own branch
   (`work/<n>-<title>`), started from the remote's default branch (or from your commit, with `--workspace.from here`, or
   from another branch at the remote, with `--workspace.from develop`). A task in a repo never works in your checkout.
+- **Tasks of one repo can start at the same moment.** Herdr is handed the commit the task starts from, not
+  `origin/main`, so git writes no upstream into the repo's shared `.git/config` at the start (the push at the finish
+  sets it). Another git command holding that file anyway (`could not lock config file`) is waited out, five tries in
+  under four seconds, and a start that fails still removes the empty branch it made, so the next start takes the name.
 - **The branch's name is `workspace.branch`**, `work/{n}-{slug}` unless you set it: for you, for one repo, or for one
   task, never in the repo's own file. `{n}` is the task's number (`7`, or `7b` for an attempt), `{slug}` its title
   (`fix-the-login`), `{key}` its repo's key and number (`KIC-7`). So `feat/{key}-{slug}` makes `feat/KIC-7-fix-the-login`.
@@ -25,11 +29,18 @@ All of this runs with the board open or closed.
   origin does not have is refused with the reason, and the task waits as failed. If origin cannot be reached, the copy it
   last gave is used. The task keeps up with that branch, its pull request merges into it (`gh pr create --base develop`),
   a pull request the agent opened itself is taken on only while it merges into it, and `merge.checks` reads the checks of
-  a pull request into it. It needs `merge.pr` on: a local merge lands on your checkout's branch, so a named branch with
-  `merge.pr` off is refused at the start and at the merge, for now.
+  a pull request into it.
+- **A named branch with `merge.pr` off** (a host with no GitHub, so no `gh`) lands there with no pull request, also when
+  it is origin's main branch, so one repo can take tasks on several feature branches at once. The commit is built from
+  the one that was reviewed, as `merge.method` says (squash: one commit on top of the branch; merge: a merge commit of
+  the two; rebase: the reviewed commit itself), and pushed to that branch at origin
+  (`git push origin <commit>:refs/heads/develop`, within `merge.pushTimeout`). No checkout is touched, yours included, and nothing is forced: when the branch moved at origin,
+  git refuses the push, and the task catches up with it, is checked again and pushed under the same approval. A push
+  origin refuses for another reason (a protected branch, a hook) waits for you with git's own words.
 - `workspace.setup` runs. Then the agent starts in that space's root pane, with the task and its rules.
 - **Outside git**, the agent works in place, in a plain Herdr space.
-- **At most `board.agents` (4) agents work at once.** More wait their turn. Tasks that wait for you hold no slot.
+- **At most `board.agents` (4) agents work at once.** More wait their turn. Tasks that wait for you hold no slot, nor
+  does one waiting in line to merge behind another.
 
 ## Agents run with full access by default
 
@@ -47,7 +58,8 @@ did. They can run anything as you, without asking: the rules and the review brie
   the risky ones: `claude --permission-mode auto`, `codex --approve-for-me` (and Cursor's, Qwen Code's, Qoder's).
   Refused for every other program ([auto mode](auto-mode.md)).
 - So a new task does not wait behind a "trust this folder?" dialog, the plugin marks the task's repo as trusted in the
-  agent's own settings (`~/.claude.json`, `~/.codex/config.toml`) before starting it. Only for a role with full or auto
+  agent's own settings (`~/.claude.json`, `~/.codex/config.toml`; for pi, the task's worktree in
+  `~/.pi/agent/trust.json`) before starting it. Only for a role with full or auto
   access.
 
 ## How the board knows a turn ended
@@ -60,7 +72,9 @@ The plugin starts every agent itself, and passes at launch:
 - **the task's rules** as a standing system prompt: a file, or for Codex inline when short
   ([long rules and long messages](could-not-start.md#long-rules-and-long-messages)).
 
-Nothing is written to your own agent settings, and your own hooks keep running.
+Nothing is written to your own agent settings, and your own hooks keep running. Claude Code's launch settings also turn
+its idle compaction off (`"idleCompaction": false`): it would shrink the session of a finished task left waiting about
+an hour, which Herdr counts as a turn. A compaction in the saved conversation is never read as a new prompt either.
 
 At each turn's end, the hook runs `herdr-projects turn-ended` (silent, at most two seconds, protected by a per-launch
 secret). The finish line then reads the end of that agent's saved conversation: its last message, an API or login error,
@@ -82,7 +96,8 @@ never finishes a task. The turn counts as ended when:
   one, as the fallback.
 
 Otherwise the task is held as "Stopped without a summary": `Ctrl+R` tells the agent to continue, `Ctrl+L` takes the work
-as it is.
+as it is. Its message is the agent's last words on its screen: what stands above the program's input box, never the
+status line or mode line drawn under it.
 
 A task whose finish the board missed (its agent at rest, the row still "Finishing") is finished with `Ctrl+L` or
 `herdr-projects finish <id>`. What the agent said last is the summary.
@@ -102,6 +117,10 @@ When the agent's turn ends, the board:
 2. **Pushes the branch and opens a draft pull request**, when there is an `origin` remote and `gh`.
    - A pull request the agent already opened for the task's branch is taken on instead, and goes through the review and
      the merge as usual.
+   - The push may run for `merge.pushTimeout` (2 minutes unless set), the repo's pre-push hook included. A repo whose
+     hook runs its tests needs more: `herdr-projects set merge.pushTimeout 10m --repo <name>`, or `none`. A push that
+     runs out of time is stopped and the finish fails, saying so (`git push did not end within 2m
+     (merge.pushTimeout)`); finish again once it is raised.
    - A branch that brings main nothing gets no pull request: no change was needed, or the work is on main already (the
      agent merged its own pull request, or pushed to main itself). The task is done, and its row says why: "No change
      needed", "Already on main" or "Already merged in #133". Nothing is pushed then, so a repo the task archived on
@@ -131,10 +150,29 @@ it merges:
 
 - **through the pull request**, only at the commit that was reviewed. A commit pushed to the pull request meanwhile
   withdraws the approval. On a repo with a merge queue, the task waits until GitHub says the pull request is merged;
+- **by a push to the branch it started from by name**, with no pull request (`workspace.from develop`, `merge.pr` off):
+  the reviewed commit, built by `merge.method`, never forced and never through your checkout;
 - **or locally**, squashed by default.
 
 A conflict found here goes back to the agent the same way, and the merge you approved is retried after its repair. A
 checkout with unsaved files is never forced. Merging without your yes: [merging by itself](gate.md#merging-by-itself).
+
+### Closing GitHub issues
+
+A task added for GitHub issues says which ones its work closes: `herdr-projects add "Fix the login" --merge.closes 2203,2204`
+(or later, `set merge.closes 2203 --task <id>`). Only issues of the task's own repo, by number, and only on the task
+itself: never for you or a repo. `show <id>` lists it with the rest.
+
+- **Through a pull request**, its body gets a `Closes #2203` line for each, so GitHub closes them when it merges into
+  the default branch. A pull request the agent opened itself gets the lines it lacks added (`gh pr edit`); so does one
+  opened before the setting was said, right before it merges. Changed or cleared since, the board takes its own lines of
+  the issues no longer named off again before it merges; while it cannot, nothing merges (the task says why).
+- **With no pull request** (a local merge, or a push to a named branch), and through one that merges into another branch than the default, the
+  board closes each with `gh issue close` once the merge has landed, with a comment naming the task and the merge commit.
+  So it does for work the agent put on main itself (`Already merged in #133`); work that needed no change closes none.
+
+Nothing is closed on a merge that failed. A close that fails never fails the merge, and an issue closed already is
+fine: the task's line says what was closed (`Merged into main. Closed #2203, #2204.`), or which could not be and why.
 
 ### GitHub's checks must pass first
 
@@ -147,6 +185,9 @@ every repo the board merges in. `merge.checks: none` does not look at GitHub's c
 | failed | merges nothing. The failure goes back to the agent like a failed check of the board's own, with the failing check's name and the end of its log, within `review.rounds` (a merge you approved goes on once GitHub's checks pass on the repair). After that it waits for you, and `approve <id>` refuses and says why, as for a failed review, until `approve <id> --anyway` |
 | not reporting, still running after `check.timeout` | waits for you, with that reason |
 | passed, or there are none | merges |
+
+A failure is of one commit: once a repair is pushed, the old commit's failed checks block nothing (also when main is
+merged in before it merges). Only the checks of the commit that would merge count.
 
 Each check is counted once, a workflow for its jobs until GitHub lists them. `details` names what it waits for
 (`checksWaitingFor`).
@@ -211,6 +252,14 @@ own worktree:
   every task waiting for your approval is updated, and a task under review the moment its review ends;
 - **after you approve**, once more, as the last safety net. It should rarely find anything.
 
+**Fewer merges while it waits: `merge.sync approve`.** In a busy repo, merging main on every move gives a waiting
+pull request a merge commit, a CI run and a round of bot reviews each time, and only the last merge before landing
+matters. With `herdr-projects set merge.sync approve` (for a task, a repo or all), main is merged in before review and
+after your yes only. While the task waits, the board makes a test merge in memory (`git merge-tree`), which changes
+nothing in its worktree, branch or pull request: a conflict is handled as a real one (below), so you know before you
+approve; a clean one changes nothing. After your yes, main is merged, checked again and the work lands, as always.
+`always` (built in) is the behaviour described above.
+
 **A clean update is silent.** If it changed the commit, the check runs again on the result. The review is not repeated
 when taking main in is all that happened to work that already passed ([below](#a-review-that-passed-is-not-repeated-for-a-merge-of-main)),
 or when the update touched none of the files the task itself changed. The verdict you have stands, and the task does not
@@ -237,8 +286,8 @@ and finish again.
   date.
 
 **"Main" is where the task will land**: the remote's main when it lands through a pull request, or the branch it was
-started from by name (`workspace.from develop`). Otherwise (no remote, or `pr` off), the branch your checkout was on when
-the task first finished. For those, checking out another branch merges
+started from by name (`workspace.from develop`), with or without one. Otherwise (no remote, or `pr` off and no branch
+named), the branch your checkout was on when the task first finished. For those, checking out another branch merges
 nothing into waiting tasks, and they are held as "behind main" until your checkout is back on it.
 
 ### A review that passed is not repeated for a merge of main
@@ -317,12 +366,11 @@ itself, and its worktree and branch are removed. `workspace.cleanup false` keeps
   (including one a finished agent left running in the background).
 - What an agent program keeps running as part of itself is no such command: its MCP servers, or its own program under
   an npm wrapper (`codex` installed with npm). They are in the agent's own process group, and an MCP server's input and
-  output are wired to the agent itself (a pipe or a socket the agent holds the other end of). So a finished agent with
-  MCP servers is closed like any other. A program the board knows (`claude`, `codex`, `pi`, and Herdr's others) may
-  keep such helpers in process groups of their own too (a tool driver, a server started by a plugin): wired to it the
-  same way, they are its own. A command whose streams go elsewhere (the terminal, a file, `/dev/null`) keeps the space
-  open, in the agent's group or not, and so does one in a group of its own, under any program. What cannot be told
-  counts as a command.
+  output are wired to the agent itself (a pipe or a socket the agent holds the other end of). What such a helper runs
+  under it is its own too (a language server's telemetry, in a group of its own). So a finished agent with MCP or
+  language servers is closed like any other. A command whose streams go elsewhere (the terminal, a file, `/dev/null`) keeps
+  the space open, in the agent's group or not, and so does one in a group of its own. What cannot be told counts as a
+  command.
 - After a task ended, its checkout and branch go only once its commits are at the remote: its branch tip (or the commit
   its merge made of it) must be reachable from what `git ls-remote origin` lists at that moment: the pull request's
   head, which GitHub keeps after the branch is deleted, the main it lands on, or the branch itself. Until then both are
@@ -362,3 +410,7 @@ requests, starts queued tasks, runs the Watcher, and keeps Herdr's sidebar curre
 - **Its life.** Herdr starts it with its server. Any Herdr event, or opening the board, starts it again if it died. It
   replaces itself when the plugin is updated, and exits when Herdr is gone. It looks after this machine's tasks only.
 - An open board does the same. After an update it loads the new version by itself, in place, once nothing is half typed.
+- **One pass at a time.** This round of looking after the tasks also runs after every hook and every background job.
+  Only one runs per Herdr session at a time: one that comes while another is under way (a slow Herdr) does nothing
+  itself, and the one under way goes round once more at its end if it was asked to (a pull request poll is never lost).
+  A clean-up still running for a task is not started again.

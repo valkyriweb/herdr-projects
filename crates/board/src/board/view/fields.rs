@@ -48,29 +48,26 @@ pub fn row_title(s: &State, r: &Obj) -> String {
     if is_auto(r) { return crate::shown::words::clean(auto(r).s("name")); }
     let mut t = crate::shown::words::clean(if r.b("title") { r.s("title") } else { r.s("id") });
     if r.arr("attempts").len() > 1 { t.push_str(&format!(" ×{}", r.arr("attempts").len())); }
+    if crate::chat_only::is_chat(r) { t.push_str(" [chat]"); }
     if is_research(r) { t.push_str(" [research]"); }
     if r.at("automation").b("id") { t.push_str(" [auto]"); }
     if r.b("archivedAt") && !s.archive_view { t.push_str(" [archived]"); }
+    if r.b("pinned") && !r.b("archivedAt") { t.push(' '); t.push_str(crate::board::update::pinned::MARK); } // update/pinned.rs
     t
 }
-/// The title is plain whatever the task's state: the mark and the heading carry the state's colour. A live task's is
-/// bold. An automation's name is plain, greyed while it is off; the `[auto]` tag is in the automations' colour.
+/// The title is in the base colour whatever the task's state, never bold: colour means status, and the mark carries
+/// it. What is said of it after it (`×3`, `[auto]`, `[research]`, `[chat]`, `[archived]`) is dimmed, and the pin mark `★`
+/// last is yellow (update/pinned.rs). An automation's name is plain, greyed while it is off.
 pub fn name_ink(r: &Obj, s: &str) -> Inked {
     if is_auto(r) { return if auto(r).b("on") { Inked::plain(s) } else { Inked::of(s, Ink::Muted) }; }
-    let bold = ["working", "blocked", "error"].contains(&r.s("state"));
+    let pin = format!(" {}", crate::board::update::pinned::MARK);
+    let (s, pinned) = match s.strip_suffix(pin.as_str()) { Some(rest) => (rest, true), None => (s, false) };
+    let at = crate::re!(r"(?: ×\d+)?(?: \[[a-z]+\])*$").find(s).map(|m| m.start()).unwrap_or(s.len());
     let mut out = Inked::new();
-    if r.at("automation").b("id") {
-        let re = crate::re!(r"\[auto\]( \[archived\])?$");
-        if let Some(m) = re.find(s) {
-            out.push(&s[..m.start()], Ink::Plain);
-            let tag = if r.s("state") == "done" { Inked::of("[auto]", Ink::Auto).quiet() } else { Inked::of("[auto]", Ink::Auto) };
-            out = out.add(tag);
-            out.push(&s[m.start() + 6..], Ink::Plain);
-            return if bold { out.bold() } else { out };
-        }
-    }
-    out.push(s, Ink::Plain);
-    if bold { out.bold() } else { out }
+    out.push(&s[..at], Ink::Plain);
+    if at < s.len() { out.push(&s[at..], Ink::Muted); }
+    if pinned { out = out.add(crate::board::update::pinned::ink()); }
+    out
 }
 /// What a row says on its first line: nothing on a live task's (it says it on its second). An automation says its
 /// trigger there, on a narrow screen (`tall`) under its name instead.

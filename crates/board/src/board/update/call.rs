@@ -13,6 +13,7 @@ use crate::voice::call::{self, Target};
 pub fn toggle(s: &mut State, fx: &mut Vec<Effect>) {
     if s.data.call.is_some() { s.call_link = None; fx.push(Effect::Run(Job::CallEnd)); return; }
     if s.ctx.web { return; } // the web board has a call button of its own, on the page
+    if !crate::voice::calls_on() { s.flash(crate::voice::OFF, Ink::Muted); return; }
     let target = target(s);
     s.flash(format!("Calling with {}…", target.name), Ink::Muted);
     fx.push(Effect::Run(Job::CallRing { owner: owner(s), target, session: s.data.session.clone() }));
@@ -22,7 +23,7 @@ pub fn owner(s: &State) -> String { format!("terminal:{}", if s.ctx.own_pane.is_
 /// Who the chat talks to now, as the call record keeps it.
 pub fn target(s: &State) -> Target {
     let reply = s.reply && !s.sel.is_empty() && (s.current().is_some() || super::coords::talking(s).is_some());
-    let name = if let Some(c) = super::coords::talking(s) { format!("the {}", c.name) }
+    let name = if let Some(c) = super::coords::talking(s) { c.name.clone() }
         else if let (true, Some(r)) = (reply, s.current()) { format!("{}'s agent ({})", number_tag(r, &s.data.keys, &s.scope, true), crate::shown::words::clean(r.s("title"))) }
         else { match crate::board::view::chat::coord_name(s).as_str() { "Coordinator" => "the Coordinator".to_string(), "New task" => "the board (no Coordinator here: it adds tasks)".to_string(), other => format!("the {other}") } };
     Target { id: if reply { s.sel.clone() } else { String::new() }, reply, scope: s.scope.clone(), name }

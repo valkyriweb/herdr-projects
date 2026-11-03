@@ -179,6 +179,7 @@ fn check_ty(e: &Entry, v: &Value) -> Res<Value> {
         Ty::Agent => check_agent(e, v),
         Ty::Branch => super::branch::check(name, v),
         Ty::From => super::from::check(name, v),
+        Ty::Issues => super::issues::check(name, v),
         Ty::Agents => {
             if let Value::String(s) = v { if s.trim().to_lowercase() == NONE { return Ok(json!(NONE)); } }
             let Some(items) = items_of(v) else { return refuse(format!("{name} is a list of agents ({}, each with an optional model after a slash), or none.", KIND_NAMES.join(", "))) };
@@ -248,6 +249,7 @@ fn check_ty(e: &Entry, v: &Value) -> Res<Value> {
             Ok(json!(k))
         }
         Ty::Keys => super::key_map::check(e, v),
+        Ty::Pilot => super::pilot_values::check(e, v),
         Ty::Notify => {
             let Value::String(s) = v else { return refuse(format!("{name} must be none, bell, or a command.")) };
             let w = s.trim();

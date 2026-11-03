@@ -219,7 +219,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
     let finished = turn.as_ref().map(|x| x.finished).unwrap_or(false);
     if !finished && fresh_note.is_none() && wake.is_null() {
         // Nothing says the turn finished normally: commit nothing and hold, with what is on the screen as the message.
-        let screen = last_lines(&crate::agents::screen_text::screen_text(&read_screen(&api, &pane, a.as_ref().map(|a| a.s("agent_status")), 60)), 12); // its words, not its frames
+        let screen = last_lines(&crate::agents::screen_text::agent_words(&read_screen(&api, &pane, a.as_ref().map(|a| a.s("agent_status")), 60)), 12); // its words, not its frames
         if is_auth_failure(&screen) {
             g.set(&keep)?;
             if hand_over(id, g, "logged out", "")? { return Ok(()); }
@@ -227,6 +227,8 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
             fail(g, f, FailHow::default())?;
             return Ok(());
         }
+        // A chat-only task waits for your next message all the same: nothing tells it to finish (finish/chat_only.rs).
+        if crate::chat_only::is_chat(&t) { g.set(&keep)?; super::chat_only::turn_waits(g, "")?; return Ok(()); }
         g.set(|t| { keep(t); t.put("stage", "nosummary"); let m = one_line(&last_lines(&screen, 2), 2048); t.put("msg", if m.is_empty() { "Stopped without a summary".into() } else { m }); t.put("screen", screen.clone()); })?;
         return Ok(());
     }
@@ -243,6 +245,7 @@ fn finish_steps(id: &str, g: &mut Guard, mut t: Task, ev: Option<Value>, force: 
     // The task's tokens, counted now that the turn has ended: at its limit it stops here, with this turn's work kept.
     if let Some((limit, used)) = tokens_over(id, "agent") { stop_at(id, "tokens", &limit, used, StopHow::default()); return Ok(()); }
     let _ = &t;
+    if super::chat_only::turn_waits(g, &said)? { return Ok(()); } // a chat-only task: every turn end waits for you
     if super::chat::after_turn(g)? { return Ok(()); } // a chat with reviewed work: kept as it was, or reviewed once you are done
     pipeline(id, g, &said, wake.b("keepIntent"), wake.s("reason"), None)
 }

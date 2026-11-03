@@ -1,17 +1,23 @@
 # Other machines
 
-**Every machine keeps its own tasks, and `Alt+M` shows the others' tasks on your board.** Press it to go round: this
-machine, every machine, then each other machine by itself. Actions on another machine's task run on that machine, over
+**Every machine keeps its own tasks, and `Alt+M` shows the others' tasks on your board.** Press it to go round: every
+machine, then each machine by itself (this one too) in the order of Herdr's sidebar. Actions on another machine's task run on that machine, over
 SSH. Work never moves between machines.
 
-Which machines you see is the first thing in the board's header, in the accent colour, and is never cut:
-`all machines: otherbox`, or `only otherbox`.
+Which machines you see is the first item of the filter row, in the base colour, with no caret: `All machines` (plain), or `otherbox` (lit, as the filter shown is)
+(in yellow while it does not answer). A click on it goes round too ([the board](board.md#the-filter-row)). No line
+under the chat confirms a pick: that item says whose board shows, the chat box who gets your words. On the web board a
+tap on it lists every board to pick one ([the web UI](web-ui.md)).
 
 ## Set up another machine
 
 Machines are found through Herdr only: the ones you added with `herdr machine add`, or the ones you name in
-`board.machines`. With none, `Alt+M` says so. There is no Tailscale discovery. They are listed in the order of Herdr's
-machines sidebar ([machine order](machine-order.md)).
+`board.machines`. There is no Tailscale discovery. They are listed in the order of Herdr's machines sidebar
+([machine order](machine-order.md)).
+
+With no other machine there is no "every machine" to show, on the terminal board and on the web: `Alt+M` asks Herdr
+for its machines (`Looking for other machines…`), says when there are none, and shows every machine as soon as there
+is another one. A board that showed every machine goes back to this machine's own when the others are gone.
 
 Each other machine needs, once:
 
@@ -36,9 +42,13 @@ not running interactively, return" line, so a PATH set below that line is not fo
 
 Fix it either way:
 
-- set the PATH in the profile file: `~/.profile` or `~/.bash_profile` for bash, `~/.zprofile` for zsh;
+- set the PATH in the profile file: `~/.profile` or `~/.bash_profile` for bash, `~/.zprofile` for zsh,
+  `~/.config/fish/config.fish` for fish (outside its `if status is-interactive` block);
 - or link the launcher into a folder a login shell already has:
   `ln -s ~/.herdr-projects/data/bin/herdr-projects ~/.local/bin/`.
+
+Any login shell does, fish too: the board hands it only words every shell reads alike, and lets `/bin/sh` start it
+with the command.
 
 Test it from the machine the board is on. All is well when it ends with a line of JSON:
 
@@ -102,8 +112,8 @@ vm-a: its tasks cannot be read: herdr-projects is not found there.
   show them like this machine's own, under the same lines that name who said them ([the board](board.md)).
 - **Its Coordinator.** While the board shows one other machine by itself, what you type goes to that machine's
   Coordinator, and the chat shows that Coordinator's conversation. The machine sends where its Coordinator stands
-  (`idle`, `working`, how many of your messages wait) and the last dozen things said. The box shows them under the same
-  lines (`Coordinator:`, `You:`) and scrolls back through them. A machine with no Coordinator says so (what you type
+  (`idle`, `working`, how many of your messages wait) and the last dozen things said. The box shows them as this machine's:
+  your words bright, its answers grey, no labels, and scrolls back through them. A machine with no Coordinator says so (what you type
   there is added as a task).
 - **A machine on an older plugin** is recognised by its missing version: its new fields stay blank and the board says
   "update herdr-projects on <machine>". It sends no chat: its agent's last message still shows, and for a reviewer or
@@ -135,7 +145,8 @@ Board settings (how many agents at once, the Watcher, the Coordinator) stay with
 ## Files you attach go with your words
 
 Words for another machine's agent or Coordinator may name a file of this machine: one you attached (`@<path>`), or one
-you dropped in the terminal (`/Users/you/Desktop/Screen\ Shot.png`, or in quotes). Before the words go, the board sends
+you dropped in the terminal (`/Users/you/Desktop/Screen\ Shot.png`, or in quotes), or a picture you pasted, which the
+box shows as `[Image 1]` ([pictures pasted](image-paste.md)). Before the words go, the board sends
 each such file over its own SSH link to that machine, and the words name it where it landed there. You copy nothing.
 
 - **Where it lands:** for a task's agent, in that task's working folder there, under `.herdr-projects/files/`. For a
@@ -148,9 +159,9 @@ each such file over its own SSH link to that machine, and the words name it wher
   your words: never a path the agent there cannot open.
 - **A machine on an older version** cannot take files: the board says so. Update `herdr-projects` there.
 
-## In the Herdr web UI
+## In the web UI (Ovis)
 
 The web Board shows other machines as `Alt+M` does, acts on their tasks, and opens their agents in the web UI's own view
 of that machine, when the web UI has that machine as one of its PCs. The terminal board works in the web UI's terminal
 view too, on this machine and on another. What works how, and what the board says when something is missing:
-[the board in the Herdr web UI](web-ui.md).
+[the board in the web UI (Ovis)](web-ui.md).

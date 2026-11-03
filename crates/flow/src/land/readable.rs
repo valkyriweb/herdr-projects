@@ -2,7 +2,8 @@
 //! check-runs API) needs the Checks permission, which a fine-grained token cannot have (GitHub gives it to GitHub Apps
 //! only): where GitHub refuses it, the list is made of what such a token reads, the jobs of the commit's GitHub Actions
 //! runs (every matrix member, with the link to its log) and its commit statuses (an outside CI, Vercel), in the same
-//! shape, and what cannot be read that way (another app's check runs) is named, to be said on the task. Used by
+//! shape, and what cannot be read that way (another app's check runs) is named, to be said on the task. A check run
+//! again keeps its older runs in GitHub's list: only its newest one counts (#404). Used by
 //! checks.rs, merge.rs and the pull requests' watch (housekeeping/prs.rs).
 use crate::clock::now;
 use crate::flow::git::{gh, pr_number, GhOut};
@@ -40,7 +41,7 @@ pub fn pr_view(root: &Path, pr: &str, fields: &str) -> Result<Read, String> {
     let n = pr_number(pr);
     if !refused_lately(root) {
         let r = gh(&["pr", "view", &n, "--json", &format!("{fields},statusCheckRollup")], root, 60000);
-        if let Ok(v) = serde_json::from_str::<Value>(&r.stdout) { return Ok(Read { view: v, ..Default::default() }); }
+        if let Ok(mut v) = serde_json::from_str::<Value>(&r.stdout) { v["statusCheckRollup"] = json!(newest(root, v.arr("statusCheckRollup"))); return Ok(Read { view: v, ..Default::default() }); }
         if !refused(&r) { return Err(said(&r)); }
         remember(root);
     }
@@ -52,6 +53,38 @@ pub fn pr_view(root: &Path, pr: &str, fields: &str) -> Result<Read, String> {
     let (checks, fault) = match of_commit(root, &v.t("headRefOid")) { Ok(c) => (c, String::new()), Err(e) => (vec![], e) };
     v["statusCheckRollup"] = json!(checks);
     Ok(Read { view: v, unread: vec![UNREAD.to_string()], fault })
+}
+
+/// A number in a GitHub Actions link after `part` (`/actions/runs/<run>/job/<job>`): None for any other check.
+fn link_id(c: &Value, part: &str) -> Option<u64> { c.s("detailsUrl").split(part).nth(1).and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()) }
+/// The jobs of a workflow run's latest attempt, as GitHub gives them: None where it does not.
+fn latest_jobs(root: &Path, run: u64) -> Option<Vec<u64>> {
+    let r = every_page(root, &format!("repos/{{owner}}/{{repo}}/actions/runs/{run}/jobs?filter=latest&per_page=100"), ".jobs[].id");
+    (r.status == 0).then(|| r.stdout.lines().filter_map(|l| l.trim().parse().ok()).collect())
+}
+/// GitHub's list with each check only as last run. A GitHub Actions job listed twice in its workflow run: the one of the
+/// run's latest attempt, as GitHub says it (two jobs of one name in the same attempt are two checks). Another app's
+/// check: one of the same name that began after it was over. What cannot be told (GitHub does not say, the times are not
+/// known: not started yet, gh's `0001-…`) is kept, so that a failure is never dropped for a guess.
+pub fn newest(root: &Path, checks: &[Value]) -> Vec<Value> {
+    let run_of = |c: &Value| link_id(c, "/actions/runs/");
+    let key = |c: &Value| (c.s("__typename").to_string(), c.s("workflowName").to_string(), if c.b("name") { c.t("name") } else { c.t("context") }, run_of(c));
+    let mut latest: Vec<(u64, Option<Vec<u64>>)> = vec![];
+    for c in checks.iter().filter(|c| checks.iter().filter(|o| key(o) == key(c)).count() > 1) {
+        if let Some(r) = run_of(c) { if !latest.iter().any(|(x, _)| *x == r) { latest.push((r, latest_jobs(root, r))); } }
+    }
+    let known = |s: &str| !s.is_empty() && !s.starts_with("0001");
+    // A status has one time, when it was set.
+    let older = |a: &Value, b: &Value| { let (end, start) = (if a.b("completedAt") { a.s("completedAt") } else { a.s("startedAt") }, b.s("startedAt")); known(end) && known(start) && end < start };
+    let gone = |c: &Value| match run_of(c) {
+        Some(r) => {
+            let Some((_, Some(ids))) = latest.iter().find(|(x, _)| *x == r) else { return false };
+            let latest_job = |o: &Value| link_id(o, "/job/").map(|j| ids.contains(&j)).unwrap_or(false);
+            link_id(c, "/job/").is_some() && !latest_job(c) && checks.iter().any(|o| key(o) == key(c) && latest_job(o))
+        }
+        None => checks.iter().any(|o| key(o) == key(c) && older(c, o)),
+    };
+    checks.iter().filter(|c| !gone(c)).cloned().collect()
 }
 
 /// One GitHub Actions run of a commit.

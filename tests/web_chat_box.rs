@@ -9,19 +9,23 @@ const JS: &str = include_str!("../crates/web/src/webui/page/compose.js");
 const CHAT: &str = include_str!("../crates/web/src/webui/page/chat.js");
 const CSS: &str = include_str!("../crates/web/src/webui/page/compose.css");
 const START: &str = include_str!("../crates/web/src/webui/page/start.js");
+const DOM: &str = include_str!("../crates/web/src/webui/page/dom.js");
 const DOC: &str = include_str!("../docs/web-chat-box.md");
 fn rule(sel: &str) -> String { Regex::new(&format!(r"{} \{{([^}}]*)\}}", regex::escape(sel))).unwrap().captures(CSS).map(|c| c[1].to_string()).unwrap_or_default() }
 
 #[test]
 fn the_keys_are_the_web_uis_enter_sends_shift_enter_is_a_new_line_and_its_own_settings_can_turn_that_round() {
     assert!(JS.contains(r#"export const sendsOn = (e, enter = enterSends()) => e.key === "Enter" && !e.isComposing && e.keyCode !== 229 && !e.shiftKey && (enter ? !e.metaKey && !e.ctrlKey : !!(e.metaKey || e.ctrlKey));"#));
-    // "Enter sends" off in the web UI: read where it keeps it; nothing kept, or kept elsewhere: enter sends
-    assert!(JS.contains(r#"JSON.parse(localStorage.getItem("herdr-web-ui:settings") || "{}").enterSends !== false; } catch { return true; }"#));
+    // "Enter sends" off in the web UI: read where it keeps it, under Ovis's name first and then under its name before
+    // the rename; nothing kept, or kept elsewhere: enter sends
+    assert!(JS.contains("export const enterSends = () => webUiSettings().enterSends !== false;"));
+    assert!(DOM.contains(r#"const SETTINGS = ["ovis:settings", "herdr-web-ui:settings"];"#));
+    assert!(DOM.contains(r#"for (const key of SETTINGS) { try { const s = JSON.parse(localStorage.getItem(key) || "null"); if (s && typeof s === "object") return s; } catch {} }"#) && DOM.contains("  return {};\n}"));
 }
 
 #[test]
 fn the_box_is_the_web_uis_card_the_message_first_one_row_of_controls_the_grip_and_no_dead_control() {
-    assert!(JS.contains(r#"h("div.sw-card.sw-b-text", grip, files.strip, box, h("div.sw-controls.sw-controls-left", files.input, files.add, voice.el, to), h("div.sw-controls.sw-controls-right", also, send))"#));
+    assert!(JS.contains(r#"h("div.sw-card.sw-b-text", grip, files.strip, box, h("div.sw-controls.sw-controls-left", files.input, files.add, voice.el, call, to), h("div.sw-controls.sw-controls-right", also, send))"#));
     assert!(JS.contains(r#"h("textarea.sw-input", { rows: 1, maxLength: LONGEST"#) && JS.contains("LONGEST = 20000"));
     assert!(JS.contains(r#"h("button.sw-action.sw-send", { type: "button", disabled: true"#) && JS.contains(r#"h("button.sw-also", { type: "button", hidden: true }"#));
     assert!(JS.contains(r#"h("div.sw-composer", { role: "group""#));
@@ -55,13 +59,13 @@ fn sending_keeps_the_focus_in_the_box_so_a_phone_keeps_its_keyboard() {
 fn who_gets_the_words_is_said_while_empty_too_and_a_second_enter_while_the_first_is_on_its_way_does_nothing() {
     // sends once: busy while the board has not answered; the words stay until it has them; kept words stay
     assert!(CHAT.contains("if (!text.trim() || busy || files.busy()) return;") && CHAT.contains("busy = true; sync();"));
-    assert!(CHAT.contains(r#"const kept = await onSend(text, delegate, to ? { id: to.id, reply: to.reply, scope: to.scope || "" } : null);"#));
+    assert!(CHAT.contains(r#"const kept = await onSend(files.expand(text), delegate, to ? { id: to.id, reply: to.reply, scope: to.scope || "" } : null);"#));
     // only what was sent leaves the box: words typed after it stay; changed inside it, all stays, and that is said
     assert!(CHAT.contains(r#"box.value = edited ? box.value : box.value.slice(text.length).replace(/^\s+/, ""); files.clear(sent);"#));
     assert!(CHAT.contains("if (!box.value.trim() && !files.count()) to = null;"));
     assert!(CHAT.contains("send.disabled = !typing || busy || files.busy();") && CHAT.contains("also.disabled = busy;") && CHAT.contains("also.hidden = !typing || !l.delegate;"));
     // who: always said, quietly while empty, locked once words are typed; the buttons say what they do
-    assert!(CHAT.contains("chip.hidden = !moved;") && CHAT.contains("send.title = cap(l.enter) || \"Send message\";") && CHAT.contains("also.title = l.delegate ? `${cap(l.delegate)} (Tab)` : \"\";"));
+    assert!(CHAT.contains("chip.hidden = !moved;") && CHAT.contains("send.title = cap(l.enter) || \"Send message\";") && CHAT.contains("also.title = l.delegate ? `${cap(l.delegate)} (Ctrl+S)` : \"\";"));
     assert!(CHAT.contains("box.placeholder = cap(snap.send.place || \"\");"));
     // a device that can only watch types nothing
     assert!(CHAT.contains(r#"box.disabled = snap.role !== "drive";"#) && CHAT.contains(r#"if (snap.role !== "drive") box.placeholder = "This device can only watch";"#));

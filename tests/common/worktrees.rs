@@ -8,21 +8,36 @@ pub fn git(cwd: &Path, a: &[&str]) -> Result<String, String> {
     let o = std::process::Command::new("git").args(a).current_dir(cwd).output().map_err(|e| e.to_string())?;
     if o.status.success() { Ok(String::from_utf8_lossy(&o.stdout).trim().to_string()) } else { Err(String::from_utf8_lossy(&o.stderr).into_owned()) }
 }
-/// The repo a folder belongs to: a checkout's own folder, or the main checkout of a worktree.
+/// The repo a folder belongs to: a checkout's own folder (its `.git` a folder or a file pointing elsewhere), or the
+/// main checkout of a worktree.
 fn repo_of(cwd: &Path) -> PathBuf {
-    git(cwd, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).map(|d| PathBuf::from(d).parent().map(|p| p.to_path_buf()).unwrap_or_default()).unwrap_or_else(|_| cwd.to_path_buf())
+    let dirs = git(cwd, &["rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir", "--show-toplevel"]).unwrap_or_default();
+    let l: Vec<&str> = dirs.lines().collect();
+    if l.len() < 3 { return cwd.to_path_buf(); }
+    if l[0] == l[1] { PathBuf::from(l[2]) } else { PathBuf::from(l[1]).parent().map(|p| p.to_path_buf()).unwrap_or_default() }
 }
 pub fn worktree(f: &F, st: &mut Value, verb: &str, flag: &dyn Fn(&str) -> Option<String>, force: bool) -> Out {
     match verb {
         "create" => {
-            let root = repo_of(Path::new(&flag("--cwd").unwrap_or_default()));
+            let cwd = flag("--cwd").unwrap_or_default();
+            // As herdr does: never from a linked worktree, which git names apart from its repo's main checkout.
+            if git(Path::new(&cwd), &["rev-parse", "--git-dir"]).ok() != git(Path::new(&cwd), &["rev-parse", "--git-common-dir"]).ok() { return fail("linked_worktree_source", "New and open worktree actions start from the repo parent workspace."); }
+            let root = repo_of(Path::new(&cwd));
             let branch = flag("--branch").unwrap_or_default();
             let safe: String = branch.chars().map(|c| if c.is_ascii_alphanumeric() || "._-".contains(c) { c } else { '-' }).collect();
             let dest = f.dir.join("worktrees").join(root.file_name().unwrap_or_default()).join(safe);
             let ds = dest.display().to_string();
             let exists = git(&root, &["rev-parse", "--verify", &format!("refs/heads/{branch}")]).is_ok();
             let base = flag("--base").unwrap_or_else(|| "HEAD".into());
-            let r = if exists { git(&root, &["worktree", "add", &ds, &branch]) } else { git(&root, &["worktree", "add", "--no-track", "-b", &branch, &ds, &base]) };
+            // As herdr does: plain `-b`, so a branch made from a remote-tracking ref gets its upstream in .git/config.
+            // `createLocked` fails that many creates as git does while another git command holds .git/config: the branch
+            // is made, then the create refused.
+            if st.i("createLocked") > 0 {
+                st["createLocked"] = json!(st.i("createLocked") - 1);
+                let _ = git(&root, &["branch", "--no-track", &branch, &base]);
+                return fail("worktree_create_failed", "error: could not lock config file .git/config: File exists\nerror: unable to write upstream branch configuration");
+            }
+            let r = if exists { git(&root, &["worktree", "add", &ds, &branch]) } else { git(&root, &["worktree", "add", "-b", &branch, &ds, &base]) };
             if let Err(e) = r { return fail("worktree_create_failed", &e); }
             let rs = root.display().to_string();
             if !st.arr("workspaces").iter().any(|w| w.s("cwd") == rs) { F::new_workspace(st, &rs, root.file_name().and_then(|x| x.to_str()), json!({ "checkout_path": rs, "repo_root": rs, "is_linked_worktree": false })); }

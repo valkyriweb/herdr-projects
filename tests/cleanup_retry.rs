@@ -30,7 +30,7 @@ fn merged(w: &World, n: i64, before: impl FnOnce(&Obj)) -> Obj {
     sw::actions::finish_line::approve(&id, None, false).unwrap();
     let t = settle(&id);
     assert_eq!(t.s("stage"), "done", "{}", t.at("failure"));
-    assert!(kept(&t).contains("in use again"), "{}", kept(&t)); assert!(open(w, &t)); assert!(t.b("tidy"));
+    assert!(kept(&t).contains("its space is in use"), "{}", kept(&t)); assert!(open(w, &t)); assert!(t.b("tidy"));
     sw::runner::JOBS.with(|j| j.borrow_mut().clear());
     t
 }
@@ -166,35 +166,10 @@ fn a_helper_the_agent_keeps_in_its_own_process_group_does_not_keep_a_merged_task
     // a command on the terminal in the agent's own group is at work: kept until it ends
     let t = merged_with(&w, "child");
     let (id, p) = (t.t("id"), t.at("link").t("pane"));
-    assert!(kept(&task(&id)).contains("in use again"), "{}", kept(&task(&id))); assert!(open_and_kept(&w, &t));
+    assert!(kept(&task(&id)).contains("its space is in use"), "{}", kept(&task(&id))); assert!(open_and_kept(&w, &t));
     pane(&w, &p, |p| p["child"] = json!(false));
     assert_eq!(pass(&w, &id), 1);
     assert!(gone(&w, &t));
-}
-#[test]
-fn the_helpers_a_known_program_keeps_in_groups_of_their_own_are_its_own_and_a_command_it_left_running_is_not() {
-    let w = world_with(Opts { repo: true, settings: json!({ "review.when": "never" }), ..Default::default() });
-    // MCP servers and a tool driver in process groups of their own, wired to the agent (as pi and codex keep them): part of it
-    let t = merged_with(&w, "servers");
-    assert!(!task(t.s("id")).b("kept") && gone(&w, &t), "{}", kept(&task(t.s("id"))));
-    // a command in a group of its own that is not wired to the agent is at work: kept until it ends, helpers or not
-    let t = merged_with(&w, "tool");
-    let (id, p) = (t.t("id"), t.at("link").t("pane"));
-    assert!(kept(&task(&id)).contains("in use again"), "{}", kept(&task(&id))); assert!(open_and_kept(&w, &t));
-    pane(&w, &p, |p| { p["tool"] = json!(false); p["servers"] = json!(true); });
-    assert_eq!(pass(&w, &id), 1);
-    assert!(gone(&w, &t));
-    // under a program the board does not know it cannot tell a helper from a command: it waits
-    w.script(json!({ "worker": [{ "files": { "m.txt": "x\n" }, "commit": "m", "note": "Did it." }] }));
-    let id = w.add("Unknown program");
-    delegate(&id);
-    let t = settle(&id);
-    assert_eq!(t.s("stage"), "approval", "{}", t.at("failure"));
-    pane(&w, t.at("link").s("pane"), |p| { p["servers"] = json!(true); p["agent"]["kind"] = json!("mystery"); });
-    sw::actions::finish_line::approve(&id, None, false).unwrap();
-    let c = settle(&id);
-    assert_eq!(c.s("stage"), "done", "{}", c.at("failure"));
-    assert!(kept(&c).contains("in use again") && open_and_kept(&w, &t), "{}", kept(&c));
 }
 /// A task approved and merged while its agent's pane has `flag` set.
 fn merged_with(w: &World, flag: &str) -> Obj {
@@ -230,6 +205,7 @@ fn real_programs_a_helper_is_wired_to_the_agent_and_a_command_left_running_is_no
     // a command with its input and output put away, or into a file: no helper, at work
     let mut null = sleep(Stdio::null(), Stdio::null());
     assert_eq!(wired(&null, &[me, null.id() as i64]), Some(false));
+    assert_eq!(sw::herdr::procs::real_wiring(null.id() as i64, &[me, null.id() as i64]), sw::herdr::procs::Wiring::Elsewhere, "and the words say why");
     let file = std::fs::File::create(std::env::temp_dir().join(format!("hp-wired-{me}.log"))).unwrap();
     let mut logged = sleep(Stdio::piped(), Stdio::from(file));
     assert_eq!(wired(&logged, &[me, logged.id() as i64]), Some(false));

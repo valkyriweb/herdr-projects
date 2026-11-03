@@ -17,7 +17,7 @@ fn env(k: &str) -> String { std::env::var(k).unwrap_or_default() }
 /// What the board shows before herdr was asked: the tasks as they were saved.
 pub fn quick_data(cwd: &str) -> Data {
     let tasks = crate::store::tasks::list(crate::store::tasks::ListOpts { include_archived: true, ..Default::default() });
-    let row = |t: &crate::store::tasks::Task| { let mut x = crate::flow::live::saved(t); x.put("research", crate::research::is_research(t)); std::sync::Arc::new(crate::shown::states::as_row(&x)) };
+    let row = |t: &crate::store::tasks::Task| { let mut x = crate::flow::live::saved(t); x.put("research", crate::research::is_research(t)); x.put("chatOnly", crate::chat_only::is_chat(t)); std::sync::Arc::new(crate::shown::states::as_row(&x)) };
     let n = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1).clamp(1, 8);
     let items = if tasks.len() < 32 { tasks.iter().map(row).collect() } else { let chunk = tasks.len().div_ceil(n); std::thread::scope(|sc| tasks.chunks(chunk).map(|c| sc.spawn(move || c.iter().map(row).collect::<Vec<_>>())).collect::<Vec<_>>().into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()) };
     let roots: std::collections::BTreeMap<String, String> = crate::store::repos::known_repos().iter().map(|(k, v)| (k.clone(), text(v))).collect();
@@ -33,6 +33,7 @@ pub fn prepare(folder: &std::path::Path) -> (State, Theme, Option<(String, Strin
     let asked = term::ask_colours();
     crate::keeper::ensure_keeper(); // the board opening is one of the keeper's starters
     crate::flow::send::shim(); // the launcher in the data folder, there from the first time the board opens
+    crate::leftovers::sweep::at_start(); // what ended tasks left behind (docs/disk-space.md)
     let _ = crate::extras::sync_skill(); crate::extras::remove_popups(); crate::extras::refresh_sidebar();
     let reloads: i64 = env("HERDR_PROJECTS_RELOADS").parse().unwrap_or(0);
     let named = place::name_board_tab(&place::board_pane());
@@ -47,14 +48,14 @@ pub fn prepare(folder: &std::path::Path) -> (State, Theme, Option<(String, Strin
     let moved = crate::store::move_home::move_note(&home, &envn);
     if !moved.is_empty() { crate::store::move_home::move_told(&home, &envn); }
     let said: Vec<String> = [moved, keys].into_iter().filter(|x| !x.is_empty()).collect();
-    if !said.is_empty() { s.flash(said.join("  "), Ink::Green); }
+    if !said.is_empty() { s.flash(said.join("  "), Ink::Muted); }
     start_setup(&mut s);
     let seen = term::colours_told(asked, 250);
     let theme = Theme::load(seen.light, seen);
     (s, theme, named)
 }
-/// What the board opens on: the view it had when it last closed (the popup's own), in the repo a draft left in its box
-/// was typed for, on the task of the pane you came from.
+/// What the board opens on: the view it had when it last closed (the popup's own) with the top row selected, in the
+/// repo a draft left in its box was typed for, on the task of the pane you came from.
 pub fn view(mut ctx: Ctx, folder: &std::path::Path) -> State {
     let p = prefs::read(ctx.popup);
     // Opened from the Coordinator's own pane: its folder is nobody's repo. The board is where it was when you left it.
@@ -62,6 +63,8 @@ pub fn view(mut ctx: Ctx, folder: &std::path::Path) -> State {
     let data = quick_data(&ctx.cwd);
     let mut s = State::new(ctx, data);
     prefs::apply(&mut s, &p);
+    // It opens on the top row (All machines, or the one machine shown), so the chat starts with its coordinator.
+    s.sel = crate::board::update::top::top_id(&s);
     // Words left in the box when it closed were typed for the repo it was in then: the board stays there.
     if !p.s("draft").trim().is_empty() { crate::board::update::setup::to_repo_of(&mut s, p.s("cwd")); }
     // The popup opens on the task that belongs to where you are: the one whose agent runs in the pane you came from.

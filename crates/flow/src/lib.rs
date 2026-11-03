@@ -1,6 +1,7 @@
 //! The crate sw-flow (crates/flow), on sw-core: the flow of a task (delegating, the finish line, landing), the keeper
-//! and what it runs, other machines, automations, the review page. With it, the parts of the board's screen and of the
-//! web UI that this flow uses: the keys' table and the theme, the web UI found, linked and its front door started.
+//! and what it runs, other machines, automations, autopilot on the coordinators, the review page. With it, the parts
+//! of the board's screen and of the web UI that this flow uses: the keys' table and the theme, the web UI found, linked
+//! and its front door started.
 //! Which crate holds what, and why: docs/crates.md.
 pub use sw_core::*;
 
@@ -8,6 +9,7 @@ pub mod actions;
 pub mod after;
 pub mod attempts;
 pub mod automations;
+pub mod autopilot;
 pub mod calls;
 pub mod coordinator;
 pub mod delegate;
@@ -21,6 +23,7 @@ pub mod install;
 pub mod jobs;
 pub mod keeper;
 pub mod land;
+pub mod leftovers;
 pub mod limits;
 pub mod notify;
 pub mod plan;
@@ -39,6 +42,7 @@ pub mod watcher;
 /// What the board's screen has that the flow uses too: the keys (a message names a key) and the theme (the review
 /// page's colours). sw-board's `board` module passes them on, so they are `crate::board::keys` everywhere.
 pub mod board {
+    pub mod key_style;
     pub mod keys;
     pub mod remap;
     pub mod theme;

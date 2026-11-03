@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 use sw::json::*;
 use sw::store::tasks::{update, Change};
 
+/// A turn's end that is not a turn (Claude Code compacting an idle session), and the words of one with no summary.
+mod ended_late;
+
 fn put(id: &str, f: impl FnOnce(&mut Obj)) { update(id, |t| { f(t); Ok(Change::Write) }).unwrap(); }
 fn with(t: &Obj, extra: Value) -> Obj { let mut o = t.clone(); for (k, v) in extra.as_object().cloned().unwrap_or_default() { o.insert(k, v); } o }
 fn place(t: &Obj) -> String { sw::flow::sidebar::entry_now(t, sw::clock::now()).place }
@@ -43,7 +46,7 @@ fn an_agent_that_reports_itself_blocked_gets_the_right_kind_and_stopping_after_t
     let id = w.add("Needs a token");
     delegate(&id);
     let t = settle(&id);
-    sw::actions::filing::report(&id, sw::actions::filing::Report { state: "blocked".into(), kind: "auth".into(), msg: "NPM_TOKEN is missing".into(), as_agent: true, ..Default::default() }).unwrap();
+    sw::actions::filing::report(&id, sw::actions::filing::Report { state: "blocked".into(), kind: "auth".into(), msg: "NPM_TOKEN is missing".into(), own: "agent", ..Default::default() }).unwrap();
     let pane = t.at("link").t("pane");
     w.patch(|s| { let seq = s.i("seq") + 1; s["seq"] = json!(seq); for p in s["panes"].as_array_mut().unwrap() { if p.s("pane_id") == pane { p["agent"]["status"] = json!("done"); p["agent"]["seq"] = json!(seq); p["agent"]["completion"] = json!(seq); } } });
     let t = settle(&id);

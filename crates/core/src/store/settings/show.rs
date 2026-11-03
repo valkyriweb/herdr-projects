@@ -54,11 +54,13 @@ pub fn rows(scope: &Scope) -> Vec<Row> {
     let task = scope.task;
     let at = places_of(scope, &mine);
     let get = |name: &str| lookup_at(name, scope, &at).map(|f| text(&f.value)).unwrap_or_default();
-    SETTINGS.iter().filter(|s| task.is_some() || if !scope.repo.is_empty() { s.kind != Kind::Board } else { s.kind != Kind::Repo }).filter_map(|s| {
+    let shows = |s: &Entry| if scope.coord.is_some() { s.kind == Kind::Coord } else if task.is_some() { true } else if !scope.repo.is_empty() { s.kind != Kind::Board && s.kind != Kind::Coord } else { s.kind != Kind::Repo && s.name != super::coord::GOAL };
+    // One task's own setting is said on that task only.
+    SETTINGS.iter().filter(|s| shows(s) && (task.is_some() || !s.task)).filter_map(|s| {
         let r = lookup_at(&s.name, scope, &at).ok()?;
         let n = note(s, &r, task, scope, at.no_repo, &get);
-        let own_place = if task.is_some() { "task" } else if !scope.repo.is_empty() { "repo" } else { "you" };
-        let later = match task { Some(t) if s.name == RESEARCH => later_words(t, &r.value), _ => String::new() };
+        let own_place = if task.is_some() { "task" } else if !scope.repo.is_empty() { "repo" } else if scope.coord.is_some() { "coord" } else { "you" };
+        let later = match task { Some(t) if s.name == RESEARCH => later_words(t, &r.value), Some(t) if s.name == crate::chat_only::CHAT => crate::chat_only::later_words(t, &r.value), _ => String::new() };
         Some(Row { name: s.name.clone(), kind: s.kind, own: r.place == own_place, value: r.value.clone(), from: r.from.clone(), place: r.place.clone(), note: n, later })
     }).collect()
 }
@@ -89,6 +91,7 @@ pub fn show_text(scope: &Scope) -> String {
     let wide = list.iter().map(|r| r.name.len()).max().unwrap_or(0);
     let val = list.iter().map(|r| say(&r.value).split('\n').next().unwrap_or("").chars().count()).filter(|n| *n <= 40).max().unwrap_or(0);
     let head = match task { Some(t) => format!("{}: every setting, and the place it came from (* = this task's own)", t.s("id")),
+        None if scope.coord.is_some() => format!("{}: every setting, and the place it came from (* = its own)", super::coord::entry_words(&scope.coord.as_ref().unwrap().key).trim_end_matches(" own").trim_end_matches("'s")),
         None if !scope.repo.is_empty() => format!("Your entry for {} (* = said there)", scope.repo), None => "Your settings (* = changed by you)".into() };
     let mut lines: Vec<String> = list.iter().map(|r| {
         let v: String = say(&r.value).split('\n').map(|l| l.trim()).collect::<Vec<_>>().join(" / ");
@@ -102,6 +105,12 @@ pub fn show_text(scope: &Scope) -> String {
     let mut out = vec![head];
     out.extend(lines);
     if !bad.is_empty() { out.push(String::new()); out.push("Not counted (the next place down is used for each):".into()); out.extend(bad.iter().map(|b| format!("  {b}"))); }
+    // One task's own settings are said on that task only: named here, so that they are known to be there.
+    let own: Vec<&str> = SETTINGS.iter().filter(|s| s.task).map(|s| s.name.as_str()).collect();
+    if task.is_none() && scope.coord.is_none() && !own.is_empty() {
+        out.push(String::new());
+        out.push(format!("Set on one task only: {} (add … {}, show <id>)", own.join(", "), own.iter().map(|n| format!("--{n}")).collect::<Vec<_>>().join(" ")));
+    }
     out.join("\n")
 }
 /// How a board says a value just saved or put back: plain, and `, for this task only` where it is that one's own now.

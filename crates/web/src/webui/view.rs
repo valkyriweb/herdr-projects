@@ -17,15 +17,18 @@ pub fn press_of(id: &str) -> Result<Press, String> {
     if c.is_empty() { if let Some(c) = k.raw.first().and_then(|r| r.chars().next()) { return Ok(Press::char(c)); } }
     if c.is_empty() { Err(format!("The key \"{id}\" cannot be pressed from the web board")) } else { Ok(Press::chord(&c)) }
 }
-fn on_board(s: &State, id: &str) -> bool { s.items.iter().any(|r| r.s("id") == id) || s.jobs.iter().any(|j| j.s("id") == id) || s.autos.iter().any(|a| a.s("row") == id) }
+/// A row the page can select: a task, words on their way, an automation, or a heading that is a coordinator's or a
+/// project's (an archived one in the archive has no coordinator, but the archive key restores it there).
+fn on_board(s: &State, id: &str) -> bool { s.items.iter().any(|r| r.s("id") == id) || s.jobs.iter().any(|j| j.s("id") == id) || s.autos.iter().any(|a| a.s("row") == id) || ((crate::board::update::coords::of_head(s, id).is_some() || id.starts_with(&format!("{}repo\t", crate::board::update::heads::HEAD))) && s.rows.iter().any(|r| matches!(r, crate::board::state::Row::Head { id: h, .. } if h == id))) }
 fn key(c: &mut Client, p: Press) { let fx = update(&mut c.s, Event::Key(p)); effects(c, fx, false); }
 /// A button: the key it stands for, pressed with the text box empty. Words the key puts into the text box (a draft
 /// brought back, words taken back to change) are the page's draft.
 pub fn press(c: &mut Client, id: &str, drive: bool) -> Result<String, String> {
     if TERMINAL_ONLY.contains(&id) { return Ok(String::new()); }
     let k = by_name(id).ok_or_else(|| format!("No key is called \"{id}\""))?;
-    // A key that does something is for someone who may drive; one that only shows or hides is for a watcher too.
-    if !drive && k.group != Some("alt") { return Err("This device can only watch.".into()); }
+    // A key that does something is for someone who may drive; one that only shows or hides is for a watcher too. Going
+    // into an agent is not only a look: it starts a coordinator that is not running, and reopens a task's space.
+    if !drive && (k.group != Some("alt") || id == "open") { return Err("This device can only watch.".into()); }
     let p = press_of(id)?;
     c.s.input.set_text(""); c.s.lone_at = 0; // a button is no input line: no enter of its own follows it
     key(c, p);
@@ -80,7 +83,7 @@ pub fn pick(c: &mut Client, id: &str, open: bool) {
     super::web::reload(c); // the task may be newer than the last look
     if on_board(&c.s, id) { c.s.sel = id.into(); }
     // An automation's row opens the automation, whole; a task's row the task.
-    if c.s.auto().is_some() { c.s.auto_open = open; } else { c.s.full = open && (c.s.current().is_some() || c.s.job().is_some()); }
+    if c.s.auto().is_some() { c.s.auto_open = open; } else { c.s.full = open && (c.s.current().is_some() || c.s.job().is_some() || crate::board::update::pilot::selected(&c.s).is_some()); }
     c.s.panel_top = 0;
     super::web::reload(c);
 }
@@ -90,6 +93,18 @@ pub fn fold(c: &mut Client, id: &str) {
     c.s.full = false; c.s.auto_open = false; c.s.editing = None;
     let fx = { let mut fx = vec![]; crate::board::update::heads::toggle(&mut c.s, id, &mut fx); fx };
     effects(c, fx, false);
+}
+/// A tap on the filter row: that filter shown, as tab gets there.
+pub fn show(c: &mut Client, n: usize) {
+    let mut fx = vec![];
+    crate::board::update::shows::set(&mut c.s, n, &mut fx);
+    effects(c, fx, false);
+}
+/// The grouping back to by status (the chip of by repo or by machine, its ×), as the group key gets there going round.
+pub fn by_status(c: &mut Client) {
+    (c.s.by_repo, c.s.by_machine) = (false, false);
+    relist(&mut c.s);
+    super::web::save_prefs(&c.s);
 }
 pub fn find(c: &mut Client, text: &str) {
     c.s.filter = text.trim().chars().take(200).collect();
@@ -106,7 +121,7 @@ pub fn set_setting(c: &mut Client, id: &str, name: &str, value: Option<String>) 
     if crate::store::settings_list::entry_of(name).is_none() { return Err(format!("Unknown setting \"{name}\".")); }
     if let Some(a) = &a { if !crate::board::update::autos::can_set(a) { c.s.flash(format!("Its settings are changed on {}: herdr-projects set <name> <value> --automation \"{}\"", a.s("host"), a.s("name")), Ink::Yellow); return Ok(()); } }
     let was = c.s.editing.take();
-    c.s.editing = Some(crate::board::state::Editing { id: if a.is_some() { r.t("row") } else { r.t("id") }, auto: a.is_some(), ..Default::default() });
+    c.s.editing = Some(crate::board::state::Editing { id: if a.is_some() { r.t("row") } else { r.t("id") }, whose: if a.is_some() { crate::board::state::Whose::Auto } else { crate::board::state::Whose::Task }, ..Default::default() });
     let mut fx: Vec<Effect> = vec![];
     crate::board::update::edit::save(&mut c.s, name, value, &mut fx);
     c.s.editing = was;
