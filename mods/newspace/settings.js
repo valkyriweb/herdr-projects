@@ -26,14 +26,16 @@ const LAST = () => `${appHome()}/data/coordinator-last.json`;
 // What the agents on this machine (or `machine`) offer: { menus, icons, installed, permDefault,
 // defaults } (defaults: the CLI's own, for a first time).
 export async function loadChoices(machine = null) {
-  const [claude, codex, known] = await Promise.all([agent.defaults("claude", machine), agent.defaults("codex", machine),
-    knownAgents({ on: machine }).catch(() => [])]);
-  const prog = (k) => known.find((a) => a.key === k || (a.run ?? [])[0] === k);
-  const installed = Object.fromEntries(["claude", "codex"].map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude"]));
-  const dflts = { claude, codex };
-  const menus = Object.fromEntries(["claude", "codex"].filter((k) => installed[k]).map((k) => [k, agent.menuFor(k, dflts[k])]));
-  const icons = Object.fromEntries(["claude", "codex"].map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
-  const permDefault = { claude: claude?.mode ?? "manual", codex: "auto" };
+  const [known, ...each] = await Promise.all([knownAgents({ on: machine }).catch(() => []),
+    ...agent.AGENTS.map((k) => agent.defaults(k, machine))]);
+  const dflts = Object.fromEntries(agent.AGENTS.map((k, i) => [k, each[i]]));
+  const { claude } = dflts;
+  const prog = (k) => known.find((a) => a.key === k || (a.run ?? [])[0] === agent.KINDS[k].run[0]);
+  // Installed: Herdr's word on the program, else (the other kinds) whether its command is on PATH.
+  const installed = Object.fromEntries(agent.AGENTS.map((k) => [k, prog(k) ? prog(k).installed !== false : k === "claude" || Boolean(dflts[k]?.installed)]));
+  const menus = Object.fromEntries(agent.AGENTS.filter((k) => installed[k]).map((k) => [k, agent.menuFor(k, dflts[k])]));
+  const icons = Object.fromEntries(agent.AGENTS.map((k) => [k, { icon: prog(k)?.icon ?? null, tint: Boolean(prog(k)?.tint) }]));
+  const permDefault = Object.fromEntries(agent.AGENTS.map((k) => [k, k === "claude" ? claude?.mode ?? "manual" : k === "codex" ? "auto" : agent.KINDS[k].perms?.[0]?.id ?? null]));
   const first = menus.claude ? "claude" : Object.keys(menus)[0] ?? "claude";
   const c = agent.current(first, [], {}, dflts[first]);
   const model = agent.rowFor(first, c) ?? menus[first]?.models?.[0]?.id ?? null;
@@ -71,7 +73,8 @@ function choose(coord, agentKey, id) {
   if (!m.fast || data.menus[agentKey].fastLocked) next.fast = Boolean(data.menus[agentKey].fastLocked && m.fast);
   if (agentKey !== sel.agent) {
     const full = sel.perm === "bypassPermissions" || sel.perm === "full";
-    next.perm = full ? (agentKey === "claude" ? "bypassPermissions" : "full") : data.permDefault[agentKey];
+    next.perm = full && data.menus[agentKey]?.perms?.some((p) => p.id === (agentKey === "claude" ? "bypassPermissions" : "full"))
+      ? (agentKey === "claude" ? "bypassPermissions" : "full") : data.permDefault[agentKey];
   }
   coord.sel = next;
 }

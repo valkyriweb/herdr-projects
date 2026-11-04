@@ -17,6 +17,7 @@ import { v_flex, h_flex, Scrollbar, TextareaState, Textarea } from "gpui-base";
 import { props, theme, spaces, machines, home, exec, readTextFile, writeTextFile, closeOverlay, openOverlay, shared } from "herdr";
 import { SHEPHERDR_FILE, SHEPHERDR_DEFAULTS, LOCAL_MACHINE, shepherdrFor, shepherdrLayers, machineOfSpace } from "./coordinator.js";
 import * as models from "./settings.js";
+import * as agent from "./agent.js";
 import { layoutSection } from "./layout.js";
 import { manifest } from "./addons.js";
 import { secretsInit, secretsSection } from "./secrets-section.js";
@@ -51,7 +52,7 @@ const ROLES = [
 // herdr-task's merge policy: "ask" waits for the person's Accept (which merges), the others
 // merge without it.
 const MERGE = [["ask", "On Accept"], ["checks", "After checks pass"], ["auto", "Right away"]];
-const NAME = { claude: "Claude Code", codex: "Codex" };
+const NAME = agent.NAMES;
 const CLI_CHECK = () => `${home()}/.herdr/cli-check.json`;
 const MUST_FIX = [["blocker", "Blockers"], ["major", "Major and up"], ["minor", "Everything"]];
 const ROUNDS = [[0, "Off"], [1, "1 round"], [2, "2 rounds"], [3, "3 rounds"]];
@@ -307,7 +308,8 @@ export default class ShepherdrSettings extends View {
   // The CLI a worker runs here, and the other one (an unset Reviewer and Backup use it).
   otherCli() {
     const worker = shepherdrFor(this.cfg, this.scope).worker?.agent ?? "claude";
-    return worker === "codex" ? "claude" : "codex";
+    // Claude Code and Codex first (as herdr-task's other_cli), then the other kinds offered here.
+    return ["claude", "codex", ...agent.AGENTS].find((k) => k !== worker && (this.data?.menus?.[k] || k === "claude" || k === "codex")) ?? "codex";
   }
 
   // The model buttons start from what applies in this scope. An unset role shows what runs: the
