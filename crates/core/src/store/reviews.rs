@@ -6,6 +6,10 @@ use crate::json::*;
 
 /// Keep findings and evidence for reference, but a verdict stops describing the work once it resumes.
 pub fn current_review(t: &Task) -> Option<&Value> { let rv = t.at("review"); (rv.is_object() && !rv.b("stale")).then_some(rv) }
+/// A review that ran out of time (finish/review_salvage.rs): kept to be read and resumed, never a result.
+pub fn timed_out(rv: &Value) -> bool { rv.at("timeout").is_object() }
+/// The current review, when it is a result that can stand for the work: not one that ran out of time.
+pub fn standing_review(t: &Task) -> Option<&Value> { current_review(t).filter(|rv| !timed_out(rv)) }
 /// Which review a task is on: 1 for its first, counted up each time a reviewer starts on it. 0 before any review.
 pub fn review_round(t: &Task) -> i64 { t.f("reviewRound").floor().max(0.0) as i64 }
 /// Every review a task has had, oldest first. A review from before the gate keeps its score and its advice.
@@ -15,7 +19,7 @@ fn review_entry(rv: &Value, round: i64, at: &Value) -> Value {
     if rv.b("error") {
         e.put("error", one_line(&rv.t("error"), 400));
         // A review that ran out of time keeps what its reviewer had (finish/review_salvage.rs): the next one takes it up.
-        if rv.at("timeout").is_object() { e.put("timeout", rv.at("timeout").clone()); e.put("partial", rv.at("partial").clone()); e.put("head", rv.at("head").clone()); }
+        if rv.at("timeout").is_object() { e.put("timeout", rv.at("timeout").clone()); e.put("partial", rv.at("partial").clone()); e.put("head", rv.at("head").clone()); if rv.b("folder") { e.put("folder", rv.at("folder").clone()); } }
         return Value::Object(e);
     }
     if is_tagged(rv) {

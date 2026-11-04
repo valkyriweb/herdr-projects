@@ -14,6 +14,7 @@ pub mod old_holds;
 pub mod pipeline;
 pub mod pipeline_end;
 pub mod recover_job;
+pub mod redact;
 pub mod research;
 pub mod review;
 pub mod review_once;

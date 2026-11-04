@@ -51,8 +51,10 @@ The severity says what the fault does:
   files it saved in the review folder, its last message and the end of its screen are kept on the task as its review
   (`review.partial` in `details <id>`, with `review.timeout`: the stage, the limit, how long it ran and how many bytes
   were kept; the same on that round's entry in `reviews`), and the task panel shows the first lines under "Had so
-  far". `retry` then resumes the review instead of starting the finish line over: the check that passed on this commit
-  is not run again, and the next reviewer is told what the last one had and to take it up from there. `limit.time` is
+  far". That text is capped (6000 bytes a file, 24000 in all) and what looks like a credential in it is hidden; the
+  review folder itself, screenshots and recordings too, is moved aside whole (`review.folder`). A timed-out review is
+  never a result: it does not stand for the work after an update from main. `retry` then resumes the review instead
+  of starting the finish line over: the check that passed last on this commit, full or shorter, is not run again, and the next reviewer is told what the last one had and to take it up from there. `limit.time` is
   another thing: it stops any run, the agent's too, keeps its work and waits for you ([limits](limits.md)).
 
 Findings below the gate still show on the review page, in the task panel and in a comment on the pull request, marked
