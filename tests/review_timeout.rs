@@ -227,4 +227,7 @@ fn a_retry_on_the_commit_the_shorter_check_passed_on_does_not_run_it_again() {
     for _ in 0..3 { if t.s("stage") != "approval" { t = settle(&id); } }
     assert_eq!(t.s("stage"), "approval", "{} {}", t.s("msg"), t.at("failure"));
     assert_eq!(ran(), before, "the shorter check ran again on the commit it passed on");
+    // Its reviewer hears that the shorter check passed on this commit, not the full one.
+    let last = w.state().arr("prompted").iter().filter(|p| regex::Regex::new(r"-r(-\d+)?$").unwrap().is_match(p.s("name"))).map(|p| p.t("text")).last().unwrap();
+    assert!(last.contains("its shorter form, `echo \"again "), "{last}");
 }

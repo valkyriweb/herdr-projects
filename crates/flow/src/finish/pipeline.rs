@@ -109,8 +109,9 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
     // On a later round, the shorter check where it may stand in for the full one (check_again.rs).
     let run = choose(&t, &ch, &check, &tree, &root);
     let ran = run.shown();
-    // The check this round would run, full or shorter, passed last on this very commit (checkLastPassed).
-    let again = t.b("reviewAgain") && !tree.is_empty() && !ran.is_empty() && t.at("checkLastPassed").s("with") == ran && flow::git::head_of(Path::new(&tree)) == t.at("checkLastPassed").s("head");
+    // The check this round would run, full or shorter, passed last on this very commit (checkLastPassed): the same
+    // command, from the same commit for a shorter one.
+    let again = { let last = t.at("checkLastPassed"); t.b("reviewAgain") && !tree.is_empty() && !run.cmd.is_empty() && last.s("with") == run.cmd && last.s("since") == run.since && flow::git::head_of(Path::new(&tree)) == last.s("head") };
     if t.b("reviewAgain") { t = g.set(|t| t.put("reviewAgain", Value::Null))?; }
     let proven = again || (t.b("checkedHead") && !tree.is_empty() && t.s("checkedWith") == check && flow::git::head_of(Path::new(&tree)) == t.s("checkedHead"));
     if !check.is_empty() && !research && !proven {
@@ -147,9 +148,10 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
         if git_out(tp, &["diff", "--name-only"]).map(|s| !s.is_empty()).unwrap_or(false) { let _ = git_out(tp, &["commit", "-am", &format!("Written by the check\n\nTask: {}", task_ref(id, &repo_keys()))]); }
         // The full check is where the shorter one of a later round starts from; the reviewer hears which one passed.
         let passed = if run.short() { None } else { Some(passed_patch(&flow::git::head_of(tp), &check)) };
-        let last = passed_patch(&flow::git::head_of(tp), &ran);
+        let last = json!({ "head": flow::git::head_of(tp), "with": run.cmd, "since": run.since });
         g.set(|t| { if let Some(p) = &passed { t.put("checkPassed", p.clone()); } t.put("checkLastPassed", last.clone()); t.put("checkShort", if run.short() { json!(ran) } else { Value::Null }); })?;
-    } else { g.set(|t| t.put("checkShort", Value::Null))?; }
+    // A resumed review keeps which check passed on its commit: the shorter one's words stay for its reviewer.
+    } else if !again { g.set(|t| t.put("checkShort", Value::Null))?; }
     t = g.check()?;
     // One of several attempts stops here: it passed, and waits to be chosen.
     if t.b("attemptOf") {
