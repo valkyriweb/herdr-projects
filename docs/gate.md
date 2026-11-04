@@ -47,8 +47,16 @@ The severity says what the fault does:
 - **`review.rounds 0`** sends nothing back by itself: findings wait for you (`Ctrl+R` sends them). The review is still
   judged at `review.mustFix`, and a failed one never merges by itself.
 - **`review.timeout`** (`20m`, or `none`) is how long one review may take: past it the review fails (`review timed out
-  after 20m (review.timeout)`) and goes on as any failed review does. `limit.time` is another thing: it stops any run,
-  the agent's too, keeps its work and waits for you ([limits](limits.md)).
+  after 20m (review.timeout)`) and goes on as any failed review does. What the reviewer had by then is not lost: the
+  files it saved in the review folder, its last message and the end of its screen are kept on the task as its review
+  (`review.partial` in `details <id>`, with `review.timeout`: the stage, the limit, how long it ran and how many bytes
+  were kept; the same on that round's entry in `reviews`), and the task panel shows the first lines under "Had so
+  far". That text is capped (6000 bytes a file, 24000 in all) and what looks like a credential in it is hidden; the
+  review folder itself, screenshots and recordings too, is moved aside whole (`review.folder`). A timed-out review is
+  never a result: it does not stand for the work after an update from main. `retry` then resumes the review instead
+  of starting the finish line over: the check that passed last on this commit, full or shorter, is not run again, and the next reviewer is told what the last one had and to take it up from
+  there. `limit.time` is another thing: it stops any run, the agent's too, keeps its work and waits for you
+  ([limits](limits.md)).
 - **A review that ends without a verdict** (it timed out, the reviewer exited or its terminal closed, its verdict was
   not valid) shows the reviewer's last screen in the failure: its last 8 lines, read before its tab closes. A dialog
   that stopped it (one herdr did not report as a dialog) is there to see, before you retry.

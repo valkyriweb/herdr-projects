@@ -10,7 +10,7 @@ use crate::flow::{self, chat};
 use crate::herdr::Herdr;
 use crate::json::*;
 use crate::runner::{claim, is_aborted, release, runner_alive, spawn_runner, Guard};
-use crate::store::reviews::{current_review, log_kept};
+use crate::store::reviews::{log_kept, standing_review};
 use crate::store::settings::{lookup::setting, values::ms};
 use crate::store::tasks::{update_wait, Change, Task};
 
@@ -24,7 +24,7 @@ pub fn after_turn(g: &mut Guard) -> Res<bool> {
     if same && t.at("chat").at("from").is_object() {
         let back = g.set(|t| {
             chat::put_back(t);
-            if current_review(t).is_some() { log_kept(t, &json!({ "chat": true, "head": head })); } // the task's history says the review still stands
+            if standing_review(t).is_some() { log_kept(t, &json!({ "chat": true, "head": head })); } // the task's history says the review still stands
         })?;
         flow::sidebar::tell_sidebar(&back);
         return Ok(true);

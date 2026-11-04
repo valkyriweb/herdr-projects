@@ -177,7 +177,7 @@ fn a_plan_and_several_attempts_the_plan_is_approved_once_then_every_attempt_is_h
         assert!(first.starts_with(&format!("Work board task {}, role: agent.", c.s("id"))), "{first}");
         assert!(first.contains(&format!("read {} first, and build exactly that plan", P::plan_file(&t).display())), "{first}");
         let ch = sw::store::settings::lookup::work(Some(c));
-        let brief = sw::finish::review_brief::review_brief(c, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "" });
+        let brief = sw::finish::review_brief::review_brief(c, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "", resumed: None });
         assert!(brief.contains("built from a plan that was approved before the work began"));
     }
 }

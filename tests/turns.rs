@@ -64,7 +64,7 @@ fn review_a_verdict_for_another_commit_is_ignored_a_missing_verdict_is_a_saved_f
     let t = settle(&id);
     assert_eq!(t.s("stage"), "failed");
     assert!(t.at("failure").s("detail").contains("review timed out"), "{}", t.at("failure"));
-    assert!(t.at("review").is_null());
+    assert_eq!(t.at("review").at("timeout").s("reason"), "timeout", "the timed-out review stands as the task's review (review_timeout.rs)");
     assert_eq!(row(&id).s("state"), "error");
     // ctrl+r sends the error back; this time the reviewer answers properly but also touches the tree (the JS fake's
     // `dirtyTree`: a file of its own in the folder it reviews)

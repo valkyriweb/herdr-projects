@@ -54,7 +54,7 @@ fn a_later_round_checks_the_earlier_findings_and_cannot_grow_the_list() {
     let t = obj(json!({ "id": "proj/1", "n": 1, "title": "Do it", "description": "" }));
     let change = json!({ "head": "abcdef1234567", "range": "a..b", "stat": "" });
     let ch = Obj::new();
-    let brief = |earlier: Option<&[Value]>, check: &str| review_brief(&t, &Brief { text: "Did it.", change: Some(&change), to_land: true, ch: &ch, earlier, check });
+    let brief = |earlier: Option<&[Value]>, check: &str| review_brief(&t, &Brief { text: "Did it.", change: Some(&change), to_land: true, ch: &ch, earlier, check, resumed: None });
     let one = brief(None, "");
     assert!(one.contains("Does the change do what the task asked?") && one.contains("Do not invent findings"));
     assert!(re(r"- critical: [^\n]*\n- major: [^\n]*\n- minor: [^\n]*\n- trivial: ", &one));

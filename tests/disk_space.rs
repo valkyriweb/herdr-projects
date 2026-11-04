@@ -49,7 +49,7 @@ fn the_agent_and_the_reviewer_start_with_the_task_s_own_temporary_folder_and_are
     assert!(rules.contains(&format!("in your own temporary folder, {} (your $TMPDIR), never loose in /tmp or in a home folder", tmp.display())), "{rules}");
     assert!(rules.contains("stop the servers and background processes you started, unless the human asked you to keep one running"), "{rules}");
     let ch = sw::store::settings::lookup::work(Some(&t));
-    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "" });
+    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "", resumed: None });
     assert!(brief.contains(&format!("in your own temporary folder, {}", tmp.display())), "{brief}");
 }
 

@@ -137,6 +137,7 @@ pub fn play(f: &F, pi: usize, prompt: &str) {
     {
         let mut st = f.st.borrow_mut();
         arr(&mut st["panes"][pi]["agent"], "prompts").push(json!(prompt));
+        arr(&mut st, "prompted").push(json!({ "name": name, "text": prompt })); // kept after the pane is gone
         F::bump(&mut st, pi, "working", false);
     }
     run(f, pi, prompt, step);
@@ -159,9 +160,10 @@ fn run(f: &F, pi: usize, prompt: &str, step: Value) {
         if let (true, Some(m)) = (step.b("plan"), &mine) { write(&m.join("artifacts").join("plan").join("plan.md"), step.s("plan")); }
         if !step.at("comparison").is_null() { let id = told(prompt).unwrap_or_else(|| "x/0".into()); let c = step.at("comparison"); write(&task_dir(&id).join("compare").join("comparison.json"), &if c.is_string() { text(c) } else { c.to_string() }); }
         if let (true, Some(id)) = (step.b("report"), told(&first)) { let mut p = sw::store::files::reports_dir(); for part in id.split('/') { p.push(part); } write(&p.join("report.md"), step.s("report")); }
+        // Evidence goes in the review folder as the reviewer works, verdict or no verdict yet.
+        if let Some(m) = &mine { for (n, body) in step.at("evidence").as_object().cloned().unwrap_or_default() { write(&m.join("review").join(n), &text(&body)); } }
         if step.at("verdict").is_object() {
             if let Some(m) = &mine {
-                for (n, body) in step.at("evidence").as_object().cloned().unwrap_or_default() { write(&m.join("review").join(n), &text(&body)); }
                 let mut v = step.at("verdict").clone();
                 if !v.b("commit") || v.s("commit") == "HEAD" { v["commit"] = json!(git(dir, &["rev-parse", "HEAD"]).unwrap_or_default()); }
                 write(&m.join("review").join("verdict.json"), &v.to_string());

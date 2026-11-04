@@ -78,6 +78,8 @@ pub fn reviews(k: &mut Kit, c: &Ctx, r: &Obj) -> bool {
         let mut v = k.fact(&name(e), body);
         if gate::is_tagged(e) { if !e.arr("findings").is_empty() || e.i("left") > 0 { v.extend(found(k, e)); } } else { v.extend(k.items("Problems", &strs(e.at("problems")))); }
         v.extend(k.items("Left the plan", &strs(e.at("offPlan")))); v.extend(k.items("Checked", &strs(e.at("checks")))); v.extend(k.items("Unverified", &strs(e.at("limitations"))));
+        // A review that ran out of time: what its reviewer had so far, the first lines of it.
+        if e.at("timeout").is_object() && e.b("partial") { let lines: Vec<Inked> = e.s("partial").lines().filter(|l| !l.trim().is_empty()).take(12).flat_map(|l| Kit::wrap_at(&clean(l), room)).collect(); v.extend(k.fact("Had so far", lines)); }
         v
     };
     let trail = |k: &Kit| k.fact("History", k.flow(hist.iter().map(|e| verdict(e, false, quiet_review(r, e, *e == last))).collect(), Some(room), " → "));
