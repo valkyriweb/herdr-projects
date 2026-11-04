@@ -17,7 +17,7 @@ use crate::store::failures::{bound_detail, failure_patch, is_auth_failure};
 use crate::store::fetch;
 use crate::store::keys::{repo_keys, task_ref};
 use crate::store::repos::{branch_of, cwd_of, folder_of, git_out, git_slow};
-use crate::store::reviews::{current_review, passed_review};
+use crate::store::reviews::{passed_review, standing_review};
 use crate::store::settings::lookup::work;
 use crate::store::settings::values::{command_of, ms};
 use crate::store::tasks::{get, one_line};
@@ -87,7 +87,7 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
     // passed its review and has only taken main in since (sync::merge_only is the rule): the check proves the result.
     let mut kept: Option<Value> = None;
     let mut kept_how: Option<Value> = None;
-    if let Some(r) = sync_r { if r.status == "merged" && r.overlap.as_ref().map(|o| o.is_empty()).unwrap_or(false) && t.s("reviewedHead") == r.before { kept = current_review(&t).cloned(); if kept.is_some() { kept_how = Some(json!({ "from": r.before, "merges": 1, "resolved": [] })); } } }
+    if let Some(r) = sync_r { if r.status == "merged" && r.overlap.as_ref().map(|o| o.is_empty()).unwrap_or(false) && t.s("reviewedHead") == r.before { kept = standing_review(&t).cloned(); if kept.is_some() { kept_how = Some(json!({ "from": r.before, "merges": 1, "resolved": [] })); } } }
     if kept.is_none() && !check.is_empty() && !tree.is_empty() && ch.s("review.when") != "never" {
         if let (Some(r), Some((review, head, _))) = (sync_r.filter(|r| !r.target.is_empty()), passed_review(&t)) {
             let m = sync::merge_only(&tree, &head, &r.target);
@@ -102,11 +102,16 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
         if !s.ok { fail(g, failure("setup", "Setup still fails", &format!("Command: {setup}\nFolder: {}\n\n{}", folder.display(), s.out), "Fix the setup problem and finish again. Setup must pass before the check."), FailHow::default())?; return Ok(()); }
         g.set(|t| t.put("setupPending", false))?;
     }
-    // The chosen attempt of several: its check passed on this very commit, as that attempt. Not run twice.
-    let proven = t.b("checkedHead") && !tree.is_empty() && t.s("checkedWith") == check && flow::git::head_of(Path::new(&tree)) == t.s("checkedHead");
+    // The chosen attempt of several: its check passed on this very commit, as that attempt. Not run twice. Nor on a
+    // retry that resumes a review (actions/finish_line.rs: retry), while the full check's commit is still this one.
     // On a later round, the shorter check where it may stand in for the full one (check_again.rs).
     let run = choose(&t, &ch, &check, &tree, &root);
     let ran = run.shown();
+    // The check this round would run, full or shorter, passed last on this very commit (checkLastPassed): the same
+    // command, from the same commit for a shorter one.
+    let again = { let last = t.at("checkLastPassed"); t.b("reviewAgain") && !tree.is_empty() && !run.cmd.is_empty() && last.s("with") == run.cmd && last.s("since") == run.since && flow::git::head_of(Path::new(&tree)) == last.s("head") };
+    if t.b("reviewAgain") { t = g.set(|t| t.put("reviewAgain", Value::Null))?; }
+    let proven = again || (t.b("checkedHead") && !tree.is_empty() && t.s("checkedWith") == check && flow::git::head_of(Path::new(&tree)) == t.s("checkedHead"));
     if !check.is_empty() && !research && !proven {
         let mut env = env.clone();
         if run.short() { env.push((CHECKED_ENV.into(), run.since.clone())); }
@@ -141,8 +146,10 @@ pub fn pipeline(id: &str, g: &mut Guard, text: &str, keep_intent: bool, reason: 
         if git_out(tp, &["diff", "--name-only"]).map(|s| !s.is_empty()).unwrap_or(false) { let _ = git_out(tp, &["commit", "-am", &format!("Written by the check\n\nTask: {}", task_ref(id, &repo_keys()))]); }
         // The full check is where the shorter one of a later round starts from; the reviewer hears which one passed.
         let passed = if run.short() { None } else { Some(passed_patch(&flow::git::head_of(tp), &check)) };
-        g.set(|t| { if let Some(p) = &passed { t.put("checkPassed", p.clone()); } t.put("checkShort", if run.short() { json!(ran) } else { Value::Null }); })?;
-    } else { g.set(|t| t.put("checkShort", Value::Null))?; }
+        let last = json!({ "head": flow::git::head_of(tp), "with": run.cmd, "since": run.since });
+        g.set(|t| { if let Some(p) = &passed { t.put("checkPassed", p.clone()); } t.put("checkLastPassed", last.clone()); t.put("checkShort", if run.short() { json!(ran) } else { Value::Null }); })?;
+    // A resumed review keeps which check passed on its commit: the shorter one's words stay for its reviewer.
+    } else if !again { g.set(|t| t.put("checkShort", Value::Null))?; }
     t = g.check()?;
     // One of several attempts stops here: it passed, and waits to be chosen.
     if t.b("attemptOf") {

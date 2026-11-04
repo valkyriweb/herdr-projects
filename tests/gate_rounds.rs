@@ -74,7 +74,7 @@ fn a_pre_existing_fault_is_a_note_in_the_review_no_task_no_extra_round_nothing_e
     assert!(re(r"(?m)Required: fix each of these\.\n- \[major\] f\.txt holds the wrong number[\s\S]*Not yours to fix:[^\n]*They are notes for the human\. Leave them\.\n- \[critical\] The importer drops the last row \(import\.js\)$", &last), "{last}");
     let ch = Obj::new();
     let change = json!({ "head": "abc", "range": "a..b" });
-    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "", change: Some(&change), to_land: true, ch: &ch, earlier: Some(t.at("review").arr("findings")), check: "" });
+    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "", change: Some(&change), to_land: true, ch: &ch, earlier: Some(t.at("review").arr("findings")), check: "", resumed: None });
     assert!(brief.contains("\nAlready known to the human (they were there before this change): do not report these again, in these words or in others.\n- [critical] The importer drops the last row (import.js)\n- [minor] The old exporter is slow (export.js)\n"), "{brief}");
     // word for word the same finding is one that says the same thing about the same place, whatever its proof
     let with = |k: &str, v: &str| { let mut f = old.clone(); f[k] = json!(v); f };

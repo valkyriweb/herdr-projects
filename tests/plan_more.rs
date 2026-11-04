@@ -111,7 +111,7 @@ fn what_the_plans_writer_a_planner_the_builder_and_the_reviewer_are_told() {
     assert!(P::go_words(&done).contains("Your plan is approved. Build it now, exactly that plan"));
     assert!(has(&P::build_words(&done), r"read .*plan\.md first, and build exactly that plan"));
     assert!(P::back_words(&planning, "Smaller.").starts_with("Your plan is not approved. The human read it and sent it back with these words:\n\nSmaller."));
-    let brief = |x: &Obj| { let ch = sw::store::settings::lookup::work(Some(x)); sw::finish::review_brief::review_brief(x, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "" }) };
+    let brief = |x: &Obj| { let ch = sw::store::settings::lookup::work(Some(x)); sw::finish::review_brief::review_brief(x, &sw::finish::review_brief::Brief { text: "Done.", change: None, to_land: false, ch: &ch, earlier: None, check: "", resumed: None }) };
     assert!(!brief(&done).contains("built from a plan"), "no plan on disk: nothing to check against");
     P::write_plan(&done, PLAN).unwrap();
     let b = brief(&done);

@@ -220,9 +220,12 @@ pub fn retry(id: &str) -> Res<Said> {
     if f.s("stage") == "agent" { return go_on(&cur); }
     // A step of the finish line (the check, the push, the pull request, the review, the merge): run it again.
     flow::live::assert_live(&cur)?;
-    let t = update(&cid, |t| busy_to(t, "checking", "", false))?;
+    // A review that ran out of time is resumed, not started over: the check that passed on this commit is not run
+    // again, and the next reviewer takes up what the last one had (finish/review_salvage.rs).
+    let resume = f.s("stage") == "review" && f.b("resume");
+    let t = update(&cid, |t| { busy_to(t, "checking", "", false)?; t.put("reviewAgain", resume); Ok(Change::Write) })?;
     spawn_runner("pipeline", &cid, &[]);
-    Ok(say(t, format!("{cid}: trying again")))
+    Ok(say(t, if resume { format!("{cid}: resuming the review") } else { format!("{cid}: trying again") }))
 }
 /// The herdr action "approve the task in the focused pane" has no screen to ask on: it leaves the request here and
 /// opens the board, which asks "Merge?" before anything is merged. `to`: the pane of the board that was shown for it.

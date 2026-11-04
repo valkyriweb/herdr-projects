@@ -40,7 +40,7 @@ fn the_closing_note_and_the_review_s_files_are_in_the_task_s_own_folder_the_fold
     assert!(!w.root.join(".herdr-projects").exists());
     // both are told the full path, and neither is told to write into the folder it is in
     let ch = sw::store::settings::lookup::work(Some(&t));
-    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "Did it.", change: Some(&json!({ "head": "abc1234" })), to_land: true, ch: &ch, earlier: None, check: "" });
+    let brief = sw::finish::review_brief::review_brief(&t, &sw::finish::review_brief::Brief { text: "Did it.", change: Some(&json!({ "head": "abc1234" })), to_land: true, ch: &ch, earlier: None, check: "", resumed: None });
     let mut said = vec![sw::delegate::rules::rules(&t), sw::flow::send::note_rule(&t), brief];
     for p in w.state().arr("panes") { said.extend(p.at("agent").arr("prompts").iter().map(text)); }
     let said = said.join("\n");

@@ -24,7 +24,7 @@ pub mod words {
 /// Finished work whose last review failed. It still waits for your yes or no, but it is not "ready".
 pub fn review_failed(t: &Obj) -> bool {
     if t.s("stage") != "approval" { return false; }
-    match current_review(t) { Some(rv) => if gate::is_tagged(rv) { !rv.b("pass") } else { rv.at("recommend") == &json!(false) }, None => false }
+    match current_review(t) { Some(rv) if crate::store::reviews::timed_out(rv) => true, Some(rv) => if gate::is_tagged(rv) { !rv.b("pass") } else { rv.at("recommend") == &json!(false) }, None => false }
 }
 /// "1 critical, 1 major"; a review from before the gate: "2/5, reviewer says no".
 pub fn review_tally(t: &Obj) -> String {

@@ -47,7 +47,7 @@ fn a_round_the_review_sent_back_runs_the_shorter_check_from_the_commit_the_full_
     assert_eq!(t.at("checkPassed").s("with"), "echo full >> \"$HOME/checks.log\"", "the shorter one passing moves nothing");
     // the reviewer hears which check passed on its commit, with the commit written in, and that GitHub runs the rest
     assert_eq!(t.s("checkShort"), format!("echo \"again {first}\" >> \"$HOME/checks.log\""));
-    let brief = review_brief(&t, &Brief { text: "", change: None, to_land: true, ch: &work(Some(&t)), earlier: None, check: "npm test" });
+    let brief = review_brief(&t, &Brief { text: "", change: None, to_land: true, ch: &work(Some(&t)), earlier: None, check: "npm test", resumed: None });
     assert!(brief.contains(&format!("its shorter form, `echo \"again {first}\" >> \"$HOME/checks.log\"`")), "{brief}");
     assert!(brief.contains("the full check runs on GitHub before the merge"), "{brief}");
 }
