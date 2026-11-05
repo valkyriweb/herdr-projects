@@ -7,12 +7,14 @@ import { AGENTS, NAMES, levelName, current, rowFor, menuFor, permDefault as perm
 import { SERVE } from "./host.js";
 
 // ---- the frame -------------------------------------------------------------------------------------------------
-// The pages, in the window's order. space: a space's own settings have it too ("local": only a space on this computer).
+// The pages, in the window's order. space: a space's own settings have it too ("local": only a space on this computer);
+// the others are one setting for every space (docs/settings.md says which and why).
 export const SECTIONS = [
   { id: "agents", title: "Agents", icon: "bot", space: true },
   { id: "tasks", title: "Tasks", icon: "list-checks", space: true },
-  // one setting for every space (core/autopilot.js): a space only switches it on, in its Assistant's header
-  { id: "autopilot", title: "Autopilot", icon: "plane" },
+  // Everywhere's heartbeat, schedule and events, and a space's own (core/autopilot.js); a space switches it on in its
+  // Assistant's header
+  { id: "autopilot", title: "Autopilot", icon: "plane", space: true },
   { id: "notify", title: "Notify", icon: "bell", space: true },
   { id: "secrets", title: "Secrets", icon: "key", space: true },
   { id: "machines", title: "Machines", icon: "network" },
@@ -29,14 +31,33 @@ export const machineLabel = (key) => (key === LOCAL || key == null ? THIS_COMPUT
 // A space's own settings, at their top: which space, and on which machine.
 export const onlyFor = (space, machine) => `Only for ${space} on ${machine}`;
 
+// ---- the level switch ------------------------------------------------------------------------------------------
+// At the top of each page a space can set its own of: what the page sets, Everywhere's or one space's, and a picker
+// to change it (Everywhere, then every space, by machine). A page that is one for every space says so instead.
+export const LEVEL = {
+  label: "Applies to",
+  everywhere: "Every space, unless it sets its own.",
+  space: (machine) => `Only this space, on ${machine}. What it doesn't set is inherited from Everywhere.`,
+  find: "Find a space…",
+  spaces: "Spaces",
+  none: "No space matches.",
+  global: "The same for every space.",
+};
+
 // ---- under a row -----------------------------------------------------------------------------------------------
-// In a space: "Changed here · Reset" or "Same as everywhere"; on Everywhere, the spaces that set their own.
-export const CHANGED_HERE = "Changed here";
+// In a space: "Set for this space · Reset" or "Inherited from Everywhere"; on Everywhere, the spaces that set their
+// own. On a machine's own rows (Machines): "Set for this machine · Reset" or "Inherited from all machines".
+export const CHANGED_HERE = "Set for this space";
+export const SET_FOR_MACHINE = "Set for this machine";
 export const RESET = "Reset";
-export const sameAs = (level, key) => (level === "machine" ? `Same as ${machineLabel(key)}` : "Same as everywhere");
-export const spacesOwn = (n) => (n === 1 ? "1 space uses its own" : `${n} spaces use their own`);
+export const RESET_TIP = (from) => `Back to ${from}'s`;
+// where an inherited value comes from: Everywhere, or the machine a value set before still comes from
+export const fromWord = (level, key) => (level === "machine" ? machineLabel(key) : EVERYWHERE);
+export const inheritedFrom = (from) => `Inherited from ${from}`;
+export const sameAs = (level, key) => inheritedFrom(fromWord(level, key));
+export const spacesOwn = (n) => (n === 1 ? "1 space sets its own" : `${n} spaces set their own`);
 export const machinesOwn = (n) => (n === 1 ? "1 machine uses its own" : `${n} machines use their own`);
-export const SAME_AS_ALL_MACHINES = "Same as all machines";
+export const SAME_AS_ALL_MACHINES = "Inherited from all machines";
 
 // ---- Agents ----------------------------------------------------------------------------------------------------
 export const ROLES = [
@@ -55,7 +76,7 @@ export const INSTRUCTIONS = {
     coordinator: "Every Assistant uses this. Repo-specific rules go in the repo's AGENTS.md or CLAUDE.md. Changes apply when an Assistant restarts.",
     worker: "Every worker gets this first. Repo-specific rules go in the repo's AGENTS.md or CLAUDE.md. Changes apply to the next task that starts.",
     reviewer: "Every reviewer gets this first. Repo-specific rules go in the repo's AGENTS.md or CLAUDE.md. Changes apply to the next review.",
-    heartbeat: "Autopilot's heartbeat, plain text, the same in every space: an Assistant on Autopilot gets it on every wake. Changes apply from the next wake.",
+    heartbeat: "Autopilot's heartbeat, plain text: an Assistant on Autopilot gets it on every wake. Changes apply from the next wake.",
   },
 };
 export const USE_OTHER_CLI = "Use other CLI";
@@ -67,6 +88,23 @@ export const otherCliWords = (cli) => `Other CLI (${NAMES[cli] ?? cli})`;
 // other is installed, Codex (Claude Code when the worker is Codex).
 export const otherCli = (worker, menus = null) =>
   (menus && AGENTS.find((k) => k !== worker && menus[k])) ?? (worker === "codex" ? "claude" : "codex");
+// Reactions (herdr-task's reactions.py): every agent (Assistants, task workers, automation runs, agent tabs) reacts to
+// some of your messages with an emoji; off, none does. Kept as agents.reactions; SHEP-42 kept it as assistant.reactions
+// (upgradeReactions moves it).
+export const REACTIONS = { title: "Reactions", about: "Agents react to some of your messages with an emoji, as a person would." };
+// A settings file's layers (everywhere, machines, spaces) with SHEP-42's assistant.reactions moved to agents.reactions
+// (a layer that has both keeps agents'). Changes cfg in place and returns it; true when anything moved.
+export function upgradeReactions(cfg) {
+  const layers = [cfg?.everywhere, ...Object.values(cfg?.machines ?? {}), ...Object.values(cfg?.spaces ?? {})];
+  for (const l of layers) {
+    const old = l && typeof l === "object" ? l.assistant : null;
+    if (!old || typeof old !== "object" || !("reactions" in old)) continue;
+    if (typeof old.reactions === "boolean" && typeof l.agents?.reactions !== "boolean") l.agents = { ...(l.agents ?? {}), reactions: old.reactions };
+    delete old.reactions;
+    if (!Object.keys(old).length) delete l.assistant;
+  }
+  return cfg;
+}
 export const BACKUP = { title: "Backup agent", about: "The other CLI takes over a task once when its agent can't go on." };
 // The machines where the other CLI can't take over (herdr-task's check, ~/.herdr/cli-check.json's machines: this
 // computer is ""), in one line. m: the scope's machine ("local" or its name), null for Everywhere (every machine).
@@ -77,7 +115,8 @@ export function backupProblem(checks, m, cli) {
 }
 
 // The model menu's words (mods/chat-models, settings mode) and its button's: "Opus 5.5 · 1M · High".
-export const MODEL_MENU = { model: "Model", reasoning: "Reasoning", fast: "Fast", permissions: "Permissions" };
+// the model list's headings come from core/agents.js modelSections (Pinned, Recent, Models)
+export const MODEL_MENU = { reasoning: "Reasoning", fast: "Fast", permissions: "Permissions" };
 const modelOf = (menus, sel) => menus?.[sel?.agent]?.models?.find((m) => m.id === sel.model) ?? null;
 export function modelLabel(menus, sel) {
   const m = modelOf(menus, sel);
@@ -115,8 +154,7 @@ export function chooseModel(menus, permDefault, sel, agent, id) {
     const full = sel.perm === "bypassPermissions" || sel.perm === "full";
     const fullId = agent === "claude" ? "bypassPermissions" : "full";
     next.perm = full && menus[agent]?.perms?.some((p) => p.id === fullId) ? fullId : permDefault?.[agent] ?? null;
-    // Fast as the CLI has it (Codex's service_tier in its config); a kind with no Fast stays off
-    next.fast = Boolean(menus[agent]?.fastLocked && m.fast);
+    next.fast = false;
   }
   return next;
 }
@@ -172,6 +210,21 @@ export const SECRETS = {
   keptNote: (name, where) => `Kept ${name} for ${where}.`,
   removedNote: (name, where) => `Removed ${name} from ${where}.`,
   pasteNew: (name) => `Paste the new value for ${name}.`,
+  // Kept on: the machine whose vault every machine's agents and voice calls use (shepherdr secrets move-to)
+  keptOn: "Kept on", keptHere: "This computer", thisOne: "this computer",
+  keptAbout: "Every machine's agents and voice calls get them from there. Pick an always-on machine.",
+  // nobody picked one: they follow Serve from (core/secrets.js followTo)
+  sameAsServe: (name) => `Same as Serve from: ${name}`,
+  sameAbout: "They stay with the machine serving the web app, and move with it. Every machine's agents and voice calls get them from there. Pick another machine to keep them there instead.",
+  forNow: (name) => `${name}, for now`,
+  following: (to) => `They follow Serve from: they move to ${to} on their own, with a backup, once both machines are on.`,
+  unreachable: (name) => `Can't reach ${name}, which keeps them: agents on other machines can't get secrets until it's back.`,
+  notLinked: "A machine not linked from here keeps them.",
+  moveConfirm: (name) => `Keep secrets on ${name}?`,
+  moveDetail: (name, from) => `Every secret is copied to ${name}, checked, and then used from there by every machine. ${from} keeps a backup copy; moving them back brings back what was added since.`,
+  moveVerb: "Move them",
+  moving: (name) => `Moving them to ${name}…`,
+  offline: "offline",
 };
 // A scope in words, for the list and the For picker: "Everywhere", a machine's name, "Space web".
 export const secretWhere = (scope, machine, spaceName) =>
@@ -195,7 +248,7 @@ export const MACHINES = {
 export const OLD_NAMES = { coordinator: "Assistant", worker: "Workers", reviewer: "Reviewer", backup: "Backup agent",
   automations: "Run automations", merge: "Merge", review_rounds: "Review", must_fix: "Must fix", proof: "Proof",
   max_running: "Tasks at once", archive_after: "Archive Done after", worktrees: "Worktrees",
-  start_notes: "When a task starts", finish_notes: "When a task finishes", base: "Base branch" };
+  start_notes: "When a task starts", finish_notes: "When a task finishes", base: "Base branch", agents: "Reactions" };
 // Home Assistant's line: on or off, and what herdr-task's home round last found there (~/.herdr/tasks/.home.json).
 export function homeAbout(on, st) {
   return !on ? "Off: nobody watches its disk, load and processes."
@@ -250,7 +303,8 @@ export const ROUNDS = [[0, "Off"], [1, "1 round"], [2, "2 rounds"], [3, "3 round
 export const ARCHIVE = [[0, "Off"], [1, "1 day"], [3, "3 days"], [7, "1 week"], [30, "1 month"]];
 export const ONOFF = [[true, "On"], [false, "Off"]];
 
-export const DEFAULTS = { tasks: { merge: "ask", review_rounds: 0, must_fix: "major", max_running: 10, worktrees: true, archive_after: 7, proof: true }, automations: { enabled: true } };
+export const DEFAULTS = { tasks: { merge: "ask", review_rounds: 0, must_fix: "major", max_running: 10, worktrees: true, archive_after: 7, proof: true }, automations: { enabled: true },
+  agents: { reactions: true } };
 
 // [section, field, label, choices | { min, max }]
 export const TASK_ROWS = [

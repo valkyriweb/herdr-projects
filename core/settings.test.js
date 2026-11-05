@@ -57,5 +57,33 @@ test("Backup's warning, an add-on's line and Web's state, in the window's words"
   expect(S.addonAbout("Calls.", false, ["Voice", "Chat"])).toBe("Calls. Needs Voice, Chat: turn them on first.");
   expect(S.webState(true, true, null)).toBe("Off. Turn it on under Window › Add-ons.");
   expect(S.onlyFor("web", "This computer")).toBe("Only for web on This computer");
-  expect(S.spacesOwn(1)).toBe("1 space uses its own");
+  expect(S.spacesOwn(1)).toBe("1 space sets its own");
+  expect(S.sameAs("everywhere", null)).toBe("Inherited from Everywhere");
+  expect(S.sameAs("machine", "vm")).toBe("Inherited from vm");
+});
+
+// SHEP-48: Reactions, for every agent: on unless a level turns it off, the same default everywhere it's read.
+test("Reactions are on by default, in the core, the window's chain and herdr-task", () => {
+  expect(S.DEFAULTS.agents.reactions).toBe(true);
+  expect(S.DEFAULTS.assistant).toBeUndefined();
+  // lib/coordinator.js needs the window's runtime: its defaults and its chain, as written
+  const lib = read("lib/coordinator.js");
+  expect(lib).toMatch(/SHEPHERDR_DEFAULTS = \{[^;]*agents: \{ reactions: true \}/);
+  expect(lib).toContain('for (const k of ["tasks", "automations", "agents"])');
+  // SHEP-42's key still counts in the window's chain where a layer has no agents'
+  expect(lib).toContain('typeof l.obj.assistant?.reactions === "boolean" ? { reactions: l.obj.assistant.reactions, ...l.obj.agents }');
+  expect(read("mods/tasks/bin/herdr_task/settings.py")).toContain('"agents": {"reactions": True}');
+  expect(S.REACTIONS.title).toBe("Reactions");
+});
+
+// SHEP-48: SHEP-42's assistant.reactions moves to agents.reactions in every layer; agents' own wins; the rest stays.
+test("upgradeReactions moves the Assistant's Reactions to every agent's", () => {
+  const cfg = { version: 1, everywhere: { assistant: { reactions: false }, tasks: { merge: "auto" } },
+    machines: { vm: { assistant: { reactions: true, other: 1 } } },
+    spaces: { sp1: { folder: "/a", assistant: { reactions: true }, agents: { reactions: false } }, sp2: { folder: "/b" } } };
+  expect(S.upgradeReactions(cfg)).toBe(cfg);
+  expect(cfg).toEqual({ version: 1, everywhere: { tasks: { merge: "auto" }, agents: { reactions: false } },
+    machines: { vm: { assistant: { other: 1 }, agents: { reactions: true } } },
+    spaces: { sp1: { folder: "/a", agents: { reactions: false } }, sp2: { folder: "/b" } } });
+  expect(S.upgradeReactions({})).toEqual({});
 });

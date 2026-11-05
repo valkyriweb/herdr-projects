@@ -9,6 +9,129 @@
   web app's restart sheet read it. `bin/sync-shared` writes `core/kinds.js` from it. Pi's session is found in its
   per-folder log directory.
 
+## 3.1.9
+
+Voice calls that really open things where you are, reactions from every agent, and Assistants that know their settings.
+
+- Voice calls open a space, task or artifact on the screen you called from, and only say it's open once it shows. An
+  old page that never answers asks you to reload. Spaces are found by machine, artifacts by title.
+- Settings › Agents › Reactions is one switch for every agent: Assistants, task agents, automations and agent tabs.
+  Running agents are told when it changes, and pick the emoji that fits best, not just a thumbs up.
+- An agent's reaction still works when it quotes your words, and never shows up as stray text.
+- Each Assistant gets its space's settings when it starts (review, merge, proof, Autopilot and the rest), and a short
+  note when one of them changes.
+
+## 3.1.8
+
+Tasks that start at a time you pick, an Assistant that never stops quietly, and a few things back where they belong.
+
+- Scheduled tasks: tell a task to start later (at a time, or in an hour) and it starts by itself. They wait in their
+  own Scheduled group with a countdown, and a task's menu has Start later, in the window and on the web.
+- Autopilot never parks silently: when work waits on your Accept it says what waits, carries on with other work, and
+  a quiet wake says why it stayed quiet. 3.1.7's starter heartbeat, if you never edited it, is upgraded (the old one
+  kept as a `.bak`).
+- A task's time left is back under its status icon, short ("2h", "<1m").
+- The Fast switch is back in the model menu for Codex, and turning it off really runs at standard speed.
+- Settings › Agents › Reactions: the Assistant reacts with an emoji where it fits (on by default), or never.
+- Automations say which machine and space they belong to.
+- Voice calls can look around Shepherdr: read a chat, open a space, task or artifact, and send or act for you.
+
+## 3.1.7
+
+A space's chat says which space it is, and the README shows how to install with an agent.
+
+- A space's chat header, in the window and on the web, shows the space's name and its folder (and its machine when
+  it's another one), not "Assistant · Claude Code". The composer's model menu still says which agent runs.
+- README and the install guide: what to tell your coding agent so it installs Shepherdr for you, in the Herdr app or
+  without it (the web app in a browser on your tailnet is then your window).
+
+## 3.1.6
+
+Autopilot that decides on its own, agents talking as a group chat, and a calmer, tidier app.
+
+- Autopilot: on a wake the Assistant makes every call itself, saying in one line what it chose and why, and answers
+  its agents' questions instead of asking you. Only something critical (money, publishing, deleting data, credentials,
+  security, stuck after retries) reaches you, as an alert. 3.1.5's starter heartbeat, if you never edited it, is
+  upgraded with the old one kept beside it as a `.bak`.
+- Messages between agents show as a group chat: one quiet row ("Assistant → SHEP-4") that opens into the message,
+  and another Assistant's message names it and its machine.
+- A finished task shows its chat, not "hasn't started"; one whose chat is gone shows its summary instead.
+- Assistant header: no hidden button that ended the agent, its state in words ("Working…", "Needs you"), Autopilot
+  on the right.
+- No hover tooltips anywhere; buttons say what they do.
+- Tasks list: the id under the title, time left and Review at the row's end, the same in the window and on the web.
+- Model picker: every model a CLI offers, with search, pinned and recent ones; reasoning levels read whole.
+- Dictation writes your words down with ElevenLabs (the voice call's key), not whisper.cpp.
+- Secrets follow the machine that serves the web app with no setup, and can be added or removed from any machine.
+- Sidebar: no more git ahead/behind arrows. Attach in the composer is a plus.
+
+## 3.1.5
+
+Autopilot now pushes the project forward on its own.
+
+- Autopilot: each wake, after unblocking and checking what's open, the Assistant looks at the project and adds and
+  starts the next most valuable tasks (at most 2 a wake). It stays quiet only when nothing is worth doing.
+- Each space can set a one-line Direction for Autopilot to follow, in Shepherdr settings → Autopilot (window and web)
+  or with `herdr-task autopilot set --direction`. With none, it works out what matters from the project itself.
+- The old starter heartbeat, if you never edited it, is upgraded to the new one on its own, with the old one kept
+  beside it as a `.bak`. Your own words are never touched.
+
+## 3.1.4
+
+Mentions in chat, Autopilot you can see, and more done from the web without the window.
+
+- Chat: type # to mention a space and @ to mention a task, in the window and on the web. A mention shows as a chip
+  that opens the space or task, locked when the agent can't reach it.
+- Autopilot: switching it on wakes the Assistant at once; every wake shows as one quiet line in the chat; the header
+  counts down to the next run and has Run now; the sidebar marks spaces on Autopilot with a small rocket.
+- Automations can fire on another machine's task events.
+- Messages from other agents stand out as their own bubble and name who sent them. The person's words sent from
+  the window always count as the person's, never as "Another agent".
+- The web can close, rename and reorder a space with no Herdr window open.
+- New space: pick the machine to make it on, and the folder list follows the path you type, as a shell completes one.
+- Secrets can be kept on one chosen main machine, and voice calls use its ElevenLabs key everywhere
+  (`shepherdr secrets move-to`).
+- Tasks: a task whose agent is fixing its failing checks shows Working, not Needs you. Buttons that open the Accept
+  card say Review.
+- Web: tidier Assistant header with Autopilot as one group; a phone task view with a calm one-line header and tab
+  strips that only scroll sideways; dictation says why when it can't write your words down; a nicer Mark up
+  button; the chat's Latest pill stays under the drawer; spaces you've read stop being bold after each new reply.
+
+## 3.1.3
+
+Autopilot everywhere, settings per space, and agents that survive a crash.
+
+- Settings per space: each Settings page has a level switch at the top (Everywhere or a space), in the window and on
+  the web. A space's own value overrides Everywhere's, shown as "Set for this space" or "Inherited from Everywhere"
+  with a reset; Autopilot's schedule, events and heartbeat can differ per space. docs/settings.md lists which
+  settings are per space.
+- Autopilot works in every space on every machine: another machine's space is woken by that machine's own
+  scheduler (never twice, on while this one sleeps), and the window and web show and flip its switch. The default
+  heartbeat is a real one that works in any project instead of a form of blanks.
+- The scheduler's round waits for the tick instead of skipping it, so wakes are closed and the Assistant's header
+  no longer sticks on "Waking".
+- After a crash, power loss or reboot, every space's Assistant and every working task's agent come back as
+  themselves, resuming their exact session with its history.
+- Web: on a phone the chat's rows over the box sit evenly with Stop on its edge, and no key hints show on touch. A
+  task's Ready news line loses its Accept once the task moves on. The sidebar's foot is a gear and Settings.
+- `shepherdr update` records the new version in one run.
+
+## 3.1.2
+
+Fixes and small wishes on top of 3.1.1, mostly the web app.
+
+- Web chat: what you send reaches the agent at once, pictures show at once and sent bubbles no longer stick at the
+  bottom. The composer matches the window's (model picker in the box), the working line says what the agent does,
+  and long messages Claude Code shortens into updates show in the chat, in the window too.
+- Web on a phone: one compact toast per event, named as the window names them; Tasks rows fit. The sidebar has no
+  hover ⋯: right-click or long-press opens the menu.
+- Reactions sit flush under the bubble's outer edge, each side's row mirroring the other's.
+- Artifacts: every artifact is a recipe by default, so it opens on the phone (a custom one shows its picture there);
+  the Artifacts panel opens on All.
+- A task counts as merged only when its own work landed: catching up with main is never "done: merged".
+- Workers keep working while they wait on CI or another machine, and only stop for a decision the person must make
+  (worker.md).
+
 ## 3.1.1
 
 Fixes and small wishes on top of 3.1.0.

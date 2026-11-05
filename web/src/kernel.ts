@@ -279,6 +279,8 @@ export interface UI {
   dictStarted: number
   /** Done was pressed: the last words are still coming in */
   dictDone: boolean
+  /** talk to type didn't work in this chat's box: why, over the box until dismissed or tried again */
+  dictError: { chat: string; text: string } | null
   files: Record<string, { name: string; path?: string }[]>
   /** search in a chat: its words, and the match shown (by message id; none: the newest) */
   find: { chat: string; q: string; id: string | null } | null
@@ -306,7 +308,7 @@ function tabOf(t: string | null): UI['tab'] {
 }
 
 const TASK_FILTER = 'shepherdr.taskFilter'
-const FILTERS = ['all', 'needs', 'working', 'merging', 'ready', 'queued', 'todo', 'done', 'automations']
+const FILTERS = ['all', 'needs', 'working', 'merging', 'ready', 'queued', 'scheduled', 'todo', 'done', 'automations']
 function loadTaskFilter(): string {
   try {
     const v = localStorage.getItem(TASK_FILTER) ?? 'all'
@@ -435,6 +437,7 @@ let state: State = {
     dict: null,
     dictStarted: 0,
     dictDone: false,
+    dictError: null,
     files: {},
     reply: {},
     find: null,
@@ -1048,6 +1051,12 @@ export function pinTask(t: Task, on: boolean) {
   return act({ type: 'pin', chat: t.agent?.chat ?? `${t.id}/Agent`, on })
 }
 
+/** SHEP-38: start a task by itself later ({ at: "fri 8:15" } or { in: "6h" }), take that back ({ off: true }) or start a
+ *  scheduled one now ({ now: true }); error: herdr-task's words for a time it doesn't know */
+export function scheduleTask(t: Task, when: { at?: string; in?: string; off?: boolean; now?: boolean }): Promise<{ ok?: boolean; error?: string; why?: string }> {
+  return act({ type: 'schedule', chat: t.agent?.chat ?? `${t.id}/Agent`, ...when })
+}
+
 /** pause a working task: its agent is interrupted and the task is To do until written to */
 export function pauseTask(t: Task) {
   return act({ type: 'pause', chat: t.agent?.chat ?? `${t.id}/Agent` })
@@ -1166,11 +1175,11 @@ export function orderedTasks(snap: Snapshot, list: ListView) {
   return shownGroups(snap, list).flatMap((g) => g.tasks)
 }
 
-/** what a space is, under its name in its header: a home space keeps its machine (the main machine's every machine) */
+/** what a space is, quietly under its name in its header: the folder its Assistant works in, and its machine when not
+ *  this one. Never its role or agent ("Assistant · Claude Code", SHEP-36): the composer's model menu says which agent. */
 export function placeKind(snap: Snapshot, p: Place) {
-  // 3.0's pane header: "Assistant · Claude Code" and the folder it works in (its machine too, where there are more)
-  const on = manyMachines(snap) && p.machine !== snap.host ? ` · ${machineName(snap.machines, p.machine)}` : ''
-  return `${p.header ?? 'Assistant'}${p.where ? ` · ${p.where}` : ''}${on}`
+  const on = manyMachines(snap) && p.machine !== snap.host ? machineName(snap.machines, p.machine) : ''
+  return [p.cwd ?? p.where, on].filter(Boolean).join(' · ')
 }
 
 /** the open task's agent, whose chat is on screen */

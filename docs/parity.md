@@ -10,7 +10,8 @@ purpose (phone navigation, touch instead of right-click, a browser key the brows
 with why.
 
 Where both sides can read the same words or items from `core/`, they do, with a test, so they can't drift apart
-(`core/menus.js`, `core/settings.js`, `core/spaces.js`, `core/tasks.js`, …).
+(`core/menus.js`, `core/settings.js`, `core/spaces.js`, `core/tasks.js`, `core/chat-view.js` for the chat's words and its
+working line, `core/bg-jobs.js` for the background jobs over the box, …).
 
 | Surface | Window | Web | Page |
 |---|---|---|---|
@@ -21,7 +22,7 @@ Where both sides can read the same words or items from `core/`, they do, with a 
 | Accept card, toasts, status bar, confirm and prompt dialogs | `mods/accept-card`, `mods/toasts`, `mods/workspace-status-chat`, `mods/confirm-chat`, `mods/prompt-chat` | `web/src/screens/Accept.tsx`, `web/plugins/alerts`, `web/src/rowmenu.tsx` | [cards](parity/cards.md) |
 | Artifacts, Jump, Keybinds | `mods/artifacts`, `mods/jump`, `mods/keybinds` | `web/plugins/artifacts`, `web/src/screens/Recipe.tsx`, `web/plugins/keyboard` | [artifacts and jump](parity/artifacts-jump.md) |
 | Settings: Agents, Tasks, Notify, Secrets, Machines, Window, Web, and the Settings frame | `mods/shepherdr-settings` | `web/src/Settings.tsx`, `web/src/screens/Role.tsx`, `service/settings.ts`, `service/window.ts` | [settings](parity/settings.md) |
-| Settings › Autopilot (one setting for every space) | `mods/shepherdr-settings/autopilot-section.js`, `mods/tasks/bin/herdr_task/autopilot.py` | `service/autopilot.ts`, `service/compat.ts`, `web/src/Settings.tsx` | [autopilot](parity/autopilot.md) |
+| Settings › Autopilot (Everywhere's and a space's own) | `mods/shepherdr-settings/autopilot-section.js`, `mods/tasks/bin/herdr_task/autopilot.py` | `service/settings.ts`, `service/autopilot.ts`, `web/src/Settings.tsx` | [autopilot](parity/autopilot.md) |
 | New space, Add machine, worktrees, rename dialogs | `mods/newspace`, `mods/machine-add-chat`, `mods/spaces-chat/rename.js`, worktree dialog | `web/plugins/places/add.tsx`, `web/plugins/places/section.tsx`, `web/src/screens/AddMachine.tsx`, `web/src/screens/Worktree.tsx` | [dialogs](parity/dialogs.md) |
 
 A surface is done when every row on its page is ticked (✓) or a web-only form (◇) with its reason. Nothing is ✗.

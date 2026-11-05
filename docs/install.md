@@ -1,6 +1,6 @@
 # Install
 
-Shepherdr 3.1.1 is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in
+Shepherdr 3.1.9 is a layout for the Herdr app plus its mods, helpers and role instructions, and a web app for your tailnet ([Web](web.md)). One script puts them in
 place, never overwrites what you made yourself, and keeps a backup of anything it replaces.
 
 ## Requirements
@@ -11,7 +11,7 @@ place, never overwrites what you made yourself, and keeps a backup of anything i
 - bun (the service and the web app; the installer installs it from bun.sh when it's missing), and Tailscale for the
   web app.
 - Optional, per add-on: `gh` (pull requests), agent-browser 0.41.1, node and Chrome (the task browser), bun,
-  `pw-record` and whisper.cpp (`whisper-cli`) for dictation, an ElevenLabs key for voice calls.
+  `pw-record` for dictation in the window, an ElevenLabs key for voice calls and dictation.
 
 ## Install
 
@@ -50,6 +50,20 @@ path under your home.
 What it refuses: a mod, layout, lib or bin file by the same name that it didn't install and that differs (your own
 mod called `chat`, say). Nothing is written then; it names each one. `--adopt` backs them up and takes them over.
 
+## Without the Herdr window
+
+herdr-core and the web app alone: no Herdr app, its spaces are the service's own ([Web](web.md)). Install herdr-core
+(https://herdr.dev) and Tailscale, signed in, then:
+
+```bash
+git clone https://github.com/eliasstravik/shepherdr && cd shepherdr
+./install.sh --web          # the service, the web app, herdr-task and the helpers
+shepherdr doctor            # check it
+shepherdr web status        # where it's served: https://<this machine's tailnet name>/shepherdr/
+```
+
+It shares itself on your tailnet only (`tailscale serve`, never Funnel). `shepherdr update` keeps it web only.
+
 ## Options
 
 ```text
@@ -58,7 +72,6 @@ mod called `chat`, say). Nothing is written then; it names each one. `--adopt` b
 shepherdr update      the same kind again (layout, or web only), from the checkout it was installed from (git pull it first)
 shepherdr uninstall   [--root DIR] [--dry-run]: takes out what it installed and puts back what it replaced
 shepherdr doctor      [--root DIR]: checks files, links, shared copies, herdr-task and the programs it needs, and says how to update
-shepherdr whisper     downloads dictation's model (148 MB, checked by its sha256)
 ```
 
 `--root DIR` installs under another folder instead of your home (it mirrors `.config/herdr-app`, `.local/bin`,

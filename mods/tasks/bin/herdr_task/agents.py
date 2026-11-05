@@ -47,10 +47,10 @@ def status_of(task, live):
     return best or "stopped"
 
 
-# What people see a task as: one of seven, derived, never stored. From the task's record (todo,
-# queued, ready, done, attention, a merge asked for or waiting on checks) and its agents' own
+# What people see a task as: one of eight, derived, never stored. From the task's record (todo,
+# scheduled (SHEP-38: starts by itself at a time), queued, ready, done, attention, a merge asked for or waiting on checks) and its agents' own
 # Herdr status (working, blocked, idle/done), which agents report as always.
-STATUSES = {"todo": "To do", "queued": "Queued", "working": "Working", "needs": "Needs you",
+STATUSES = {"todo": "To do", "scheduled": "Scheduled", "queued": "Queued", "working": "Working", "needs": "Needs you",
             "ready": "Ready", "merging": "Merging", "done": "Done"}
 
 
@@ -58,14 +58,19 @@ def task_status(task, live):
     """(status, needs, why): a STATUSES key; for Needs you what kind ("attention", "asks",
     "reply", "stopped") and a one-line reason. live = its running agents (hc records)."""
     st = task["state"]
+    if st == "scheduled":
+        from .when import starts_words
+        return "scheduled", None, starts_words(task.get("scheduled_for") or now(), now())
     if st not in ("running", "ready"):
         return (st if st in STATUSES else "todo"), None, None
-    if task.get("attention"):
-        return "needs", "attention", task["attention"]
     states = []
     for k in live:
         x = k.get("status")
         states.append(x.get("state") if isinstance(x, dict) else x)
+    # What Herdr found that stops it (failing checks, a conflict): Needs you, unless its agent is
+    # already on it (on_it()); then it is Working, with its agent's own status line.
+    if task.get("attention") and not on_it(task, live):
+        return "needs", "attention", task["attention"]
     # Cut off by its provider (retry_pass): still Working while Herdr waits to tell it to carry
     # on; Needs you once the tries are used up, or at once for what waiting can't fix.
     r = task.get("retry") if st == "running" else None
@@ -75,6 +80,8 @@ def task_status(task, live):
         return "needs", "asks", REASONS["question"]
     if busy_again(task, live):
         return "working", None, WORKING_AGAIN
+    if task.get("attention"):
+        return "working", None, WORKING_AGAIN if st == "ready" else None
     if st == "ready":
         if task.get("merge_requested") and live:
             return "merging", None, None
@@ -123,6 +130,31 @@ def busy_again(task, live):
         return False
     return any(status_word(k) == "working" and (k.get("labels") or {}).get("herdr.role") != "reviewer"
                and (k.get("turn") or 0) >= (seen or {}).get(k.get("address"), 0) for k in live)
+
+
+# ---- someone is on what needs the person -------------------------------------------------------
+# A task's attention (failing checks, a conflict, a failed merge) needs the person only while
+# nobody is on it (SHEP-8). On it: one of its agents is at work (working, or asking: then the
+# question shows), it was just handed the problem (herdr-task fix, GitHub news: handed_at) and is
+# starting, or its agent said what it's doing (herdr-task status) since the problem came up and
+# that is still fresh: an agent that set its line and waits on CI in the background is idle to
+# Herdr. Nobody on it and the problem still there: Needs you. As core/tasks.js onIt().
+ON_IT_MS = 30 * 60000  # how long an agent's own status line counts, or its own time left if longer
+
+
+def on_it(task, live):
+    """live: its running agents (hc records). Cheap: the task's record and their status only."""
+    if any(status_word(k) in ("working", "blocked") and (k.get("labels") or {}).get("herdr.role") != "reviewer"
+           for k in live):
+        return True
+    if now() - (task.get("handed_at") or 0) < STARTING_MS:
+        return True
+    p = task.get("progress") or {}
+    said = p.get("set") or 0
+    if p.get("by") or not live or not said or said < (task.get("attention_at") or 0):
+        return False
+    left = p.get("left") if isinstance(p.get("left"), (int, float)) else 0
+    return now() - said < max(ON_IT_MS, left)
 
 
 def status_word(k):

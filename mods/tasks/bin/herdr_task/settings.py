@@ -24,7 +24,8 @@ OLD_INSTRUCTIONS = os.path.join(HOME, ".herdr", "instructions")
 ASSISTANT_TEMPLATES = ("assistant", "coordinator")  # "coordinator": Assistants started before the rename
 DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "max_running": MAX_RUNNING, "worktrees": True,
                       "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": ""},
-            "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {}}
+            "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {},
+            "agents": {"reactions": True}}
 LEVELS = ["blocker", "major", "minor"]
 
 
@@ -32,6 +33,73 @@ LEVELS = ["blocker", "major", "minor"]
 # pushes to another machine says which machine that is in "here" (and holds that machine's
 # spaces by their bare ids), so the same lookup works there.
 LOCAL_MACHINE = "local"
+
+
+def read_settings():
+    """The settings file as it is ({} when there is none or it can't be read)."""
+    try:
+        with open(SETTINGS) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return d if isinstance(d, dict) else {}
+
+
+def autopilot_layers(d, space=None):
+    """(Everywhere's, the space's own) Autopilot in a settings file d: {every, events, heartbeat, direction},
+    each only when set. A space is found by its id on this machine (a pushed copy holds this
+    machine's spaces by their bare ids, as herdr-task names them)."""
+    def part(layer):
+        a = (layer or {}).get("autopilot") if isinstance(layer, dict) else None
+        return {k: v for k, v in a.items() if k in ("every", "events", "heartbeat", "direction") and v is not None} if isinstance(a, dict) else {}
+    return part(d.get("everywhere")), part((d.get("spaces") or {}).get(space) if space else None)
+
+
+def write_autopilot(space, values):
+    """Sets Autopilot fields at one level of the settings file (space None: Everywhere's); a value
+    None unsets it there, so it follows the level above again. Refused on a copy the window
+    pushed here: the window's machine holds the truth and would put its own back."""
+    d = read_settings()
+    if d.get("pushed_from"):
+        raise Fail("This machine's Shepherdr settings are a copy from the machine whose window sets them: change Autopilot in Settings there.")
+    if space:
+        layer = (d.setdefault("spaces", {})).setdefault(space, {})
+    else:
+        layer = d.setdefault("everywhere", {})
+    a = dict(layer.get("autopilot") or {})
+    for k, v in values.items():
+        if v is None:
+            a.pop(k, None)
+        else:
+            a[k] = v
+    if a:
+        layer["autopilot"] = a
+    else:
+        layer.pop("autopilot", None)
+    if space and not layer:
+        d["spaces"].pop(space, None)
+    d["version"] = 1
+    os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
+    tmp = f"{SETTINGS}.{os.getpid()}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+        f.write("\n")
+    os.replace(tmp, SETTINGS)
+
+
+def reactions_on(space=None, d=None):
+    """Settings › Agents › Reactions in a space, for every agent there (reactions.py): the space's
+    own, else Everywhere's, else on. A layer's agents.reactions, else what SHEP-42 kept as
+    assistant.reactions (when only the Assistant reacted): the window and the web app move it."""
+    d = read_settings() if d is None else d
+    own = (d.get("spaces") or {}).get(bare(space)) if space else None
+    for layer in (own, d.get("everywhere")):
+        for key in ("agents", "assistant"):
+            a = layer.get(key) if isinstance(layer, dict) else None
+            v = a.get("reactions") if isinstance(a, dict) else None
+            if isinstance(v, bool):
+                return v
+    return DEFAULTS["agents"]["reactions"]
 
 
 def settings_layers(s, space=None):
@@ -116,8 +184,8 @@ def argv_for(pick):
             a += ["-m", pick["model"]]
         if pick.get("effort"):
             a += ["-c", f'model_reasoning_effort="{pick["effort"]}"']
-        if pick.get("fast"):
-            a += ["-c", 'service_tier="fast"']
+        # always said, so Fast off wins over a service_tier in config.toml (default: the standard tier)
+        a += ["-c", 'service_tier="%s"' % ("fast" if pick.get("fast") else "default")]
         perm = pick.get("perm")
         if perm == "full":
             a.append("--dangerously-bypass-approvals-and-sandbox")
@@ -203,7 +271,7 @@ SET_KEYS = {"review": "review", "brief.review": "review", "merge": "merge", "bri
             "reviewer": "reviewer", "reviewer.agent": "reviewer", "reviewer.model": "reviewer_model", "reviewer.effort": "reviewer_effort",
             "proof": "proof", "brief.proof": "proof"}
 # The Proof line (as Shepherdr's skill asks of its task agents), on and off.
-PROOF_WORDS = {"on": "show verifiable proof in one artifact: each proof with a one-line caption, real and from this work now, "
+PROOF_WORDS = {"on": "show verifiable proof in one recipe artifact: each proof with a one-line caption, real and from this work now, "
                      "plus a \"Not proven\" list; then say ready with --proof <its id>",
                "off": "not needed for this task: no proof artifact; say in your summary how you checked it"}
 MERGE_VALUES = {"ask": "ask", "ask me first": "ask", "ask first": "ask", "ask the person first": "ask", "wait": "ask",

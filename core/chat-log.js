@@ -62,6 +62,8 @@ BEGIN { pos = base; first = base; msgs = 0 }
     if (match(line, /<task-id>[^<]+/)) k = substr(line, RSTART + 9, RLENGTH - 9)
     if (match(line, /<status>[^<]+/)) st = substr(line, RSTART + 8, RLENGTH - 8)
     print off "\tN\t" u " " k " " st
+    # and as a place in the queue below
+    if (length(line) <= 262144) print off "\tJ\t" line
     next
   }
   if ((claude && index(line, "\"tool_result\"")) || (codex && (index(head, "\"function_call_output\"") || index(head, "\"custom_tool_call_output\"")))) {
@@ -75,6 +77,14 @@ BEGIN { pos = base; first = base; msgs = 0 }
     print off "\tR\t" ids
     # An answer to a question, or words that declined a request: read whole (answers()).
     if (claude && length(line) <= 262144 && ((index(line, "\"answers\":{") && index(line, "\"questions\":[")) || index(line, "wrote in the chat instead: "))) print off "\tJ\t" line
+    next
+  }
+  # The queue of messages typed while Claude Code works: what goes in (the words of the person)
+  # and what comes out, so the chat shows them queued at once. (No apostrophes: X is quoted.)
+  if (index(head, "\"type\":\"queue-operation\"")) {
+    if (count || length(line) > 262144) next
+    gsub(/"data":"[^"]*"/, "\"data\":\"\"", line)
+    print off "\tJ\t" line
     next
   }
   keep = 0
@@ -158,18 +168,36 @@ const CODEX_INJECTED = /^\s*(# AGENTS\.md instructions|<(environment_context|use
 // Reactions travel as Herdr tag lines (taught to agents by session-note.sh):
 //   the person  <hc from="person" reaction="👍" to="first words of the message"/>   (or reaction-removed=)
 //   the agent   <hc react="👀" to="first words of the person's message"/>   on a line of its own
-//               <hc no-reply/>   a reply that is only this shows nothing (<no-reply> too)
+//               <hc no-reply/>   a reply that is only this shows nothing (<no-reply> too); on an Autopilot
+//               wake <hc no-reply why="Waiting on your Accept of TG-2"/> puts its why on the wake's line
 // Task news Herdr sends an Assistant (herdr-task's news_pass) is one <herdr-news> tag per line:
 // each is a news item of its own ({ kind: "news", ref, event, text }), shown as a slim line in
 // an Assistant's chat (mods/chat newsLines()); the tags themselves never show.
 // None of these lines show in the chat; the reactions show on the messages they name.
-const TAG = /^<hc((?:\s+[\w-]+="[^"]*")*)\s*\/>$/;
-function tagOf(line) {
-  const m = TAG.exec(line.trim());
-  if (!m) return null;
+// A value ends at the quote before the next attribute or the tag's end, so a quote inside it
+// (an agent quoting the person's "words" in to=) doesn't break the line (SHEP-47).
+const VALUE = String.raw`"((?:[^"]|"(?!\s*\/>|\s+[\w-]+(?:="|\s*\/>)))*)"`;
+const ATTRS = new RegExp(String.raw`\s+([\w-]+)(?:=${VALUE})?`, "gy");
+// A tag line: the attributes of the <hc …/> it starts with, and the text after it (rest).
+function tagAt(line) {
+  const s = line.trim();
+  if (!s.startsWith("<hc")) return null;
   const a = {};
-  for (const [, k, v] of m[1].matchAll(/([\w-]+)="([^"]*)"/g)) a[k] = v;
-  return a;
+  let i = 3;
+  for (;;) {
+    ATTRS.lastIndex = i;
+    const m = ATTRS.exec(s);
+    if (!m) break;
+    a[m[1]] = m[2] ?? "";
+    i = ATTRS.lastIndex;
+  }
+  const end = /^\s*\/>/.exec(s.slice(i));
+  if (!end || i === 3 && !Object.keys(a).length) return null;
+  return { a, rest: s.slice(i + end[0].length).trim() };
+}
+function tagOf(line) {
+  const t = tagAt(line);
+  return t && !t.rest ? t.a : null;
 }
 // A message's start, as a reaction names it: its first words, on one line, quotes made curly.
 export function excerpt(text, n = 60) {
@@ -177,8 +205,10 @@ export function excerpt(text, n = 60) {
   return one.length > n ? one.slice(0, n - 1).trimEnd() + "…" : one;
 }
 // Does `text` start with what a reaction's `to` quotes (loose: an agent may shorten it)?
+// Quotes don't count: an agent may drop them or make them curly in to= (SHEP-47).
 export function names(text, to) {
-  const a = excerpt(text, 400).toLowerCase(), b = String(to ?? "").replace(/…$/, "").replace(/"/g, "”").replace(/\s+/g, " ").trim().toLowerCase();
+  const bare = (x) => x.replace(/["“”„]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  const a = bare(excerpt(text, 400)), b = bare(String(to ?? "").replace(/…$/, ""));
   if (!b) return false;
   return a.startsWith(b) || (b.length >= 12 && a.includes(b.slice(0, 24)));
 }
@@ -212,11 +242,45 @@ function newsOf(t) {
     ref: unattr(/\btask="([^"]*)"/.exec(a)?.[1]), event: unattr(/\bevent="([^"]*)"/.exec(a)?.[1]), text: text.trim() })).filter((n) => n.ref && n.event);
 }
 
-// A message's words, with the task news it carries (news: shown as their own lines).
+// An Autopilot wake (herdr-task's <herdr-autopilot reason=…>): { reason }, else null. Its words never show; the chat
+// shows one quiet line for it (pilotLine()).
+// Only a message that is the wake itself (the CLI may wrap it as pasted): an Assistant's brief shows the tag as an example.
+function pilotOf(t) {
+  const m = /^<herdr-autopilot\b([^>]*)>/.exec(String(t).replace(/<\/?pasted_content\b[^>]*>/g, "").trim());
+  return m ? { reason: unattr(/\breason="([^"]*)"/.exec(m[1])?.[1] ?? "") } : null;
+}
+
+// A message's words, with the task news it carries (news: shown as their own lines) and the Autopilot wake it is.
 function cleanUser(t) {
-  const news = newsOf(t);
+  const news = newsOf(t), pilot = pilotOf(t);
   const u = cleanWords(t);
-  return news.length ? { ...(u ?? { text: "" }), news } : u;
+  const out = news.length ? { ...(u ?? { text: "" }), news } : u;
+  return pilot ? { ...(out ?? { text: "" }), pilot } : out;
+}
+
+// Why Autopilot woke, in words: "on schedule", "Run now", "switched on", "HAT-4 is ready" (herdr-task's reasons).
+const EVENT_WORDS = { added: "was added", ready: "is ready", failed: "failed", "needs-you": "needs you", merged: "was merged", stalled: "stalled" };
+export function pilotWhy(reason) {
+  const r = String(reason ?? "").trim();
+  if (r === "schedule") return "on schedule";
+  if (r === "run now") return "Run now";
+  const ev = /^event:([\w-]+)\s+(.+)$/.exec(r);
+  if (ev) return `${ev[2]} ${EVENT_WORDS[ev[1]] ?? ev[1]}`;
+  return r || "on schedule";
+}
+
+// A wake's quiet line in the chat: "Autopilot woke · on schedule", then how it went once that shows in the log:
+// its why when it answered <hc no-reply why="…"/> (" · Waiting on your Accept of TG-2", SHEP-40), else " · nothing to
+// do" (a bare <hc no-reply/> without looking at anything), " · checked, nothing new" (it looked, then answered that),
+// nothing more while it works or once it said something (its words follow as its message).
+// item: { kind: "pilot", reason, steps, said, quiet, why }.
+export const PILOT_WHY_MAX = 160;
+export function pilotLine(item) {
+  const head = `Autopilot woke · ${pilotWhy(item?.reason)}`;
+  if (item?.said || !item?.quiet) return head;
+  const why = String(item.why ?? "").replace(/\s+/g, " ").trim();
+  if (why) return `${head} · ${why.length > PILOT_WHY_MAX ? why.slice(0, PILOT_WHY_MAX - 1).trimEnd() + "…" : why}`;
+  return `${head} · ${item.steps ? "checked, nothing new" : "nothing to do"}`;
 }
 
 function cleanWords(t) {
@@ -231,7 +295,17 @@ function cleanWords(t) {
     return { text: `${cmd[1].trim()} ${args.trim()}`.trim() };
   }
   if (INJECTED.test(t)) return null;
-  t = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<\/?pasted_content\b[^>]*>\n?/g, "")
+  t = t.replace(/<system-reminder>[\s\S]*?<\/system-reminder>/g, "").replace(/<\/?pasted_content\b[^>]*>\n?/g, "");
+  // Another Assistant's message (herdr-task tell-assistant): <herdr-assistant from="mac/t13" machine="mac"
+  // space="Home" can-reply="no">text</herdr-assistant>, the whole message (the CLI may wrap it as pasted).
+  const peer = /^\s*<herdr-assistant\b([^>]*)>([\s\S]*?)<\/herdr-assistant\s*>\s*$/.exec(t);
+  if (peer) {
+    const at = (k) => unattr(new RegExp(`\\b${k}="([^"]*)"`).exec(peer[1])?.[1] ?? "");
+    const from = at("from");
+    if (from) return { text: peer[2].replace(/&lt;\/herdr-assistant/g, "</herdr-assistant").trim(), from,
+      assistant: { machine: at("machine"), space: at("space"), reply: at("can-reply") === "yes" } };
+  }
+  t = t
     // Task mentions (#4) come with a tag line each for the agent; the chat shows the "#4".
     .replace(/<hc task="[^"]*"[^>]*>[\s\S]*?<\/hc>\n?/g, "")
     // Herdr's own tags for the agent (<herdr-news>, <herdr-github>, ...), wherever they are in a
@@ -267,8 +341,20 @@ function claudeUser(c) {
     .map((b) => cleanUser(images ? b.text.replace(/\[Image #\d+\]\s*/g, "") : b.text)).filter(Boolean);
   if (!parts.length) return images ? { text: "", images } : null;
   const reactions = parts.flatMap((p) => p.reactions ?? []), news = parts.flatMap((p) => p.news ?? []);
-  return { text: parts.map((p) => p.text).filter(Boolean).join("\n\n"), from: parts[0].from, images, reactions, news,
+  const pilot = parts.find((p) => p.pilot)?.pilot;
+  return { text: parts.map((p) => p.text).filter(Boolean).join("\n\n"), from: parts[0].from, ...(parts[0].assistant ? { assistant: parts[0].assistant } : {}), images, reactions, news, ...(pilot ? { pilot } : {}),
     replyTo: parts[0].replyTo, quoted: parts[0].quoted, rest: parts[0].rest };
+}
+
+// Claude Code may show the person a message it wrote mid-turn (before a call) as a short update in other words
+// (thinkingDisplay "updates"): what it wrote never reaches the log, nor its <hc react> lines. The update is a
+// thinking block the terminal shows as a message, its signature naming it narration ("narration" in base64, at
+// each of its three alignments): the chat shows it as the agent's message too. Real thinking stays hidden (empty
+// in the log, or "summarized").
+const NARRATION = /bmFycmF0aW9u|5hcnJhdGlvb|uYXJyYXRpb2/;
+function narration(l, b) {
+  if (b?.type !== "thinking" || typeof b.thinking !== "string" || !b.thinking.trim()) return false;
+  return l.thinkingDisplay === "updates" || NARRATION.test(String(b.signature ?? "").slice(0, 80));
 }
 
 const short = (p) => {
@@ -281,6 +367,91 @@ const clip = (s, n = 90) => { s = String(s ?? "").replace(/\s+/g, " ").trim(); r
 // A command that publishes an artifact (mods/artifacts): the chat shows a card for it, found in
 // the artifacts' registry by who published it and when.
 const ARTIFACT = /\bherdr-artifact\b[^\n|;&]*\b(publish|update)\b/;
+
+// The messages a shell command sends other agents: [{ to, text, how }], how "hc" (`hc send [flags] <terminal>
+// <text>`, to a terminal) or "assistant" (`herdr-task tell-assistant <address or space> <text>`). Read with a small
+// shell lexer: quotes, escapes, `;` `&&` `||` `|` and new lines between commands, heredoc bodies skipped, and a text
+// given as "$VAR" taken from a VAR=… set earlier in the same command. A text it can't know is left out.
+const VALUED = new Set(["--if", "--timeout", "--on"]);
+export function sendsOf(command) {
+  const s = String(command ?? "");
+  if (!/\b(hc|herdr-task)\b/.test(s) || !/\b(send|tell-assistant)\b/.test(s)) return [];
+  const cmds = [], vars = new Map();
+  let words = [], w = null, i = 0, heredocs = [];
+  // w: { text, var? (the word was only $NAME) }
+  const end = () => { if (w) words.push(w); w = null; };
+  const done = () => { end(); if (words.length) cmds.push(words); words = []; };
+  const add = (c) => { w ??= { text: "", raw: "" }; w.text += c; };
+  while (i < s.length) {
+    const c = s[i];
+    if (c === "\n") {
+      done(); i++;
+      // heredoc bodies follow the line that opened them
+      for (const tag of heredocs) {
+        const close = new RegExp(`^\\t*${tag.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`, "m");
+        const m = close.exec(s.slice(i));
+        i = m ? i + m.index + m[0].length + 1 : s.length;
+      }
+      heredocs = [];
+      continue;
+    }
+    if (c === " " || c === "\t") { end(); i++; continue; }
+    if (c === ";" || c === "|" || (c === "&" && s[i - 1] !== ">" && s[i + 1] !== ">")) { done(); i += s[i + 1] === c ? 2 : 1; continue; }
+    if (c === "#" && !w) { while (i < s.length && s[i] !== "\n") i++; continue; }
+    if (c === "<" && s[i + 1] === "<" && s[i + 2] !== "<") {
+      end();
+      const m = /^<<-?\s*(['"]?)([\w.-]+)\1/.exec(s.slice(i));
+      if (m) { heredocs.push(m[2]); i += m[0].length; continue; }
+    }
+    if (c === "'") {
+      const j = s.indexOf("'", i + 1);
+      add(s.slice(i + 1, j < 0 ? s.length : j)); w.raw += "'"; i = j < 0 ? s.length : j + 1; continue;
+    }
+    if (c === '"') {
+      let j = i + 1, out = "";
+      while (j < s.length && s[j] !== '"') {
+        if (s[j] === "\\" && '"\\$`\n'.includes(s[j + 1] ?? "")) { out += s[j + 1] === "\n" ? "" : s[j + 1]; j += 2; }
+        else out += s[j++];
+      }
+      const raw = s.slice(i + 1, j);
+      add(out); w.raw += /^\$\{?\w+\}?$/.test(raw) ? raw : "\"";
+      i = j + 1; continue;
+    }
+    if (c === "\\") { add(s[i + 1] ?? ""); w.raw += "\\"; i += 2; continue; }
+    add(c); w.raw += c; i++;
+  }
+  done();
+  const out = [];
+  for (const cmd of cmds) {
+    // NAME=value words before a command (or alone) set a variable for what follows
+    let k = 0;
+    while (k < cmd.length && /^[A-Za-z_]\w*=/.test(cmd[k].text)) {
+      const eq = cmd[k].text.indexOf("=");
+      vars.set(cmd[k].text.slice(0, eq), cmd[k].text.slice(eq + 1));
+      k++;
+    }
+    const a = cmd.slice(k).map((x) => {
+      const v = /^\$\{?(\w+)\}?$/.exec(x.raw);
+      return v ? (vars.has(v[1]) ? vars.get(v[1]) : null) : x.text;
+    });
+    const prog = String(a[0] ?? "").split("/").pop();
+    let rest = null, how = null;
+    if (prog === "hc" && a[1] === "send") { rest = a.slice(2); how = "hc"; }
+    else if (prog === "herdr-task" && a.includes("tell-assistant")) { rest = a.slice(a.indexOf("tell-assistant") + 1); how = "assistant"; }
+    if (!rest) continue;
+    const args = [];
+    for (let j = 0; j < rest.length; j++) {
+      const x = rest[j];
+      if (x === null) { args.push(null); continue; }
+      if (/^\d*>/.test(x) || x === ">" ) { if (!/^\d*>&?\S/.test(x)) j++; continue; }
+      if (x.startsWith("--")) { if (VALUED.has(x)) j++; continue; }
+      args.push(x);
+    }
+    const [to, text] = args;
+    if (to && typeof text === "string" && text.trim()) out.push({ to, text: text.trim(), how });
+  }
+  return out;
+}
 
 // One tool call in words: its kind (for the summary) and a line for the open row.
 // A command that only waits (hc wait, sleep): what it waits for, in words; else null. While
@@ -340,6 +511,15 @@ function claudeStep(name, input = {}) {
   return { kind: "tool", line: `Used ${name}`, doing: input.description ? clip(input.description, 60) : `Using ${name}` };
 }
 
+// A Codex call's shell command(s), as one text (sendsOf reads it), else "".
+function codexCommand(args) {
+  let a = args;
+  if (typeof a === "string") { try { a = JSON.parse(a); } catch { return a; } }
+  if (!a || typeof a !== "object") return "";
+  const c = a.cmd ?? a.command ?? a.input ?? "";
+  return Array.isArray(c) ? (/^(ba|z)?sh$/.test(c[0]) && c[1]?.startsWith("-") ? c.slice(2).join(" ") : c.map((x) => /\s/.test(x) ? `'${String(x).replace(/'/g, "'\\''")}'` : x).join(" ")) : String(c);
+}
+
 function codexStep(name, args) {
   let a = args;
   if (typeof a === "string") a = parse(a) ?? { input: a };
@@ -374,6 +554,10 @@ function codexStep(name, args) {
 //   replyTo: the start of the message it answers)
 //   { kind: "mark", id }  (a message of only reactions: ends the turn, shows nothing)
 //   { kind: "news", id, at, ref, event, text }  (one line of task news Herdr told an Assistant)
+//   { kind: "sent", id, at, to, text, how }  (a message the agent sent another agent: sendsOf())
+//   a user item's from: who sent it (another agent's address); assistant: { machine, space, reply } when it is
+//   another Assistant's (<herdr-assistant>)
+//   { kind: "pilot", id, at, reason, steps, said, quiet }  (an Autopilot wake, its quiet line: pilotLine())
 //   { kind: "tools", id, steps: [{ id, kind, line, out? }] }  (calls in a row, between texts;
 //                                             out: where the call's result line is)
 //   { kind: "ask", id, text, closed? }  (the agent's own question tool; closed once its dialog
@@ -386,6 +570,8 @@ export class Conversation {
   constructor(kind) {
     this.kind = kind;
     this.items = [];
+    // The Autopilot wake whose turn runs now (its line fills in as it goes: pilotLine()).
+    this.pilot = null;
     this.replies = new Map();
     this.calls = new Map();
     this.open = new Map();
@@ -405,10 +591,24 @@ export class Conversation {
     // run on its own is done when its task-notification comes.
     this.helpers = new Map();
     this.questions = new Map();
+    // Claude Code's queue of what was typed while it works, in order: { id, raw, at, text?,
+    // images? } (text only for the person's words; a job's end has a place too).
+    this.queue = [];
   }
 
   push(item) {
     this.items.push(item);
+    return item;
+  }
+
+  // The messages a command sent other agents (sendsOf), each its own item after the call's row:
+  // { kind: "sent", id, at, to, text, how }.
+  sent(command, off, at) {
+    // A send tried again (`|| hc send …`, or `--force` after a refusal) shows once: one already sent this turn.
+    const turn = this.items.slice(this.items.findLastIndex((x) => x.kind === "user" || x.kind === "mark") + 1);
+    sendsOf(command).forEach((m, i) => {
+      if (!turn.some((x) => x.kind === "sent" && x.to === m.to && x.text === m.text)) turn.push(this.push({ kind: "sent", id: `s${off}:${i}`, at, ...m }) ?? m);
+    });
   }
 
   // Tool calls in a row join the last item when it is a tools row.
@@ -418,6 +618,7 @@ export class Conversation {
     const s = { id, kind: st.kind, line: st.line, count: st.count ?? 1, helper, ...(st.shell ? { shell: st.shell, at: st.at } : {}) };
     if (last?.kind === "tools") last.steps.push(s);
     else this.push({ kind: "tools", id: `t${off}`, steps: [s] });
+    if (this.pilot) this.pilot.steps++;
     this.calls.set(id, s);
     this.open.set(id, st.doing);
     if (st.waiting) this.waits.add(id);
@@ -448,9 +649,19 @@ export class Conversation {
 
   user(id, u) {
     this.waiting = false;
+    // taken from the queue: it shows as said now
+    const q = u?.text ? this.queue.findIndex((x) => x.text === u.text) : -1;
+    if (q >= 0) this.queue.splice(q, 1);
     for (const r of u?.reactions ?? []) this.react("you", r);
     // Task news: an item per line, at the moment Herdr told it.
     (u?.news ?? []).forEach((n, i) => this.push({ kind: "news", id: `${id}:n${i}`, at: u.at, ...n }));
+    // An Autopilot wake: its line, which what the Assistant then does fills in (pilotLine()); anything else said to it
+    // ends that wake's watch.
+    this.pilot = null;
+    if (u?.pilot) {
+      this.pilot = { kind: "pilot", id: `${id}:p`, at: u.at, reason: u.pilot.reason, steps: 0, said: false, quiet: false };
+      this.push(this.pilot);
+    }
     // Only reactions: nothing to show, but the agent's turn before it is over (its actions and
     // pills stay while it answers, and its answer is a turn of its own).
     if (!u?.text && !u?.images) { if (u?.reactions?.length) this.push({ kind: "mark", id }); return; }
@@ -461,8 +672,31 @@ export class Conversation {
       replyTo = u.quoted;
       text = u.rest;
     }
-    this.push({ kind: "user", id, text, replyTo, from: u.from, at: u.at, images: u.images || 0 });
+    this.push({ kind: "user", id, text, replyTo, from: u.from, ...(u.assistant ? { assistant: u.assistant } : {}), at: u.at, images: u.images || 0 });
     this.doing = null;
+  }
+
+  // A change to Claude Code's queue: enqueue adds, dequeue takes the oldest, remove takes that
+  // one (taken in mid-turn).
+  queueOp(l, off) {
+    const c = typeof l.content === "string" ? l.content : "";
+    if (l.operation === "enqueue") {
+      // its pictures are "[Image #1]" markers in the words there
+      const images = (c.match(/\[Image #\d+\]/g) ?? []).length;
+      const u = c && !c.includes("<task-notification>") ? claudeUser(c.replace(/\[Image #\d+\]\s*/g, "")) : null;
+      if (u || images) this.queue.push({ id: `q${off}`, raw: c, at: time(l.timestamp), text: u?.text ?? "", images });
+      else this.queue.push({ id: `q${off}`, raw: c, at: time(l.timestamp) });
+      if (this.queue.length > 50) this.queue.shift();
+    } else if (l.operation === "dequeue" || !c) this.queue.shift();
+    else {
+      const i = this.queue.findIndex((x) => x.raw === c);
+      if (i >= 0) this.queue.splice(i, 1);
+    }
+  }
+
+  // What the person typed that waits in the queue for the agent to take: [{ id, text, images, at }].
+  queued() {
+    return this.queue.filter((x) => x.text !== undefined);
   }
 
   // The helpers still running: [{ desc }]. One silent for three hours is taken as gone (its
@@ -540,12 +774,24 @@ export class Conversation {
   agentText(text) {
     const out = [];
     for (const line of String(text).split("\n")) {
+      // A react tag also counts at the start of a paragraph, its words after it on the same line;
+      // one that still doesn't read (a broken tag) never shows as text either, only what follows it.
+      const t = /^\s*<hc\s/.test(line) ? tagAt(line) : null;
+      if (t?.a.react || /^\s*<hc\s+react=/.test(line)) {
+        const end = line.indexOf("/>");
+        if (t?.a.react) this.react("agent", { emoji: t.a.react, to: t.a.to ?? "", on: true });
+        const rest = t ? t.rest : end < 0 ? "" : line.slice(end + 2).trim();
+        if (rest) out.push(rest);
+        continue;
+      }
       const a = tagOf(line);
-      if (a?.react) this.react("agent", { emoji: a.react, to: a.to ?? "", on: true });
       // <no-reply> too (an Assistant's answer to task news it has nothing to add to).
-      else if (!(a && "no-reply" in a) && !/^<hc\s+no-reply\s*\/>/.test(line.trim()) && !/^<\/?no-reply\b/.test(line.trim())) out.push(line);
+      if (!(a && "no-reply" in a) && !/^<hc\s+no-reply\s*\/>/.test(line.trim()) && !/^<\/?no-reply\b/.test(line.trim())) out.push(line);
+      else if (this.pilot) { this.pilot.quiet = true; if (a?.why) this.pilot.why = unattr(a.why); }
     }
-    return out.join("\n").trim();
+    const said = out.join("\n").trim();
+    if (said && this.pilot) this.pilot.said = true;
+    return said;
   }
 
   feed(records) {
@@ -557,6 +803,8 @@ export class Conversation {
         for (const id of ids) {
           if (id === "ASYNC" || id.startsWith("TASK=")) continue;
           if (task) this.backgrounded(id, task);
+          // A background call answered without a task id never started (cancelled, denied, failed): no job.
+          else this.bg = this.bg.filter((j) => j.id !== id || j.task);
           // The agent stopped a job itself (TaskStop): gone once that call is answered.
           if (this.stops.has(id)) { this.ended(null, this.stops.get(id)); this.stops.delete(id); }
           // A helper that answered (not one launched to run on its own) is done.
@@ -586,6 +834,7 @@ export class Conversation {
 
   claude(l, off) {
     if (l.isSidechain) return;
+    if (l.type === "queue-operation") { this.queueOp(l, off); return; }
     if (l.type === "user" && l.origin?.kind === "task-notification") {
       // A helper or a background job finished (Claude Code tells the agent so): it's done.
       const c = l.message?.content;
@@ -631,8 +880,9 @@ export class Conversation {
         this.meta = { ...this.meta, model: m.model, effort: l.perTurnEffort ?? this.meta.effort, speed: u.speed ?? this.meta.speed, used: used || this.meta.used, at: time(l.timestamp) };
       }
       for (const b of Array.isArray(m.content) ? m.content : []) {
-        if (b?.type === "thinking" && !this.open.size) this.doing = "Thinking";
-        const said = b?.type === "text" ? this.agentText(b.text ?? "") : "";
+        const told = narration(l, b);
+        if (b?.type === "thinking" && !told && !this.open.size) this.doing = "Thinking";
+        const said = b?.type === "text" ? this.agentText(b.text ?? "") : told ? this.agentText(b.thinking) : "";
         if (said) {
           // One reply can be written over several lines with the same id.
           const prev = this.replies.get(id);
@@ -660,6 +910,7 @@ export class Conversation {
             if (st) st.at = time(l.timestamp) || Date.now();
             this.step(String(b.id), off, st, b.name === "Agent" || b.name === "Task" ? String(b.id) : null);
             if (b.name === "Bash" && ARTIFACT.test(String(b.input?.command ?? ""))) this.push({ kind: "artifact", id: `art${off}`, at: time(l.timestamp) });
+            if (b.name === "Bash") this.sent(String(b.input?.command ?? ""), off, time(l.timestamp));
           }
         }
       }
@@ -700,6 +951,7 @@ export class Conversation {
         if (st?.spawn) this.helpers.set(cid, { desc: st.spawn, done: false, untilTurn: true });
         this.step(cid, off, st, st?.spawn ? cid : null);
         if (ARTIFACT.test(JSON.stringify(p.arguments ?? p.input ?? p.action ?? ""))) this.push({ kind: "artifact", id: `art${off}`, at: time(l.timestamp) });
+        this.sent(codexCommand(p.arguments ?? p.input ?? p.action), off, time(l.timestamp));
       }
     } else if (l.type === "turn_context") {
       this.meta = { ...this.meta, model: p.model ?? this.meta.model, effort: p.effort ?? p.reasoning_effort ?? this.meta.effort, at: time(l.timestamp) };

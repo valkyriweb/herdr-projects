@@ -17,6 +17,8 @@ export const WORDS = {
   showMore: "Show more",
   showLess: "Show less",
   queued: "Queued · Sends when the agent is free",
+  // typed while it works: in its CLI's queue, taken at its next step (Claude Code's own queue)
+  inQueue: "Queued · it reads it at its next step",
   sendNow: "Send now",
   ended: "This task's agent has ended.",
   resuming: "Resuming…",
@@ -79,6 +81,17 @@ export const artifactLine = (v) => `Artifact · v${v}`;
 // m:ss, for the working line, a recording and a call.
 export const elapsed = (secs) => `${Math.floor(Math.max(0, secs) / 60)}:${String(Math.floor(Math.max(0, secs)) % 60).padStart(2, "0")}`;
 
+// What the agent's CLI says it does or waits for now (its status report: Claude Code's "Computing build times", a
+// question's "answer: …"), from its terminal. The window's terminals() hands it over as `report`; herdr-core's own
+// record (the service's) keeps it in `status`, an object while the CLI reports one. "" when it says nothing.
+export function reportMsg(t) {
+  for (const r of [t?.report, t?.status]) if (r && typeof r === "object" && typeof r.msg === "string" && r.msg.trim()) return r.msg.trim();
+  return "";
+}
+// The working line's words: the call its log has open now, else its status report (not a question), else null
+// (the line says Working).
+export const doingWords = (conv, report) => conv?.doing ?? (report && !/^answer:/i.test(report) ? report : null);
+
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const dayStart = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
@@ -110,43 +123,109 @@ export function bandActs(side, text, { from = null, fork = true } = {}) {
   return ["reply", "copy", ...(fork ? ["fork"] : [])];
 }
 
-// A message another agent sent with hc often names its sender in its first words ("From HERD-76 (t12u?): …"). The
+// The whole band, in order from left to right (DECISIONS, Chat > Message actions): the reaction pills flush under the
+// bubble's outer edge with the smiley beside them, each side the other's mirror. Yours: the time, its actions, the
+// smiley, then the pills furthest right; the agent's: the pills furthest left, the smiley, its actions reversed and
+// the time at the inner end. `acts`: bandActs(); `time` false leaves the time out, `react` false the smiley.
+export function bandOrder(side, acts, { time = true, react = true } = {}) {
+  const lead = [...(time ? ["time"] : []), ...acts];
+  const smiley = react ? ["react"] : [];
+  return side === "user" ? [...lead, ...smiley, "pills"] : ["pills", ...smiley, ...lead.reverse()];
+}
+
+// A message another agent sent with hc often names its sender in its first words ("From HERD-76 (t12u?): …", "From
+// the person's Assistant on m3 (t10v): …"). The
 // quiet row already says who, so its preview starts after them; the name stands in when the sender's address is
 // unknown.
-const SIGNED = /^\s*(?:\*\*)?(?:[Mm]essage\s+)?[Ff]rom\s+([A-Z][\w.-]*(?:\s+[\w.-]+){0,2}?)\s*(?:\([^)\n]{0,40}\))?\s*:(?:\*\*)?\s*/;
+const SIGNED = /^\s*(?:\*\*)?(?:[Mm]essage\s+)?[Ff]rom\s+(?:the person's\s+|your\s+)?([A-Z][\w.-]*(?:\s+[\w.-]+){0,2}?)\s*(?:\([^)\n]{0,40}\))?\s*:(?:\*\*)?\s*/;
 export const signedBy = (text) => SIGNED.exec(String(text ?? ""))?.[1]?.trim() || null;
 export const unsigned = (text) => String(text ?? "").replace(SIGNED, "");
+
+// A sender outside any terminal: from="<machine>/ppid:123" (a script, a service, or a window that named its process).
+export const outsideTerminal = (from) => /(^|\/)ppid:\d+$/.test(String(from ?? "").trim().split(/\s+/)[0]);
+
+// The person's own words that came wrapped as a message from outside any terminal (a window or service on another
+// machine whose send named its process, before SHEP-3): each one the person sent from this chat moments before with the
+// same words (matches(u, p): the chat's own test that the log's message u is its pending send p). A message from a
+// terminal (an agent) never counts, nor one nobody here just sent. users: the log's user messages; -> their ids.
+export function ownWords(users, pending, matches) {
+  const ids = [];
+  for (const p of pending ?? []) {
+    const u = (users ?? []).find((u) => !ids.includes(u.id) && matches(u, p));
+    if (u?.from && outsideTerminal(u.from)) ids.push(u.id);
+  }
+  return ids;
+}
 
 // Who sent a message with hc (<hc from="t7 herd-12-fix-login">): its role or task as people know it ("Reviewer",
 // "HERD-12", "Assistant on vm-ssa"), never its terminal address. An artifact's form says its title; the person's own
 // lines (a kept secret) are "You". A sender outside any terminal (from="<machine>/ppid:123") or one gone goes by the
 // name it signed the message with, else "Another agent".
-//   find(address): that terminal ({ name, labels }), else null; machine: the chat's agent's machine (null: here);
-//   taskOf(address): the task ref whose worker that is, else null.
-export function senderName(from, text = null, { find = () => null, machine = null, taskOf = () => null } = {}) {
+//   find(address): that terminal ({ name, labels, template }), else null; machine: the chat's agent's machine (null:
+//   here); taskOf(address): the task ref whose worker that is, else null; here: this machine's own name in
+//   herdr-core: another machine's agent writes our terminals as "<here>/t75", our list has them as "t75"; machineName(key):
+//   the name people read for a machine ("Mac mini"), else null (its key then).
+export function senderName(from, text = null, { find = () => null, machine = null, taskOf = () => null, here = null, machineName = () => null } = {}) {
   const [addr, ...rest] = String(from ?? "").trim().split(/\s+/);
   const signed = signedBy(text);
   if (addr === "person") return "You";
-  if (/(^|\/)ppid:\d+$/.test(addr ?? "")) return signed || "Another agent";
+  if (outsideTerminal(addr)) return signed || "Another agent";
   if (!/^([\w.-]+\/)?t\d[0-9a-z]*$/.test(addr ?? "")) return String(from);
   // A bare address is on the machine of the agent it was sent to.
   const full = !addr.includes("/") && machine ? `${machine}/${addr}` : addr;
-  const k = find(full);
+  const local = here && full.startsWith(`${here}/`) ? full.slice(here.length + 1) : null;
+  const k = find(full) ?? (local ? find(local) : null);
   const l = k?.labels ?? {}, name = rest.join(" ") || k?.name || "";
-  const on = full.includes("/") ? full.split("/")[0] : null;
-  const away = on && on !== machine ? ` on ${on}` : "";
+  // Where it runs (null: here), said when that isn't where the chat's agent is.
+  const at = local ? null : full.includes("/") ? full.split("/")[0] : null;
+  const away = at !== machine && (at ?? here) ? ` on ${machineName(at ?? here) || (at ?? here)}` : "";
   if (l["herdr.role"] === "reviewer" || /\breview/i.test(name)) return "Reviewer";
-  if (l["herdr.role"] === "coordinator" || /^coord/i.test(name)) return `Assistant${away}`;
-  const task = taskOf(full) ?? /^([a-z][a-z0-9]*)-(\d+)(?:-|$)/i.exec(name)?.slice(1, 3).join("-").toUpperCase();
+  if (l["herdr.role"] === "coordinator" || /^(herdr-)?(assistant|coordinator)\b/.test(k?.template ?? "") || /^coord/i.test(name)) return `Assistant${away}`;
+  const task = taskOf(full) ?? (local ? taskOf(local) : null) ?? /^([a-z][a-z0-9]*)-(\d+)(?:-|$)/i.exec(name)?.slice(1, 3).join("-").toUpperCase();
   if (task) return `${task}${away}`;
+  if (!name && signed && / on /.test(signed)) return signed;
   return `${name || signed || "Another agent"}${away}`;
 }
+
+// Agent to agent, as a group chat (SHEP-27). Who sent a user item another agent sent: another Assistant's
+// (<herdr-assistant>, x.assistant: { machine, space }) by its machine and space ("Assistant on Mac mini · Home"; its
+// machine unsaid when it is this one), else senderName's ("SHEP-4", "Reviewer", "Assistant on m3").
+//   sender(from, text): senderName with the chat's lookups; machineName(key): the name people read for a machine
+//   key (null: unknown); here: this machine's key in herdr-core.
+export function fromName(x, sender = (f) => f, { machineName = (m) => m, here = null } = {}) {
+  const a = x?.assistant;
+  if (!a) return sender(x?.from, x?.text);
+  const m = a.machine && a.machine !== here ? machineName(a.machine) || a.machine : null;
+  return `Assistant${m ? ` on ${m}` : ""}${a.space ? ` · ${a.space}` : ""}`;
+}
+
+// Whom a message the chat's agent sent went to (a "sent" item: { to, how }): a terminal by senderName ("SHEP-4",
+// "Assistant on m3"); tell-assistant's target is an Assistant, by its address or its space's name ("Assistant ·
+// Home").
+export function sentTo(x, sender = (f) => f) {
+  const to = String(x?.to ?? "");
+  const address = /^([\w.>-]+\/)?t\d[0-9a-z]*$/.test(to);
+  if (x?.how !== "assistant") return address ? sender(to.split(">").pop()) : to;
+  if (!address) return `Assistant · ${to}`;
+  return String(sender(to.split(">").pop())).replace(/^(Another agent|t\d[0-9a-z]*)\b/, "Assistant");
+}
+
+// Who the chat's own agent is in its group chat: "Assistant" for a space's, its task's ref for a task's worker, else
+// its CLI's name ("Claude").
+export function selfName({ assistant = false, task = null, kind = null } = {}) {
+  if (assistant) return "Assistant";
+  if (task) return task;
+  return { claude: "Claude", codex: "Codex" }[kind] ?? "Agent";
+}
+
+// A name's initial for its avatar: a task ref's letters ("SHEP-4" → "S"), else its first letter.
+export const initialOf = (name) => (String(name ?? "").trim().match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase();
 
 // A user message the person didn't type, in words for its quiet row, else null: the session's first message when the
 // agent was started from a template (a coordinator), as a handoff, or for a task (herdr-task); and any message
 // another agent sent with hc. i: its place in the conversation; start: the first byte read (0: the log's start).
-export function briefLabel(x, i, { start = null, template = null, task = false, sender = (f) => f } = {}) {
-  if (x.from) return `Message from ${sender(x.from, x.text)}`;
+export function briefLabel(x, i, { start = null, template = null, task = false, sender = (f) => f, machineName = (m) => m, here = null } = {}) {
+  if (x.from) return `Message from ${fromName(x, sender, { machineName, here })}`;
   if (i !== 0 || start !== 0) return null;
   if (/^<restart>/.test(x.text ?? "")) return "New session";
   if (/^You are taking over this tab/.test(x.text ?? "") || /^herdr-handoff/.test(template ?? "")) return "Handoff from the previous agent";

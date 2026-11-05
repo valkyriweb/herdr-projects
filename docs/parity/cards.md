@@ -14,10 +14,10 @@ checks the window's askers say the same).
 
 | Element | Window (file:line, exact words/control) | Web (file:line) | State |
 |---|---|---|---|
-| Opens from | Ready row's Accept, task header, Assistant's live row (`mods/tasks/main.js:805`, `mods/chat/panel.js:156`, `mods/chat/main.js:798`), a 640×640 modal | `openAccept` from the same rows and headers; a push alert's `#accept=<task>` (`web/src/screens/Accept.tsx` fromLink) | ✓ |
+| Opens from | Review on a Ready row, the task header, Assistant's live row (`mods/tasks/main.js:805`, `mods/chat/panel.js:156`, `mods/chat/main.js:798`), a 640×640 modal | `openAccept` from the same rows and headers; a push alert's `#accept=<task>` (`web/src/screens/Accept.tsx` fromLink) | ✓ |
 | Title | `Accept HERD-4?`, only `HERD-4` once settled (`mods/accept-card/main.js:305`, `ACCEPT.title`) | `Accept.tsx:132` `A.ACCEPT.title(ref)` / `ref` | ✓ |
-| Task name under it | muted, one line, `x.title ?? p.title` (`main.js:306`) | `Dialog sub` from the evidence, else the snapshot's task name (`Accept.tsx:132`, `rowmenu.tsx:182`) | ✓ |
-| × at top right | closes as Cancel (`main.js:270`) | `Dialog closer` (`rowmenu.tsx:184`, aria-label Close) | ✓ |
+| Task name under it | muted, one line, `x.title ?? p.title` (`main.js:306`) | `Dialog sub` from the evidence, else the snapshot's task name (`Accept.tsx:132`, `rowmenu.tsx:173`) | ✓ |
+| × at top right | closes as Cancel (`main.js:270`) | `Dialog closer` (`rowmenu.tsx:175`, aria-label Close) | ✓ |
 | Esc | closes (`main.js:296`) | Dialog's Escape; over the open proof it closes the proof first, back to the card (`Accept.tsx:129`) | ✓ |
 | Reading | `Reading the task…` (dim) (`main.js:286`) | `A.ACCEPT.reading` (`Accept.tsx:145`) | ✓ |
 | Couldn't read | the error in red in the body, footer still Cancel + Accept (disabled) | the error in red in the body (`Accept.tsx:145`) | ✓ |
@@ -41,10 +41,12 @@ checks the window's askers say the same).
 | Element | Window (file:line, exact words/control) | Web (file:line) | State |
 |---|---|---|---|
 | Where | a float over the work area, bottom right, 360 wide (`mods/toasts/main.js`, `WIDTH`) | bottom right, `T.WIDTH` (`web/plugins/alerts/toasts.tsx:105`) | ✓ |
-| Where, phone | — | across the top, under the notch | ◇ phone: the bottom is the tab bar |
+| Where, phone | — | one compact toast across the top, under the notch: title on one line, at most one short line under it; a tap goes to it, a swipe up puts it away (`PhoneToast`) | ◇ phone: the bottom is the tab bar, and three cards would cover the screen |
+| Several at once, phone | — | one toast: `2 tasks need you` (`2 need you` with an Assistant, else `3 updates`), who under it; a tap opens Needs you (`T.together`) | ◇ phone: one toast at a time |
 | How many | the last 3 (`SHOWN`) | `useToasts().slice(-T.SHOWN)` (`toasts.tsx:73`) | ✓ |
 | Dot | red alert/error, amber warning, green success, accent otherwise (`tone`) | `DOT[T.tone(level)]` (`toasts.tsx:118`) | ✓ |
-| Title | bold, one line: `HERD-4 · Needs you`, `HERD-4 · Finished`, `tt-repo Assistant · …` (`lib/ui.js` toastWho) | `T.toastTitle(who, …)`, `T.assistantWho` (`toasts.tsx:42,56,63`) | ✓ |
+| Title | bold, one line: `HERD-4 · Needs you`, `HERD-4 · Finished`, `tt-repo Assistant · …`; another machine's task `HERD-4 on vm · …` (`lib/ui.js` toastWho) | `T.toastTitle(who, …)`, `T.assistantWho`, `taskWho` (the machine's name, never `m3:HERD-4`; `web/shared/alerts.ts`) | ✓ |
+| One event, one toast | one toast per agent that turns blocked | the service gives an agent asking with a card one need, not a second for its waiting (`service/compat.ts`); a later need of the same chat changes its toast (`T.withToast` key); one answered elsewhere goes | ✓ fixed (a question showed twice: `Question for you` and its words) |
 | Body | muted, 3 lines at most, cut at 140 (`main.js` LINES, BODY_MAX) | `line-clamp-3`, `T.clip(body, T.BODY_MAX)` (`toasts.tsx:121`) | ✓ |
 | × | shows on hover, its place always kept (`main.js` item) | shows on hover, always to a finger (`toasts.tsx:126`, aria-label Dismiss) | ◇ touch has no hover |
 | Click | runs its action (goes to the agent) and closes it | goes to its chat (`goChat`/`openTask`) and closes it (`toasts.tsx:114`) | ✓ |
@@ -74,7 +76,7 @@ checks the window's askers say the same).
 
 | Element | Window (file:line, exact words/control) | Web (file:line) | State |
 |---|---|---|---|
-| Confirm: frame | title (semibold), detail (muted), the verb, Cancel (`mods/confirm-chat/main.js:43`) | `Dialog` (`web/src/rowmenu.tsx:146`) | ✓ |
+| Confirm: frame | title (semibold), detail (muted), the verb, Cancel (`mods/confirm-chat/main.js:43`) | `Dialog` (`web/src/rowmenu.tsx:137`) | ✓ |
 | Confirm: the verb | says what it does, never "Confirm"; plain primary (`main.js:47`) | the verb, plain `Primary` | ✓ |
 | Confirm: Enter / Esc | Esc cancels; Enter runs a safe ask, does nothing on a destructive one | Esc cancels; `safe`: Cancel has the focus, so Enter cancels | ◇ a browser's Enter presses the focused button; nothing destructive runs |
 | Close space | `Close “gtm”?` (`Close this space?` for ~), `Its tabs close and every program in them ends.`, `Close space` (`lib/coordinator.js:404`, `mods/spaces-chat/popups.js:28`) | `CF.CLOSE_SPACE` (`web/plugins/places/client.tsx:663`), then the window's own close (`service/actions.ts` space-remove) | ✓ |

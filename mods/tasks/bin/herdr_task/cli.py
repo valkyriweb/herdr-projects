@@ -22,6 +22,7 @@ from .automations import auto_list, cmd_auto, cmd_scheduler, cmd_track, EVENTS, 
 from .machines import cmd_assistants, cmd_machines, cmd_sync_auto, cmd_tell
 from .autopilot import cmd_autopilot, cmd_complete, cmd_progress
 from .home import cmd_home
+from .assistant_settings import cmd_session_note
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -48,16 +49,17 @@ def install_secret(machine):
             f.write(digest)
 
 
-def remote(machine, argv):
-    """Runs herdr-task on the machine that holds the folder (installing it there first), then
-    names a new tab from here, where the window is."""
+def remote_run(machine, argv, timeout=None):
+    """herdr-task on another machine (installed there first when it isn't this one): its run,
+    output kept. timeout: seconds before herdr-core gives up on it."""
     body = bundle()
     digest = hashlib.sha1(body).hexdigest()
     mark = os.path.join(STORE, ".remote", machine)
     target = ".local/bin/herdr-task"
     try:
         with open(mark) as f:
-            installed = f.read().strip() == digest
+            # "source": it holds herdr-task's source, and runs its own
+            installed = f.read().strip() in (digest, "source")
     except OSError:
         installed = False
 
@@ -67,6 +69,13 @@ def remote(machine, argv):
             raise Fail(f"herdr-task isn't current on {machine}, and copies to other machines wait: {held}. "
                        "Run `shepherdr doctor` once the install is whole.")
         guard(["hc"])
+        # A machine with Herdr's own install (its window's) holds herdr-task's source: copies come from there, it's
+        # never written to (machines.py, the same rule). Its link ~/.local/bin/herdr-task leads into that install.
+        if run(["hc", "exec", "--on", machine, "--", "test", "-d", ".config/herdr-app/mods/tasks/bin/herdr_task"]).returncode == 0:
+            os.makedirs(os.path.dirname(mark), exist_ok=True)
+            with open(mark, "w") as f:
+                f.write("source")
+            return
         r = subprocess.run(["hc", "file", "write", "--on", machine, target], input=body, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         if r.returncode != 0:
             raise Fail(f"Couldn't install herdr-task on {machine}: {r.stderr.decode().strip()}")
@@ -79,15 +88,23 @@ def remote(machine, argv):
     if not installed and not sync_held():
         install()
     install_secret(machine)
-    if argv[:1] == ["tick"]:
-        # Its start limits live in Settings here, where the window is (HERD-40).
-        from .settings import machine_limits
-        argv = [*argv, "--machine", machine, "--hold", json.dumps(machine_limits(machine))]
-    call = ["hc", "exec", "--on", machine, "--", "sh", "-c", 'exec "$HOME/.local/bin/herdr-task" "$@"', "herdr-task", *argv]
+    wait = ["--timeout", str(timeout)] if timeout else []
+    call = ["hc", "exec", "--on", machine, *wait, "--", "sh", "-c", 'exec "$HOME/.local/bin/herdr-task" "$@"', "herdr-task", *argv]
     r = run(call)
     if r.returncode == 127 or "not found" in r.stderr and not r.stdout:
         install()
         r = run(call)
+    return r
+
+
+def remote(machine, argv):
+    """Runs herdr-task on the machine that holds the folder (installing it there first), then
+    names a new tab from here, where the window is."""
+    if argv[:1] == ["tick"]:
+        # Its start limits live in Settings here, where the window is (HERD-40).
+        from .settings import machine_limits
+        argv = [*argv, "--machine", machine, "--hold", json.dumps(machine_limits(machine))]
+    r = remote_run(machine, argv)
     sys.stderr.write(r.stderr)
     out = r.stdout
     if r.returncode == 0 and "--json" in argv:
@@ -103,6 +120,14 @@ def remote(machine, argv):
                 if isinstance(d.get(k), str) and "/" not in d[k]:
                     d[k] = f"{machine}/{d[k]}"
             out = json.dumps(d) + "\n"
+        # An automation's view (auto list, show, add...) is that machine's: it says so (SHEP-43).
+        if argv[:1] == ["auto"] and argv[1:2] != ["feed"]:
+            views = d if isinstance(d, list) else [d] if isinstance(d, dict) else []
+            for v in views:
+                if isinstance(v, dict) and "ref" in v and v.get("machine") is None:
+                    v["machine"] = machine
+            if views:
+                out = json.dumps(d) + "\n"
     sys.stdout.write(out)
     return r.returncode
 
@@ -151,6 +176,13 @@ def main():
         c.add_argument("--agent", help="agent key (claude, codex, pi, pii, grok, hermes, amp, cursor, or a program on PATH)")
         c.add_argument("--argv", help="how to start it, as a JSON list (default from --agent)")
 
+    def when_opts(c, edit=False):
+        # SHEP-38: Scheduled, a one-off start at a time (a repeating one is an automation: auto add --every).
+        g = c.add_mutually_exclusive_group()
+        g.add_argument("--at", help="start it by itself at this time, this machine's time zone: \"2026-11-06 09:00\", "
+                                    "\"tomorrow 9:00\", \"fri 8:15\", \"18:00\"" + (" (\"\" unschedules: back to To do)" if edit else ""))
+        g.add_argument("--in", dest="in_", metavar="SPAN", help="start it by itself this long from now: \"6h\", \"90m\", \"2 days\"")
+
     cmd("where", cmd_where, "the task folder and store for a folder", id=False)
     c = cmd("list", cmd_list, "list tasks", id=False)
     c.add_argument("--all", action="store_true", help="every folder's tasks on this machine")
@@ -167,16 +199,18 @@ def main():
     c.add_argument("--after", help="start only once these tasks are done: 3,5; another folder's by its id (WEB-2), another "
                                    "machine's with the machine first (vm-b:HAT-12)")
     c.add_argument("--space", help="the space it's for, whose settings it takes (default: yours)")
+    when_opts(c)
     c = cmd("show", cmd_show, "one task")
     c.add_argument("--evidence", action="store_true", help="with what its Accept card shows: commits, changed files, checks and its proof")
     c = cmd("start", cmd_start, "start a task's agent (no tab: an hc child of the space's coordinator)")
     agent_opts(c)
     c.add_argument("--space")
     c.add_argument("--parent", help="a coordinator's terminal: the agent's hc parent (default: the space's coordinator)")
-    c.add_argument("--now", action="store_true", help="skip the queue")
+    c.add_argument("--now", action="store_true", help="skip the queue (a scheduled task: start it now)")
     g = c.add_mutually_exclusive_group()
     g.add_argument("--here", action="store_true")
     g.add_argument("--worktree", action="store_true")
+    when_opts(c)
     c = cmd("ready", cmd_ready, "a worker's task is finished (worktree tasks: committed): it waits in Ready for the person's Accept (opens a pull request on GitHub)")
     c.add_argument("--summary", help=f"what the person now sees or can do, in plain words, at most {SUMMARY_MAX} characters "
                                      "(no file names, flags or jargon); longer is refused")
@@ -202,7 +236,7 @@ def main():
     c = cmd("accept", cmd_accept, "the person's Accept on a Ready task: merges first when there is something to merge, then done")
     agent_opts(c)
     c.add_argument("--space")
-    cmd("reopen", lambda a: cmd_state(a, "reopen"), "undo done or ready; a queued task goes back to to do")
+    cmd("reopen", lambda a: cmd_state(a, "reopen"), "undo done or ready; a queued or scheduled task goes back to to do")
     cmd("unarchive", cmd_unarchive, "bring an archived task back into its list (only when the person asks; writing to it does too)")
     c = cmd("edit", cmd_edit, "change a task")
     c.add_argument("--title")
@@ -214,6 +248,7 @@ def main():
     g = c.add_mutually_exclusive_group()
     g.add_argument("--here", action="store_true")
     g.add_argument("--worktree", action="store_true")
+    when_opts(c, edit=True)
     cmd("rm", cmd_rm, "remove a task")
     c = cmd("config", cmd_config, "this folder's settings", id=False)
     c.add_argument("--prefix", help="task ids' prefix, 2 to 5 letters (HAT -> HAT-4); unique on this machine")
@@ -250,6 +285,8 @@ def main():
             c.add_argument("--every", help=HOW)
             c.add_argument("--on", help="events, comma-separated: " + ", ".join(EVENTS))
             c.add_argument("--match", help="only tasks whose title has these words, or branch:<glob>")
+            c.add_argument("--from", dest="from_", help="hear another folder's task events instead of this one's: "
+                           "vm-b:~/dev/app (another machine linked to this one) or a folder here (\"\" clears)")
             c.add_argument("--agent")
             c.add_argument("--space", help="the space its tasks start in (default: yours)")
             c.add_argument("--parent", help="its tasks' agents' parent (default: you)")
@@ -265,31 +302,43 @@ def main():
     c.add_argument("--all", action="store_true", help="every folder's on this machine")
     c.set_defaults(fn=auto_list)
     auto_cmd("show", "one automation")
+    auto_cmd("feed", "this folder's tasks as events read them, as JSON (asked by another machine's --from)", id=False)
     auto_cmd("pause", "stop it firing")
     auto_cmd("resume", "let it fire again")
     ap = sub.add_parser("autopilot", help="a space's Assistant woken on a schedule or by events, with the heartbeat "
-                        "(one schedule, events and heartbeat for every space; each space switches it on)").add_subparsers(dest="autopilot")
+                        "(Everywhere's schedule, events and heartbeat, unless a space sets its own; each space switches it on)").add_subparsers(dest="autopilot")
 
     def ap_cmd(name, help, space=True, everywhere=False):
         c = ap.add_parser(name, help=help)
         if space:
             c.add_argument("--space", help="the space (default: the Assistant's own)")
         if everywhere:
-            c.add_argument("--everywhere", action="store_true", help="the schedule and events every space works from")
+            c.add_argument("--everywhere", action="store_true", help="Everywhere's: what every space works from unless it sets its own")
+        # A space on another machine is done there (autopilot.forward), told its name and folder from the window here.
+        c.add_argument("--name", help=argparse.SUPPRESS)
+        c.add_argument("--space-folder", help=argparse.SUPPRESS)
         c.add_argument("--json", action="store_true")
         c.set_defaults(fn=cmd_autopilot)
         return c
-    ap_cmd("show", "this space's Autopilot (or --everywhere: the one schedule and events): when it wakes, next and last wake, progress", everywhere=True)
-    c = ap.add_parser("list", help="the schedule and events every space works from, and each space's Autopilot on this machine")
+    ap_cmd("show", "this space's Autopilot (or --everywhere): when it wakes and from what heartbeat, its own or Everywhere's, next and last wake, progress", everywhere=True)
+    c = ap.add_parser("list", help="Everywhere's schedule and events, and each space's Autopilot, on this machine and every machine the window lists")
+    c.add_argument("--here", action="store_true", help="only this machine's spaces")
     c.add_argument("--json", action="store_true")
     c.set_defaults(fn=cmd_autopilot)
     ap_cmd("on", "turn it on in this space (makes the heartbeat file)")
     ap_cmd("off", "turn it off in this space")
-    c = ap_cmd("set", "when every space on Autopilot wakes (the same in every space: --everywhere; --space refuses)", everywhere=True)
-    c.add_argument("--every", help=HOW + ' "" or off: no schedule.')
-    c.add_argument("--on", help="task events that wake it, comma-separated (\"\": none): " + ", ".join(EVENTS))
+    c = ap_cmd("set", "when this space's Autopilot wakes and from what (--everywhere: every space that doesn't set its own); "
+               "kept in Shepherdr settings", everywhere=True)
+    c.add_argument("--every", help=HOW + ' "" or off: no schedule; default: follow Everywhere\'s.')
+    c.add_argument("--on", help="task events that wake it, comma-separated (\"\": none; default: Everywhere's): " + ", ".join(EVENTS))
+    c.add_argument("--heartbeat", help="its heartbeat's words (default: Everywhere's)")
+    c.add_argument("--direction", help="one line it steers toward (\"\" or default: none, it works out what matters from the project)")
+    c = ap.add_parser("check", help="check a schedule's words without saving them")
+    c.add_argument("--every", required=True)
+    c.add_argument("--json", action="store_true")
+    c.set_defaults(fn=cmd_autopilot)
     ap_cmd("run-now", "wake its Assistant now (queued until it is idle)")
-    ap_cmd("heartbeat", "the heartbeat file every space works from (made with a starter when missing)", everywhere=True)
+    ap_cmd("heartbeat", "the heartbeat this space works from (--everywhere: Everywhere's), and Everywhere's file from before (made with a starter when missing)", everywhere=True)
     c = sub.add_parser("progress", help="an Assistant on Autopilot saves its progress and next step: progress \"Started HAT-4; next: check its review\"")
     c.add_argument("text")
     c.add_argument("--space")
@@ -360,6 +409,9 @@ def main():
     c = sub.add_parser("_allow")  # Codex's PermissionRequest hook (own_argv)
     c.add_argument("--command", required=True)
     c.set_defaults(fn=cmd_allow, json=False)
+    c = sub.add_parser("_session-note")  # the chat's SessionStart hook (mods/chat/session-note.sh): an Assistant's extra words
+    c.add_argument("terminal")
+    c.set_defaults(fn=cmd_session_note, json=False)
     c = sub.add_parser("_track")
     c.add_argument("id")
     c.add_argument("address")

@@ -9,6 +9,10 @@
   shepherdr web serve-from <machine|here> [--take-link]   serve the web app from another machine linked over
                                         herdr-core (an always-on Mac mini or cloud VM), installing it there; here: back
   shepherdr web status                  which machine serves it, and its link
+  shepherdr secrets move-to <machine|here> [--restore]   the machine that keeps the secrets (the vault agents use by
+                                        name): moves them there, with a backup on both; --restore: the old one takes its
+                                        backup back when the other is gone for good
+  shepherdr secrets where               which machine keeps them
   shepherdr uninstall  [--root DIR] [--dry-run]
   shepherdr doctor     [--root DIR]: checks the install; once it's whole, lets the sync to other machines go
   shepherdr version
@@ -48,7 +52,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "3.1.1"
+VERSION = "3.1.9"
 HERDR_APP_MIN = "0.1.12"
 HC_MIN = "0.1.17"
 
@@ -323,7 +327,7 @@ def unit_text(root, bun):
     main = os.path.join(root, SHARE, "service", "main.ts")
     # hc, herdr-task and the helpers live in ~/.local/bin, which a user service's PATH lacks; and the tools herdr-task
     # and the agents run (gh, git, node, agent-browser, the CLIs…) where this install finds them (mise, nvm, brew…)
-    tools = ["gh", "git", "node", "agent-browser", "claude", "codex", "python3", "tailscale", "whisper-cli", "pw-record", "pw-play", "jq"]
+    tools = ["gh", "git", "node", "agent-browser", "claude", "codex", "python3", "tailscale", "pw-record", "pw-play", "jq"]
     found = [os.path.dirname(os.path.realpath(p)) if os.path.basename(os.path.realpath(p)) == t else os.path.dirname(p)
              for t in tools for p in [shutil.which(t)] if p]
     dirs = [os.path.join(root, BIN), os.path.dirname(bun), *found, "/usr/local/bin", "/opt/homebrew/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
@@ -663,7 +667,7 @@ def check_tools(root_is_home):
         if not shutil.which(name):
             bad.append(f"{name} isn't on the PATH")
     optional = {"gh": "pull requests (tasks)", "agent-browser": "the task browser (0.41.1)", "node": "the task browser",
-                "bun": "voice calls and dictation", "pw-record": "dictation", "whisper-cli": "dictation"}
+                "bun": "voice calls and dictation", "pw-record": "dictation"}
     for name, what in optional.items():
         if not shutil.which(name):
             notes.append(f"optional: {name} isn't on the PATH ({what})")
@@ -989,9 +993,6 @@ def cmd_doctor(a):
         s_bad, s_notes = serve_check(root)
         bad += s_bad
         t_notes += s_notes
-    model = r.p(f"{APP}/data/whisper/ggml-base.bin")
-    if not os.path.isfile(model):
-        warn.append(f"dictation's model isn't there: `shepherdr whisper` downloads it ({APP}/data/whisper/ggml-base.bin, 148 MB)")
     say(f"Shepherdr {rec.get('version')} under {root} (from {rec.get('source')}, {rec.get('at')})")
     for x in bad:
         say(f"  ✗ {x}")
@@ -1122,29 +1123,6 @@ def cmd_uninstall(a):
     return 0
 
 
-# ---- whisper ------------------------------------------------------------------------------------
-
-def cmd_whisper(a):
-    """Dictation's model (lib/addons.json, the voice add-on): downloaded once, checked by its sha256."""
-    root = os.path.realpath(a.root or real_home())
-    m = next(x for x in json.load(open(os.path.join(find_source(a.source, load_record(root)), "lib", "addons.json")))["addons"] if x["id"] == "voice")["model"]
-    dest = os.path.join(root, APP, m["path"])
-    if os.path.isfile(dest) and sha_bytes(read(dest)) == m["sha256"]:
-        say(f"already there: {dest}")
-        return 0
-    tmp = dest + ".part"
-    os.makedirs(os.path.dirname(dest), exist_ok=True)
-    say(f"downloading {m['url']} ...")
-    if subprocess.run(["curl", "-fL", "--retry", "3", "-o", tmp, m["url"]]).returncode != 0:
-        raise Stop("download failed")
-    if sha_bytes(read(tmp)) != m["sha256"]:
-        os.remove(tmp)
-        raise Stop("the download's sha256 doesn't match: not kept")
-    os.replace(tmp, dest)
-    say(f"kept: {dest}")
-    return 0
-
-
 # ---- web: Serve from --------------------------------------------------------------------------------
 
 def restore_share(root):
@@ -1248,10 +1226,54 @@ def cmd_web(a):
     raise Stop("shepherdr web serve-from <machine|here> [--take-link] | shepherdr web status")
 
 
+def cmd_secrets(a):
+    if a.action == "move-to" and not (a.machine or a.to_id):
+        raise Stop("which machine? shepherdr secrets move-to <machine|here> (hc machine ls lists them)")
+    bun = bun_path()
+    script = next((p for p in (os.path.join(real_home(), SHARE, "service", "secrets-move.ts"),
+                               os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "service", "secrets-move.ts"))
+                   if os.path.isfile(p)), None)
+    if not bun or not script:
+        raise Stop("Shepherdr's service isn't installed here (it needs Bun): ./install.sh first")
+    argv = [bun, script, a.action] + ([a.machine] if a.machine else []) + (["--to-id", a.to_id] if a.to_id else []) \
+        + (["--restore"] if a.restore else []) + (["--json"] if a.json else [])
+    return subprocess.run(argv).returncode
+
+
+def hand_over(a, argv):
+    """`shepherdr update` runs the installed copy, which a pull doesn't change: installing with it wrote the old version
+    (and its old steps), so it took a second run to say the new one. When the source's own installer is another, it
+    does the install instead, told where its source is."""
+    if os.environ.get("SHEPHERDR_HANDED_OVER"):
+        return
+    root = os.path.realpath(a.root or real_home())
+    rec = load_record(root)
+    if a.web or (a.cmd == "update" and not rec):
+        try:
+            web = json.load(open(os.path.join(root, WEB_RECORD)))
+        except (OSError, ValueError):
+            web = {}
+        given = a.source or web.get("source")
+    else:
+        given = a.source
+    try:
+        src = find_source(given, rec) if given or rec else None
+    except Stop:
+        return
+    me, new = os.path.realpath(__file__), os.path.join(src or "", "bin", "shepherdr")
+    if not src or not os.path.isfile(new) or os.path.realpath(new) == me or read(new) == read(me):
+        return
+    say(f"(the installer in {src} runs it: it's the newer one)")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os.execve(sys.executable, [sys.executable, new, *argv, *([] if a.source else ["--source", src])],
+              dict(os.environ, SHEPHERDR_HANDED_OVER="1"))
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="shepherdr", description="Install, update, check or remove Shepherdr in Herdr.")
     sub = ap.add_subparsers(dest="cmd")
-    for name in ("install", "update", "uninstall", "doctor", "whisper"):
+    for name in ("install", "update", "uninstall", "doctor"):
         c = sub.add_parser(name)
         c.add_argument("--root", help="install under this folder instead of your home (a scratch try: it mirrors "
                                       ".config/herdr-app, .local/bin and .config/herdr-core/templates)")
@@ -1272,9 +1294,17 @@ def main(argv):
     w.add_argument("machine", nargs="?", help="a machine linked over herdr-core (hc machine ls), or here")
     w.add_argument("--take-link", action="store_true", help="that machine's /shepherdr is shared to something else: set it aside (moving away puts it back)")
     w.add_argument("--json", action="store_true")
+    s = sub.add_parser("secrets", help="which machine keeps the secrets (Settings › Secrets › Kept on)")
+    s.add_argument("action", choices=["move-to", "where"])
+    s.add_argument("machine", nargs="?", help="a machine linked over herdr-core (hc machine ls), or here")
+    s.add_argument("--restore", action="store_true", help="here: take this machine's backup back (the other one is gone for good)")
+    s.add_argument("--to-id", help=argparse.SUPPRESS)
+    s.add_argument("--json", action="store_true")
     sub.add_parser("version")
     a = ap.parse_args(argv)
     try:
+        if a.cmd in ("install", "update"):
+            hand_over(a, argv)
         if a.cmd == "install":
             return cmd_install_web(a) if a.web else cmd_install(a)
         if a.cmd == "update":
@@ -1286,10 +1316,10 @@ def main(argv):
             return cmd_uninstall(a)
         if a.cmd == "doctor":
             return cmd_doctor(a)
-        if a.cmd == "whisper":
-            return cmd_whisper(a)
         if a.cmd == "web":
             return cmd_web(a)
+        if a.cmd == "secrets":
+            return cmd_secrets(a)
         if a.cmd == "version":
             say(f"shepherdr {VERSION}")
             return 0

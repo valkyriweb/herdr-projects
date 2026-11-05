@@ -7,7 +7,7 @@ import { join } from "node:path";
 import type { Hub } from "./hub.ts";
 import type { Live } from "./live.ts";
 import { HOME } from "./paths.ts";
-import { READ_LISTS, taskLists } from "../core/tasklists.js";
+import { READ_LISTS, taskLists, fileIn } from "../core/tasklists.js";
 import * as T from "../core/tasks.js";
 // The core is plain JavaScript; its defaults read as narrow types to TypeScript.
 const { place, refOf, taskKey, autoPrefix, reportOf, secondLine, leftOf, queueReason, machineOf } = T as any;
@@ -16,9 +16,10 @@ const { spacesFromDoc, sidebarOf, assistantOf, isUnread } = S as any;
 import * as N from "../core/notify.js";
 const { spaceLevel } = N as any;
 import * as AP from "../core/autopilot.js";
-const { everywhereOf, pilotFor, STARTER } = AP as any;
+const { everywhereOf, pilotFor, levelOf, STARTER, currentBeat } = AP as any;
 
 const SHARED = join(HOME, ".config", "herdr-app", "shared.json");
+const SETTINGS = process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json");
 const SHELL = /^(ba|z|fi|da|k|tc|c)?sh$|^nu$|^pwsh$/;
 
 /** Runs a command on a machine through herdr-core (null: here). Output comes back base64. */
@@ -73,22 +74,17 @@ export class Model {
   private spaces: any[] = [];
   /** Each space folder's git, as the window's sidebar reads it: { name (the repo), linked (a worktree), repo }, null:
    *  not a repo. Read once, then again each minute. */
-  private git = new Map<string, { info: { name: string; linked: boolean; repo: string; branch?: string | null; ahead?: number; behind?: number } | null; at: number }>();
+  private git = new Map<string, { info: { name: string; linked: boolean; repo: string; branch?: string | null } | null; at: number }>();
   private async readGit(spaces: any[]) {
     const due = spaces.filter((s) => s.folder && Date.now() - (this.git.get(`${s.machine ?? ""}|${s.folder}`)?.at ?? 0) > 60_000);
     await Promise.all(due.slice(0, 12).map(async (s) => {
       const key = `${s.machine ?? ""}|${s.folder}`;
       this.git.set(key, { info: this.git.get(key)?.info ?? null, at: Date.now() });
-      // as the window's sidebar reads it: its repo, and its branch and ahead/behind (no optional locks: reads only)
-      const r = await exec(this.hub, ["sh", "-c", 'cd "$1" 2>/dev/null && git rev-parse --show-toplevel --path-format=absolute --git-common-dir 2>/dev/null && git --no-optional-locks -c core.fsmonitor=false status --porcelain=v2 --branch -uno 2>/dev/null | grep "^# branch\\."', "git", s.folder], s.machine ?? null, 20).catch(() => null);
-      const [top, repo, ...rest] = (r?.stdout ?? "").trim().split("\n");
+      // as the window's sidebar reads it: its repo and its branch (reads only: nothing under .git is written)
+      const r = await exec(this.hub, ["sh", "-c", 'cd "$1" 2>/dev/null && git rev-parse --show-toplevel --path-format=absolute --git-common-dir 2>/dev/null && { git symbolic-ref --short -q HEAD 2>/dev/null || echo; }', "git", s.folder], s.machine ?? null, 20).catch(() => null);
+      const [top, repo, head] = (r?.stdout ?? "").split("\n").map((l) => l.trim());
       const name = repo ? (repo.endsWith("/.git") ? repo.slice(0, -5) : repo.replace(/\.git$/, "")).split("/").pop()! : "";
-      let branch: string | null = null, ahead = 0, behind = 0;
-      for (const l of rest) {
-        if (l.startsWith("# branch.head ")) branch = l.slice(14) === "(detached)" ? null : l.slice(14);
-        else if (l.startsWith("# branch.ab ")) { const [a, b] = l.slice(12).split(" "); ahead = Math.abs(parseInt(a, 10)) || 0; behind = Math.abs(parseInt(b, 10)) || 0; }
-      }
-      this.git.set(key, { info: top && repo ? { name, linked: repo !== `${top}/.git`, repo, branch, ahead, behind } : null, at: Date.now() });
+      this.git.set(key, { info: top && repo ? { name, linked: repo !== `${top}/.git`, repo, branch: head || null } : null, at: Date.now() });
     }));
     if (due.length) this.soon();
   }
@@ -115,30 +111,62 @@ export class Model {
   }
 
   private autopilot: Record<string, any> = {};
-  /** Autopilot's one setting on this machine (Everywhere's schedule, events, heartbeat file and its words) */
+  /** Each other machine's Autopilot file (its ~/.herdr/tasks/.autopilot.json, read with its lists): its spaces' switches
+   *  and wakes, kept and woken there. */
+  private pilots = new Map<string, any>();
+  /** Shepherdr settings as this machine has them (each space's own Autopilot, another machine's by "vm/sp1"). */
+  private settings: any = {};
+  /** Autopilot as Everywhere has it on this machine (herdr-task's view: its schedule, events, heartbeat's words and
+   *  what wakes it in words) */
   pilotEverywhere: any = { ...everywhereOf(null), words: STARTER };
   private reading: Promise<void> | null = null;
-  /** Autopilot's one setting and each space's on this machine, as herdr-task tells it (its switch, next and last wake,
-   *  progress), with the heartbeat's words (a file not made yet reads as herdr-task's starter, as the window's box
-   *  opens it). One read at a time. */
+  /** Everywhere's Autopilot and each space's on this machine, as herdr-task tells it (what applies there, its own or
+   *  Everywhere's, its switch, next and last wake, progress, the heartbeat's words). One read at a time. */
   readAutopilot() {
     return this.reading ??= (async () => {
+      try { this.settings = JSON.parse(readFileSync(SETTINGS, "utf8")) ?? {}; } catch {}
       try {
-        const p = Bun.spawn(["herdr-task", "autopilot", "list", "--json"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
-        const out = JSON.parse(await new Response(p.stdout).text() || "{}");
-        const words = (file: string | null) => { try { return file && existsSync(file) ? readFileSync(file, "utf8") : STARTER; } catch { return STARTER; } };
+        // this machine's own (--here: other machines' are read with their lists); a herdr-task from before --here lists only its own
+        const listed = async (args: string[]) => {
+          const p = Bun.spawn(["herdr-task", "autopilot", "list", ...args, "--json"], { stdout: "pipe", stderr: "ignore", stdin: "ignore" });
+          const text = await new Response(p.stdout).text();
+          return (await p.exited) === 0 ? text : null;
+        };
+        const out = JSON.parse((await listed(["--here"])) ?? (await listed([])) ?? "{}");
         const e = out.everywhere ?? {};
-        this.pilotEverywhere = { ...everywhereOf({ everywhere: e }), heartbeat: e.heartbeat ?? null, words: words(e.heartbeat ?? null) };
+        // a herdr-task from before Settings kept the heartbeat gives only its file
+        const file = (f: string | null) => { try { return f && existsSync(f) ? currentBeat(readFileSync(f, "utf8")) : STARTER; } catch { return STARTER; } };
+        this.pilotEverywhere = { ...everywhereOf({ everywhere: e }), trigger: e.trigger ?? undefined, words: e.heartbeat_text ?? file(e.heartbeat ?? null) };
         const list = Array.isArray(out.spaces) ? out.spaces : [];
-        this.autopilot = Object.fromEntries(list.map((a: any) => [a.space, pilotFor({ everywhere: e, spaces: list }, a.space)]));
+        this.autopilot = Object.fromEntries(list.map((a: any) => [a.space, a]));
       } catch {}
     })().finally(() => { this.reading = null; });
   }
 
-  /** What applies in a space on this machine: its switch (off until herdr-task has a record of it), the one schedule,
-   *  events and heartbeat. */
+  /** A space's Autopilot as herdr-task has it, when it has a record of it. */
+  pilotKnown(id: string) { return this.autopilot[id] ?? null; }
+
+  /** What applies in a space on this machine: its switch (off until herdr-task has a record of it), its schedule,
+   *  events and heartbeat's words (its own or Everywhere's). */
   pilotOf(id: string) {
-    return { ...(this.autopilot[id] ?? pilotFor({ everywhere: this.pilotEverywhere }, id)), words: this.pilotEverywhere.words, heartbeat: this.pilotEverywhere.heartbeat };
+    const cut = id.indexOf("/");
+    if (cut > 0) {
+      // another machine's: its own record there, what applies by this machine's settings (pushed to it as its own);
+      // with no heartbeat in Settings it works from its machine's file, made with the starter when switched on
+      const file = this.pilots.get(id.slice(0, cut)) ?? {};
+      const a = pilotFor({ ...file, spaces: { [id]: file.spaces?.[id.slice(cut + 1)] ?? {} } }, id, this.settings);
+      const words = currentBeat(levelOf(this.settings, id).heartbeat ?? levelOf(this.settings).heartbeat ?? STARTER);
+      return { ...a, words };
+    }
+    const a = this.autopilot[id] ?? pilotFor({ everywhere: this.pilotEverywhere }, id);
+    return { ...a, words: a.heartbeat_text ?? this.pilotEverywhere.words };
+  }
+
+  /** A space's Autopilot read again now (its switch flipped, or woken): this machine's, or its machine's lists. */
+  async readPilot(id: string) {
+    const cut = id.indexOf("/");
+    await (cut > 0 ? this.readLists(id.slice(0, cut)) : this.readAutopilot());
+    this.soon();
   }
 
   private readShared() {
@@ -159,6 +187,7 @@ export class Model {
     try {
       const r = await sh(this.hub, READ_LISTS, [], m);
       if (r.code !== 0) return;
+      if (m) this.pilots.set(m, fileIn(r.stdout, ".autopilot.json") ?? {});
       this.lists.set(m, taskLists(r.stdout).map((d: any) => ({ ...d, machine: m, prefix: d.prefix || autoPrefix(d.folder), tasks: Array.isArray(d.tasks) ? d.tasks : [] })));
     } catch {}
   }
@@ -201,8 +230,9 @@ export class Model {
         // the space whose Assistant started it (herdr-task keeps it): the window counts and lists it there
         space: task.space ? (list.machine ? `${list.machine}/${task.space}` : task.space) : null,
         worker, archived: !!task.archived, pinned: pins.has(taskKey(list, task)),
+        scheduled_for: task.state === "scheduled" ? task.scheduled_for ?? null : null,
         started: task.started ?? null, ready_at: task.ready_at ?? null, done_at: task.done_at ?? null,
-        summary: task.summary ?? null, pr: task.pr ?? null, prompt: String(task.prompt ?? "").slice(0, 500), why: p.why ?? null,
+        summary: task.summary ?? null, details: task.details ?? null, pr: task.pr ?? null, prompt: String(task.prompt ?? "").slice(0, 500), why: p.why ?? null,
         worktree: task.worktree ?? list.folder, base: task.base ?? null, start: task.start ?? null, branch: task.branch ?? null,
         lastLog: !worker && last?.log ? { path: last.log, kind: last.agent ?? "claude" } : null,
       };
@@ -224,10 +254,10 @@ export class Model {
         // Jump's newest-first spaces
         changedAt: Math.max(0, ...(s.tabs ?? []).flatMap((t: any) => t.terminals ?? []).map((a: string) => Number((this.hub.terminals.get(a) as any)?.status_ms) || 0)),
         section: bar.sections.find((x: any) => (x.spaces ?? []).includes(s.id))?.id ?? null,
-        assistant: k?.address ?? null, assistantStatus: (k as any)?.status?.state ?? null,
-        autopilot: !s.machine && this.pilotOf(s.id).on ? { next: this.pilotOf(s.id).next_run ?? null } : null,
+        assistant: k?.address ?? null, turn: (k as any)?.turn ?? 0, assistantStatus: (k as any)?.status?.state ?? null,
+        autopilot: this.pilotOf(s.id).on ? { next: this.pilotOf(s.id).next_run ?? null } : null,
         git: this.gitOf(s),
-        pilot: s.machine ? null : this.pilotOf(s.id),
+        pilot: this.pilotOf(s.id),
         unread: isUnread(k, seen) && spaceLevel(this.value("notify") ?? {}, s.id) !== "Off",
         red: here.filter((r) => r.section === "needs").length + ((k as any)?.status?.state === "blocked" ? 1 : 0),
         green: here.filter((r) => r.section === "ready").length,

@@ -5,21 +5,23 @@
 // earlier…). Their words and rules come from core/chat-view.js, as the window's do.
 import clsx from 'clsx'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { CheckIcon as TickIcon, ChevronDownIcon, ChevronRightIcon, PaperClipIcon } from '@heroicons/react/16/solid'
+import { ArrowRightIcon, ChatBubbleLeftEllipsisIcon, CheckIcon as TickIcon, ChevronDownIcon, ChevronRightIcon, PaperClipIcon } from '@heroicons/react/16/solid'
 import { act, has, openTask, registry } from '@client/kernel.ts'
-import { CheckIcon, CopyIcon, PageIcon, ReplyIcon, SmileIcon, TermIcon } from '@client/ui.tsx'
+import { AutopilotIcon, CheckIcon, CopyIcon, PageIcon, ReplyIcon, SmileIcon, TermIcon } from '@client/ui.tsx'
 import * as CV from '@core/chat-view.js'
 import type { Chat, Message, ReplyQuote } from '@shared/types.ts'
-import { openAccept } from '@client/screens/Accept.tsx'
+import { openAccept, useAccepting } from '@client/screens/Accept.tsx'
 import { ForkIcon, openPicker, RewindIcon } from '@plugins/reactions/client.tsx'
 import { Markdown } from './markdown.tsx'
 import { jumpTo, startReply } from './reply.ts'
 
-const { WORDS, clock, bandActs, imagesLine, fitThumbs, THUMB_GAP, questionsBelow } = CV as unknown as {
+const { WORDS, clock, initialOf, bandActs, bandOrder, imagesLine, fitThumbs, THUMB_GAP, questionsBelow } = CV as unknown as {
   WORDS: Record<string, string>
   questionsBelow: (n: number) => string
   clock: (at?: number) => string
+  initialOf: (name: string) => string
   bandActs: (side: 'user' | 'agent', text?: string, o?: { from?: string | null; fork?: boolean }) => string[]
+  bandOrder: (side: 'user' | 'agent', acts: string[], o?: { time?: boolean; react?: boolean }) => string[]
   imagesLine: (n: number) => string
   fitThumbs: (sizes: ({ w: number; h: number } | null)[], width?: number) => { boxes: { w: number; h: number }[]; h: number }
   THUMB_GAP: number
@@ -35,9 +37,11 @@ export const onTerminal = (fn: (chat: string) => void) => void (showTerminal = f
 
 /* ---------- the band under a message ---------- */
 
-/** ONE row under a message, on its side: the time (dim), Reply, Copy, Rewind (yours, not a /command) or Fork (the
- *  agent's); then on the agent's its reactions and the smiley furthest right, on yours the smiley and then the
- *  reactions, flush under the bubble's edge. The reactions always show; the rest while the pointer is on the message,
+/** ONE row under a message, on its side, its reactions flush under the bubble's outer edge with the smiley beside
+ *  them, each side the other's mirror: on yours the time (dim), Reply, Copy, Rewind (not on a /command), the smiley
+ *  and then the reactions (furthest right); on the agent's the reactions (furthest left), the smiley, Fork, Copy,
+ *  Reply and then the time.
+ *  The reactions always show; the rest while the pointer is on the message,
  *  in room that is always kept, so nothing moves. A finger holds the message instead (its own bar). */
 export function Band({ msg, chat, cli }: { msg: Message; chat: string; cli?: boolean }) {
   const you = msg.who === 'you'
@@ -51,29 +55,31 @@ export function Band({ msg, chat, cli }: { msg: Message; chat: string; cli?: boo
   const btn = 'grid size-[22px] shrink-0 place-items-center rounded-[5px] text-fg3 hover:bg-hover hover:text-fg'
   const hover = 'pointer-coarse:hidden opacity-0 transition-opacity group-hover/msg:opacity-100 focus-visible:opacity-100 group-focus-within/msg:opacity-100'
   const icon = (a: string) => {
-    if (a === 'reply') return <button key={a} type="button" aria-label="Reply" title="Reply" className={clsx(btn, hover)} onClick={() => startReply(chat, msg)}><ReplyIcon className="size-3.5" /></button>
+    if (a === 'reply') return <button key={a} type="button" aria-label="Reply" className={clsx(btn, hover)} onClick={() => startReply(chat, msg)}><ReplyIcon className="size-3.5" /></button>
     if (a === 'copy')
       return (
-        <button key={a} type="button" aria-label={copied ? 'Copied' : 'Copy'} title={copied ? 'Copied' : 'Copy'} className={clsx(btn, hover, copied && 'text-fg opacity-100')}
+        <button key={a} type="button" aria-label={copied ? 'Copied' : 'Copy'} className={clsx(btn, hover, copied && 'text-fg opacity-100')}
           onClick={() => { void navigator.clipboard?.writeText(msg.text ?? '').catch(() => undefined); setCopied(true); clearTimeout(timer.current); timer.current = setTimeout(() => setCopied(false), 1500) }}>
           {copied ? <CheckIcon className="size-3.5" /> : <CopyIcon className="size-3.5" />}
         </button>
       )
     if (a === 'rewind')
-      return <button key={a} type="button" aria-label="Rewind" title="Rewind" className={clsx(btn, hover)} onClick={() => void act({ type: 'rewind', chat, message: msg.id } as never).then(() => showTerminal(chat), (e: Error) => alert(e.message))}><RewindIcon className="size-3.5" /></button>
-    return <button key={a} type="button" aria-label="Fork" title="Fork" className={clsx(btn, hover)} onClick={() => void act({ type: 'fork', chat } as never).catch((e: Error) => alert(e.message))}><ForkIcon className="size-3.5" /></button>
+      return <button key={a} type="button" aria-label="Rewind" className={clsx(btn, hover)} onClick={() => void act({ type: 'rewind', chat, message: msg.id } as never).then(() => showTerminal(chat), (e: Error) => alert(e.message))}><RewindIcon className="size-3.5" /></button>
+    return <button key={a} type="button" aria-label="Fork" className={clsx(btn, hover)} onClick={() => void act({ type: 'fork', chat } as never).catch((e: Error) => alert(e.message))}><ForkIcon className="size-3.5" /></button>
   }
   const smiley = react ? (
-    <button key="react" type="button" aria-label="React" title="React" className={clsx(btn, hover)} onClick={() => openPicker(chat, msg.id)}>
+    <button key="react" type="button" aria-label="React" className={clsx(btn, hover)} onClick={() => openPicker(chat, msg.id)}>
       <SmileIcon className="size-3.5" />
     </button>
   ) : null
-  const pillRow = pills ? <span className="flex flex-wrap items-center gap-1 px-1.5">{pills}</span> : null
+  // as the window's: the pills 4px apart, 6px from the smiley (the band's own 2px gap and 4px here)
+  const pillRow = pills ? <span key="pills" className={clsx('flex flex-wrap items-center gap-1', you ? 'pl-1' : 'pr-1')}>{pills}</span> : null
+  const stamp = time ? <time key="time" dateTime={new Date(msg.at!).toISOString()} className={clsx('shrink-0 text-[0.71875rem] text-fg3 tabular-nums', you ? 'pr-1' : 'pl-1', hover)}>{time}</time> : null
+  // the order is core's, as the window's: each side the other's mirror
+  const part = (what: string) => (what === 'time' ? stamp : what === 'react' ? smiley : what === 'pills' ? pillRow : icon(what))
   return (
     <div data-band className={clsx('mt-1 flex min-h-[22px] max-w-full flex-wrap items-center gap-0.5', you ? 'justify-end self-end' : 'justify-start self-start')}>
-      {time ? <time dateTime={new Date(msg.at!).toISOString()} className={clsx('shrink-0 text-[0.71875rem] text-fg3 tabular-nums', you ? 'pr-1' : 'pl-0.5 pr-1', hover)}>{time}</time> : null}
-      {acts.map(icon)}
-      {you ? <>{smiley}{pillRow}</> : <>{pillRow}{smiley}</>}
+      {bandOrder(you ? 'user' : 'agent', acts, { time: !!time, react }).map(part)}
     </div>
   )
 }
@@ -128,15 +134,62 @@ function Opens({ label, text, bare, children }: { label: ReactNode; text?: strin
   )
 }
 
-/** a launch brief or a message another agent sent ("Message from Reviewer"): its label, then its words when opened */
+/** a launch brief ("Task brief"): its label, then its words when opened; a message between agents: AgentRow */
 export function BriefRow({ msg }: { msg: Message }) {
+  if (msg.brief!.from) return <AgentRow from={msg.brief!.from} to={msg.brief!.to} text={msg.text} at={msg.at} />
   return <Opens label={msg.brief!.label} text={msg.text} bare={msg.brief!.bare} />
 }
 
+/** a name's round initial, as a group chat shows who speaks: another agent's in the accent, the chat's own agent's
+ *  (a message it sent) neutral */
+function Avatar({ name, own }: { name: string; own?: boolean }) {
+  return (
+    <span aria-hidden className={clsx('grid size-5 shrink-0 place-items-center rounded-full text-[0.625rem] font-semibold',
+      own ? 'bg-[color-mix(in_srgb,var(--fg)_10%,transparent)] text-fg2' : 'bg-[color-mix(in_srgb,var(--accent)_18%,transparent)] text-accent')}>
+      {initialOf(name)}
+    </span>
+  )
+}
+
+/** agent to agent, as a group chat (SHEP-12, SHEP-27): a message another agent sent this one ("Assistant on Mac mini ·
+ *  Home") or one this chat's agent sent another ("Assistant → SHEP-4"). One quiet row like a news line: a speech
+ *  bubble in the accent, who (→ whom) a step stronger, its first words, its time; it opens in place to the whole
+ *  message as a speech bubble from that agent, its initial beside the name, and closes again from the same line */
+function AgentRow({ from, to, text, at }: { from: string; to?: string; text?: string; at?: number }) {
+  const [open, setOpen] = useState(false)
+  const first = String(text ?? '').split('\n').find((l) => l.trim()) ?? ''
+  const time = at ? clock(at) : ''
+  return (
+    <div data-from={to ? undefined : from} data-to={to} className="flex w-full flex-col">
+      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)}
+        className="flex w-full min-w-0 items-center gap-1.5 rounded-[7px] px-1.5 py-0.5 text-left text-[0.75rem]/5 text-fg2 hover:bg-hover phone:py-1.5 phone:text-[0.8125rem]/5">
+        {open ? <Avatar name={from} own={!!to} /> : <ChatBubbleLeftEllipsisIcon aria-hidden className="size-4 shrink-0 fill-accent" />}
+        <span className="shrink-0 font-medium text-fg"><span className="sr-only">Message from </span>{from}</span>
+        {to ? (
+          <>
+            <ArrowRightIcon aria-hidden className="size-3 shrink-0 fill-fg3" />
+            <span className="sr-only"> to </span>
+            <span className="shrink-0 font-medium text-fg">{to}</span>
+          </>
+        ) : null}
+        {!open && first ? <span className="min-w-0 flex-1 truncate">{first}</span> : <span className="flex-1" />}
+        {time ? <span className="shrink-0 text-fg3 tabular-nums">{time}</span> : null}
+      </button>
+      {open ? (
+        <div className="mt-1 mb-1 ml-8 max-w-[min(100%_-_2rem,640px)] self-start rounded-[14px] rounded-tl-[4px] bg-bubble px-3 py-2 text-[0.8125rem] text-fg phone:text-[0.9375rem]">
+          <Markdown text={text ?? ''} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 /** a task's news line: its mark, the id, what happened, then its words, dim; a needs-you line still waiting in red.
- *  The line opens the task; a Ready one's Accept sits at its right end */
+ *  The line opens the task; a Ready one's Review (opens the Accept card) sits at its right end ("Accepting…" while it runs, as the window's),
+ *  gone once the task moved on (the service tells the chat again then) */
 export function NewsRow({ msg }: { msg: Message }) {
   const n = msg.news!
+  const busy = useAccepting(n.task)
   const tick = (c: string) => (
     <span className={clsx('grid size-3 place-items-center rounded-full text-white', c)}>
       <TickIcon className="size-2.5" />
@@ -151,9 +204,9 @@ export function NewsRow({ msg }: { msg: Message }) {
       <span className={clsx('shrink-0', n.live ? 'text-need' : 'text-fg2')}>{n.what}</span>
       {n.text ? <><span className="shrink-0">·</span><span className="min-w-0 flex-1 truncate">{n.text}</span></> : <span className="flex-1" />}
       {n.accept ? (
-        <button type="button" onClick={(e) => { e.stopPropagation(); openAccept(n.task) }}
-          className="press-dim ml-1 h-5 shrink-0 rounded-[6px] bg-fg px-2 text-[0.6875rem]/5 font-medium text-bg phone:h-7 phone:px-2.5 phone:text-xs/7">
-          Accept
+        <button type="button" disabled={busy} onClick={(e) => { e.stopPropagation(); openAccept(n.task) }}
+          className="press-dim ml-1 h-5 shrink-0 rounded-[6px] bg-fg px-2 text-[0.6875rem]/5 font-medium text-bg disabled:opacity-60 phone:h-7 phone:px-2.5 phone:text-xs/7">
+          {busy ? 'Accepting…' : 'Review'}
         </button>
       ) : null}
     </div>
@@ -166,6 +219,16 @@ export function EndedRow({ msg }: { msg: Message }) {
     <div className={clsx('flex w-full min-w-0 items-center gap-1.5 px-1.5 py-px', quiet)}>
       <CheckIcon className="size-3 shrink-0" />
       <span className="min-w-0 truncate">{msg.ended}</span>
+    </div>
+  )
+}
+
+/** an Autopilot wake: why it woke and, once it shows, how it went ("· checked, nothing new"); its words never show */
+export function PilotRow({ msg }: { msg: Message }) {
+  return (
+    <div data-pilot className={clsx('flex w-full min-w-0 items-center gap-1.5 px-1.5 py-px', quiet)}>
+      <AutopilotIcon aria-hidden className="size-3 shrink-0" />
+      <span className="min-w-0 truncate">{msg.pilot}</span>
     </div>
   )
 }

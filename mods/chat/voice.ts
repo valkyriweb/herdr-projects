@@ -1,7 +1,9 @@
-// A voice call with an agent's chat: an ElevenLabs voice agent talks with the person and passes
-// on only what is meant for the coding agent (send_to_agent → hc send); the chat feeds it the
-// coding agent's replies and status, which it tells the person. Started by the chat mod (a mod
-// has no audio or sockets); one process per call, nothing recorded or kept.
+// A voice call with an agent's chat: an ElevenLabs voice agent talks with the person and reads,
+// opens and changes Shepherdr for them through its tools (core/voice.js: look, open, send, act),
+// which this machine's Shepherdr service answers (POST /api/voice/tool, service/voice-tools.ts:
+// the reach of the person's web app); without the service, only this chat (send, look at it).
+// The chat feeds it the called agent's replies and status, which it tells the person. Started by
+// the chat mod (a mod has no audio or sockets); one process per call, nothing recorded or kept.
 //   bun voice.ts <call folder> <agent address> <agent name>
 // The call folder links it to the chat:
 //   state.json  written here: { phase, muted, error, since } (phase: connecting, listening,
@@ -9,23 +11,26 @@
 //   alive       touched by the chat every few seconds; stale for 20 s ends the call
 //   in/*.json   from the chat: { type: "mute", on } | { type: "hangup" } |
 //               { type: "reply", text } | { type: "status", status, asking? }
-//   recent.txt  the chat's last messages and the agent's status, for read_chat
+//   recent.txt  the chat's last messages and the agent's status (looking at it without the service)
+//   where.json  from the chat: what the window shows ({ place, task, tab }), for the agent's "here"
+//   nav/*.json  written here: what the voice agent asked to show (open), done by the chat
+//   navved/*.json  from the chat, by the nav's name: { ok, why } once it tried it (open counts only then)
 // and beside it <call folder>.level: how loud the call is now, 0..1 (the agent while it speaks,
 // else the person), for the chat's wave.
 // Secrets: ELEVENLABS_API_KEY (the person's) from <app home>/secrets/elevenlabs.env, else as kept
-// in Settings › Secrets for Everywhere (the vault). The voice
-// agent made for this ("Herdr chat") is kept as ELEVENLABS_AGENT_ID in
-// secrets/elevenlabs-agent.env. Neither is ever printed or logged.
+// in Settings › Secrets for Everywhere (the vault), on the machine that keeps the secrets: read
+// from there over herdr-core's link into memory only (core/voice.js voiceKey). The voice agent
+// made for this ("Herdr chat") is kept as ELEVENLABS_AGENT_ID in secrets/elevenlabs-agent.env,
+// with a tag of the key. The key is never printed, logged or written here.
 
-import { readFileSync, writeFileSync, readdirSync, rmSync, statSync, mkdirSync, existsSync, renameSync } from "node:fs";
+import { readFileSync, writeFileSync, readdirSync, rmSync, statSync, mkdirSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
-import { API, agentSpec, opening, replyLine, statusLine, envLines, apiError } from "./core/voice.js";
+import { API, opening, replyLine, statusLine, whereLine, apiError, ensureAgent, agentFile, navWords } from "./core/voice.js";
+import { SECRETS, keyFor, envFile } from "./key.ts";
 
 const [dir, addr, name] = process.argv.slice(2);
 if (!dir || !addr) { console.error("usage: bun voice.ts <call folder> <agent address> <agent name>"); process.exit(2); }
-const HOME = process.env.HERDR_APP_HOME || join(process.env.HOME ?? "", ".config/herdr-app");
-const SECRETS = join(HOME, "secrets");
 const who = name || "the coding agent";
 
 
@@ -63,20 +68,7 @@ function end(why: string | null = null) {
 process.on("SIGTERM", () => end());
 process.on("SIGINT", () => end());
 
-// ---- secrets ------------------------------------------------------------------------------
-
-// A key kept in Settings › Secrets for Everywhere (~/.herdr/vault.json, owner-only), else "".
-function vaultKey(name: string): string {
-  try {
-    const v = JSON.parse(readFileSync(join(process.env.HOME ?? "", ".herdr", "vault.json"), "utf8"));
-    const e = (Array.isArray(v?.secrets) ? v.secrets : []).find((x: any) => x?.name === name && x?.scope === "everywhere");
-    return typeof e?.value === "string" ? e.value : "";
-  } catch { return ""; }
-}
-
-function envFile(file: string): Record<string, string> {
-  try { return envLines(readFileSync(file, "utf8")); } catch { return {}; }
-}
+// ---- secrets: key.ts ----------------------------------------------------------------------
 
 async function api(path: string, key: string, init: RequestInit = {}) {
   const r = await fetch(`${API}${path}`, { ...init, redirect: "error", signal: AbortSignal.timeout(15000),
@@ -84,22 +76,45 @@ async function api(path: string, key: string, init: RequestInit = {}) {
   if (!r.ok) {
     throw new Error(apiError(r.status, await r.text().catch(() => "")));
   }
-  return r.json();
+  return r.status === 204 ? null : r.json();
 }
 
-// The dedicated "Herdr chat" voice agent: made once with the person's key, its id kept in secrets.
-async function agentId(key: string) {
+// The "Herdr chat" voice agent, up to this spec (core/voice.js ensureAgent: made, or PATCHed when its tools or prompt
+// changed). (made: the one the machine that keeps the key made with it.) Only the id, a tag of the key and the spec are
+// kept here.
+async function agentId(key: string, made = "") {
   const file = join(SECRETS, "elevenlabs-agent.env");
-  const saved = envFile(file);
   const tag = createHash("sha256").update(key).digest("hex").slice(0, 16);
-  if (saved.ELEVENLABS_AGENT_ID && (!saved.ELEVENLABS_KEY_TAG || saved.ELEVENLABS_KEY_TAG === tag)) return saved.ELEVENLABS_AGENT_ID;
-  const r = await api("/convai/agents/create", key, { method: "POST", body: JSON.stringify(agentSpec(who)) }) as { agent_id?: string };
-  if (typeof r.agent_id !== "string" || !/^[\w-]{1,200}$/.test(r.agent_id)) throw new Error("ElevenLabs didn't make the voice agent.");
-  mkdirSync(SECRETS, { recursive: true, mode: 0o700 });
-  writeFileSync(file, `# The "Herdr chat" voice agent, made by the chat mod with ELEVENLABS_API_KEY.\nELEVENLABS_AGENT_ID=${r.agent_id}\nELEVENLABS_KEY_TAG=${tag}\n`, { mode: 0o600 });
-  return r.agent_id;
+  return ensureAgent({
+    saved: envFile(file), tag, made,
+    api: (path: string, init?: RequestInit) => api(path, key, init),
+    save: (id: string, spec: string) => { mkdirSync(SECRETS, { recursive: true, mode: 0o700 }); writeFileSync(file, agentFile(id, tag, spec), { mode: 0o600 }); },
+  }) as Promise<string>;
 }
 
+// ---- the service: the tools ---------------------------------------------------------------
+// This machine's Shepherdr service answers the tools as for the web app, told this call's agent and what the window
+// shows; what it asks to show goes to the chat (nav/). Its token is the local callers' (~/.herdr/shepherdr/token).
+
+const SERVICE = `http://127.0.0.1:${process.env.SHEPHERDR_PORT || 7788}`;
+const TOKEN = join(process.env.SHEPHERDR_DATA || join(process.env.HOME ?? "", ".herdr", "shepherdr"), "token");
+
+function where() { try { return JSON.parse(readFileSync(join(dir, "where.json"), "utf8")); } catch { return {}; } }
+
+/** A tool's answer from the service: { result, nav?, error? }, or null when the service can't be asked. */
+async function serviceTool(tool: string, params: unknown): Promise<{ result: string; nav?: unknown; shows?: string; error?: boolean } | null> {
+  let token = "";
+  try { token = readFileSync(TOKEN, "utf8").trim(); } catch { return null; }
+  try {
+    const r = await fetch(`${SERVICE}/api/voice/tool`, { method: "POST", signal: AbortSignal.timeout(25000),
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify({ addr, tool, params, where: where() }) });
+    if (!r.ok) return null;
+    const a = await r.json();
+    return typeof a?.result === "string" ? a : null;
+  } catch { return null; }
+}
+
+// ElevenLabs' answer (none for a 204), or throws its error in words without anything like a key.
 // ---- audio --------------------------------------------------------------------------------
 
 let mic: ReturnType<typeof Bun.spawn> | null = null;
@@ -177,11 +192,58 @@ async function sendToAgent(text: string) {
   const p = Bun.spawn(["hc", "send", addr, text], { env, stdout: "pipe", stderr: "pipe" });
   const code = await p.exited;
   if (code !== 0) throw new Error((await new Response(p.stderr).text()).trim() || "It didn't go through.");
-  return "Sent to the coding agent.";
+  return `Sent to ${who}.`;
 }
 
 function readChat() {
   try { return readFileSync(join(dir, "recent.txt"), "utf8").slice(-12000) || "Nothing yet."; } catch { return "Nothing yet."; }
+}
+
+const NO_SERVICE = "Shepherdr's service isn't running on this machine, so on this call I can only read and write this chat.";
+/** Without the service: this chat only (send here, look at it). */
+async function localTool(name: string, p: any): Promise<{ result: string; nav?: unknown; error?: boolean }> {
+  const here = !p?.to || /^(here|this|this chat)$/i.test(String(p.to).trim());
+  try {
+    if ((name === "send" && here) || name === "send_to_agent") {
+      const text = String(p?.text ?? "").trim();
+      if (!text || text.length > 16000) throw new Error("Nothing to send.");
+      return { result: await sendToAgent(text) };
+    }
+    if ((name === "look" && p?.what === "chat" && (!p.id || /^(here|this)$/i.test(String(p.id).trim()))) || name === "read_chat") return { result: readChat() };
+  } catch (err: any) { return { result: String(err?.message ?? err).slice(0, 500), error: true }; }
+  return { result: NO_SERVICE, error: true };
+}
+
+// The window moved during the call: told (in words, from the service) once it settles.
+let saidWhere = "", whereAt = 0;
+async function moved() {
+  const now = JSON.stringify(where());
+  if (now === saidWhere || Date.now() - whereAt < 1500) return;
+  whereAt = Date.now();
+  saidWhere = now;
+  const a = await serviceTool("look", { what: "here" });
+  if (a && !a.error) send(whereLine(a.result));
+}
+
+/** What the voice agent asked to show, done by the chat that started this call: its { ok, why }, or null when it
+ *  didn't answer in time (the chat reads nav/ about once a second). */
+async function showHere(nav: unknown): Promise<{ ok: boolean; why?: string } | null> {
+  const name = `${Date.now()}-${Math.random().toString(36).slice(2, 7)}.json`;
+  try {
+    mkdirSync(join(dir, "nav"), { recursive: true });
+    writeFileSync(join(dir, "nav", `${name}.tmp`), JSON.stringify(nav));
+    renameSync(join(dir, "nav", `${name}.tmp`), join(dir, "nav", name));
+  } catch { return { ok: false, why: "the window couldn't be told" }; }
+  const ack = join(dir, "navved", name);
+  for (let i = 0; i < 40 && !ended; i++) {
+    await Bun.sleep(150);
+    let a: any = null;
+    try { a = JSON.parse(readFileSync(ack, "utf8")); } catch { continue; }
+    try { rmSync(ack); } catch {}
+    return { ok: a?.ok === true, why: typeof a?.why === "string" ? a.why : undefined };
+  }
+  try { rmSync(join(dir, "nav", name)); } catch {}
+  return null;
 }
 
 function send(line: object) {
@@ -214,16 +276,19 @@ function inbox() {
 async function main() {
   mkdirSync(join(dir, "in"), { recursive: true });
   state();
-  const key = envFile(join(SECRETS, "elevenlabs.env")).ELEVENLABS_API_KEY || vaultKey("ELEVENLABS_API_KEY");
-  if (!key) return end("No ElevenLabs key. Add ELEVENLABS_API_KEY in Settings › Secrets.");
-  const id = await agentId(key);
+  const k = await keyFor();
+  if ("error" in k) return end(k.error);
+  const key = k.key;
+  const id = await agentId(key, k.agent);
   const { signed_url } = await api(`/convai/conversation/get-signed-url?agent_id=${encodeURIComponent(id)}`, key) as { signed_url: string };
   const url = new URL(signed_url);
   if (url.protocol !== "wss:" || !url.hostname.endsWith("elevenlabs.io")) throw new Error("ElevenLabs gave an unexpected address.");
   if (ended) return;
   ws = new WebSocket(signed_url);
+  const here = (await serviceTool("look", { what: "here" }))?.result ?? "";
+  saidWhere = JSON.stringify(where());
   ws.onopen = () => {
-    ws!.send(JSON.stringify(opening(who)));
+    ws!.send(JSON.stringify(opening(who, here)));
   };
   ws.onmessage = async (e) => {
     if (ended) return;
@@ -248,16 +313,12 @@ async function main() {
     else if (m.type === "client_tool_call") {
       const c = m.client_tool_call ?? {};
       phase = "thinking"; thinkingAt = Date.now(); state();
-      let result = "", isError = false;
-      try {
-        if (c.tool_name === "send_to_agent") {
-          const text = String(c.parameters?.text ?? "").trim();
-          if (!text || text.length > 16000) throw new Error("Nothing to send.");
-          result = await sendToAgent(text);
-        } else if (c.tool_name === "read_chat") result = readChat();
-        else throw new Error("No such tool.");
-      } catch (err: any) { result = String(err?.message ?? err).slice(0, 500); isError = true; }
-      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "client_tool_result", tool_call_id: c.tool_call_id, result, is_error: isError }));
+      const name = String(c.tool_name ?? ""), params = c.parameters ?? {};
+      let a = await serviceTool(name, params);
+      if (!a) a = await localTool(name, params);
+      // an open: this window's chat shows it, and says so (navved/), before the agent may say it's on screen
+      if (a.nav) a = { ...a, ...navWords(a.shows ?? "it", await showHere(a.nav)) };
+      if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: "client_tool_result", tool_call_id: c.tool_call_id, result: a.result, is_error: !!a.error }));
     }
   };
   ws.onerror = () => end("The voice connection failed.");
@@ -281,6 +342,7 @@ setInterval(() => {
 setInterval(() => {
   if (ended) return;
   inbox();
+  if (ws?.readyState === WebSocket.OPEN) void moved();
   try { if (Date.now() - statSync(join(dir, "alive")).mtimeMs > 20000) end(); } catch { if (Date.now() - since > 20000) end(); }
   state();
 }, 150);

@@ -7,7 +7,7 @@ inbox.js: spaces-chat tabs-tasks tasks workspace-status-chat
 core/voice.js: chat
 core/accept.js: accept-card
 core/toasts.js: toasts
-core/menus.js: spaces-chat tasks-menu menu-tasks new-menu-tasks pane-chat tabs-tasks coordinator
+core/menus.js: spaces-chat tasks tasks-menu menu-tasks new-menu-tasks pane-chat tabs-tasks coordinator
 core/asks.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts
 core/needs.js: chat jump spaces-chat tabs-tasks tasks workspace-status-chat toasts
 core/tasks.js: chat jump tasks
@@ -22,7 +22,8 @@ core/chat-log.js: chat
 core/chat-view.js: chat
 core/screens.js: chat
 core/send.js: chat
-core/spaces.js: chat spaces-chat shepherdr-settings jump
+core/person.js: chat shepherdr-settings tabs-tasks
+core/spaces.js: chat spaces-chat shepherdr-settings jump pane-chat
 core/autopilot.js: pane-chat shepherdr-settings
 core/chat-reader.js: chat
 core/worktree.js: task-changes task-pr
@@ -32,7 +33,8 @@ core/machine-add.js: machine-add-chat
 core/keys.js: keybinds
 core/machines.js: spaces-chat shepherdr-settings
 core/slash.js: chat
-core/agents.js: chat newspace shepherdr-settings coordinator
+core/mentions.js: chat
+core/agents.js: chat chat-models newspace shepherdr-settings coordinator
 core/kinds.js: chat chat-models newspace shepherdr-settings coordinator
 core/settings.js: chat newspace shepherdr-settings coordinator
 core/host.js: chat newspace shepherdr-settings coordinator

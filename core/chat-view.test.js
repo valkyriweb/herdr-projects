@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { WORDS, clock, bandActs, senderName, briefLabel, newsWords, newsTimeline, resolveArtifacts, fitThumbs, dayLabel, imagesLine, questionsBelow, notSent, unsigned, elapsed } from "./chat-view.js";
+import { WORDS, clock, bandActs, bandOrder, senderName, briefLabel, newsWords, newsTimeline, resolveArtifacts, fitThumbs, dayLabel, imagesLine, questionsBelow, notSent, unsigned, elapsed, reportMsg, doingWords, ownWords, outsideTerminal, fromName, sentTo, selfName, initialOf } from "./chat-view.js";
 
 const ROOT = join(import.meta.dir, "..");
 const read = (p) => readFileSync(join(ROOT, p), "utf8");
@@ -48,6 +48,28 @@ describe("rows", () => {
     expect(senderName("person")).toBe("You");
     expect(unsigned("From HERD-76 (t12u): the words")).toBe("the words");
   });
+  test("a sender on the machine reading the chat, written with its name (SHEP-12)", () => {
+    // the web service on m3 shows a chat on vm whose agent got a message from m3's Assistant
+    const terms = { t75: { template: "herdr-assistant-mw3acvzz", labels: { "herdr.role": "coordinator" } }, t80: { name: "shep-4-fix" }, t81: {} };
+    const find = (a) => terms[a] ?? null;
+    expect(senderName("m3/t75", "", { find, machine: "vm", here: "m3" })).toBe("Assistant on m3");
+    expect(senderName("m3/t80", "", { find, machine: "vm", here: "m3" })).toBe("SHEP-4 on m3");
+    expect(senderName("m3/t81", "", { find, machine: "vm", here: "m3", taskOf: (a) => (a === "t81" ? "SHEP-9" : null) })).toBe("SHEP-9 on m3");
+    // its own chat: no "on"
+    expect(senderName("m3/t75", "", { find, machine: null, here: "m3" })).toBe("Assistant");
+    // an Assistant known only by its template
+    expect(senderName("t75", "", { find: () => ({ template: "herdr-assistant-x" }) })).toBe("Assistant");
+    // unknown here: "Another agent", unless it signed
+    expect(senderName("box/t99", "", { find, machine: "vm", here: "m3" })).toBe("Another agent on box");
+    expect(senderName("box/t99", "From the person's Assistant on m3 (t10v): the key", { find, machine: "vm", here: "m3" })).toBe("Assistant on m3");
+    expect(unsigned("From the person's Assistant on m3 (t10v): the key")).toBe("the key");
+  });
+  test("the band: each side the other's mirror, pills at the bubble's outer edge", () => {
+    expect(bandOrder("user", ["reply", "copy", "rewind"])).toEqual(["time", "reply", "copy", "rewind", "react", "pills"]);
+    expect(bandOrder("agent", ["reply", "copy", "fork"])).toEqual(["pills", "react", "fork", "copy", "reply", "time"]);
+    expect(bandOrder("agent", ["reply", "copy"], { time: false, react: false })).toEqual(["pills", "copy", "reply"]);
+    expect(bandOrder("user", ["reply", "copy"], { react: false })).toEqual(["time", "reply", "copy", "pills"]);
+  });
   test("a brief's label", () => {
     expect(briefLabel({ from: "t1", text: "x" }, 4, { sender: () => "Reviewer" })).toBe("Message from Reviewer");
     expect(briefLabel({ text: "brief" }, 0, { start: 0, task: true })).toBe("Task brief");
@@ -93,5 +115,74 @@ describe("rows", () => {
     expect(questionsBelow(2)).toBe("2 questions below");
     expect(notSent("Busy.")).toBe("Not sent: Busy. Click to try again.");
     expect(elapsed(75)).toBe("1:15");
+  });
+});
+
+describe("the working line says what the agent does, in the window and on the web", () => {
+  test("its CLI's status report, from either side's terminal", () => {
+    // the window's terminals(): a plain status word and the report; the service's herdr-core record: the report in status
+    expect(reportMsg({ status: "working", report: { app: "claude-code", msg: "Computing build times", state: "working" } })).toBe("Computing build times");
+    expect(reportMsg({ status: { app: "claude-code", msg: " Computing build times ", state: "working" } })).toBe("Computing build times");
+    expect(reportMsg({ status: { app: "claude-code", state: "working" } })).toBe("");
+    expect(reportMsg({ status: "working", report: null })).toBe("");
+    expect(reportMsg(undefined)).toBe("");
+  });
+  test("its log's open call first, then the report, never a question", () => {
+    expect(doingWords({ doing: "Editing main.js" }, "Computing build times")).toBe("Editing main.js");
+    expect(doingWords({ doing: null }, "Computing build times")).toBe("Computing build times");
+    expect(doingWords(null, "answer: Tea or coffee?")).toBe(null);
+    expect(doingWords(null, "")).toBe(null);
+  });
+  test("both sides read it from here", () => {
+    for (const f of ["mods/chat/main.js", "service/compat.ts"]) for (const fn of ["reportMsg(", "doingWords("]) expect(read(f).includes(fn) ? "" : `${fn} not in ${f}`).toBe("");
+  });
+});
+
+// SHEP-3: the person's words that came wrapped as another machine's process's message are theirs once this chat knows
+// it just sent them; an agent's message, or words nobody here sent, stay another's.
+describe("ownWords", () => {
+  const matches = (u, p) => u.text === p.text && u.at >= p.at - 5000;
+  test("a window's send on another machine, wrapped, is the person's", () => {
+    expect(outsideTerminal("laptop/ppid:25569")).toBe(true);
+    const users = [{ id: 1, text: "kill shep-1 and start a new task for it instead", from: "laptop/ppid:25569", at: 10_000 }];
+    expect(ownWords(users, [{ text: "kill shep-1 and start a new task for it instead", at: 9_000 }], matches)).toEqual([1]);
+  });
+  test("an agent's message with the same words stays the agent's", () => {
+    expect(outsideTerminal("t7 review")).toBe(false);
+    expect(ownWords([{ id: 1, text: "ok", from: "t7 review", at: 10_000 }], [{ text: "ok", at: 9_000 }], matches)).toEqual([]);
+    expect(ownWords([{ id: 1, text: "ok", from: "vm/t7", at: 10_000 }], [{ text: "ok", at: 9_000 }], matches)).toEqual([]);
+  });
+  test("nothing sent from here, or other words: still another's", () => {
+    const users = [{ id: 1, text: "hello", from: "mac/ppid:1", at: 10_000 }];
+    expect(ownWords(users, [], matches)).toEqual([]);
+    expect(ownWords(users, [{ text: "bye", at: 9_000 }], matches)).toEqual([]);
+    expect(ownWords(users, [{ text: "hello", at: 60_000 }], matches)).toEqual([]);
+  });
+  test("one send claims one message", () => {
+    const users = [{ id: 1, text: "yes", from: "mac/ppid:1", at: 10_000 }, { id: 2, text: "yes", from: "mac/ppid:9", at: 11_000 }];
+    expect(ownWords(users, [{ text: "yes", at: 9_000 }], matches)).toEqual([1]);
+  });
+});
+
+describe("agent to agent as a group chat (SHEP-27)", () => {
+  test("another Assistant is named by its machine and space; this machine's unsaid", () => {
+    const x = { from: "mac/t13", assistant: { machine: "mac", space: "Home" }, text: "hi" };
+    expect(fromName(x, () => "nope", { machineName: (m) => (m === "mac" ? "Mac mini" : null) })).toBe("Assistant on Mac mini · Home");
+    expect(fromName(x, () => "nope", { here: "mac" })).toBe("Assistant · Home");
+    expect(fromName({ from: "t3", text: "x" }, (f) => `name of ${f}`)).toBe("name of t3");
+    expect(briefLabel(x, 5, { machineName: () => "Mac mini" })).toBe("Message from Assistant on Mac mini · Home");
+  });
+  test("whom a sent message went to", () => {
+    const sender = (a) => ({ t10s: "SHEP-4", "mac/t13": "Another agent on mac" }[a] ?? "Another agent");
+    expect(sentTo({ to: "t10s", how: "hc" }, sender)).toBe("SHEP-4");
+    expect(sentTo({ to: "mac/t13", how: "assistant" }, sender)).toBe("Assistant on mac");
+    expect(sentTo({ to: "Home", how: "assistant" }, sender)).toBe("Assistant · Home");
+  });
+  test("who the chat's own agent is, and initials", () => {
+    expect(selfName({ assistant: true })).toBe("Assistant");
+    expect(selfName({ task: "SHEP-4" })).toBe("SHEP-4");
+    expect(selfName({ kind: "codex" })).toBe("Codex");
+    expect(initialOf("SHEP-4")).toBe("S");
+    expect(initialOf("Assistant on Mac mini · Home")).toBe("A");
   });
 });
