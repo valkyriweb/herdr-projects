@@ -66,6 +66,49 @@ class Repo(unittest.TestCase):
                 for n, line in enumerate(f, 1):
                     self.assertIsNone(bad.search(line), f"{os.path.relpath(p, ROOT)}:{n}: {line.strip()[:120]}")
 
+    # Elements and components whose `title` is no hover popup: a dialog's or card's heading, a row's words, an
+    # iframe's name for screen readers.
+    TITLE_OK = {"Dialog", "CardShell", "TitleWhere", "Line", "iframe"}
+
+    def test_no_hover_tooltips(self):
+        """Nothing pops up on hover (SHEP-25): no `title=` tooltip in the web app, no `.tooltip(` in the window's
+        mods. An icon-only control says its words with `aria-label` instead."""
+        found = []
+        for top in ("web/src", "web/plugins"):
+            for d, _, files in os.walk(J(top)):
+                for f in files:
+                    if not f.endswith((".tsx", ".ts", ".html")):
+                        continue
+                    p = os.path.join(d, f)
+                    with open(p, encoding="utf-8") as fh:
+                        src = fh.read()
+                    rel = os.path.relpath(p, ROOT)
+                    for m in re.finditer(r"(?<![\w.-])title=", src):
+                        # the tag it sits on: the last one still open (a <TaskDot /> in an earlier prop is closed)
+                        tags = []
+                        for t in re.finditer(r"<([A-Za-z][\w.]*)|/>|</[\w.]*>", src[:m.start()]):
+                            if t.group(1):
+                                tags.append(t.group(1))
+                            elif tags:
+                                tags.pop()
+                        tag = tags[-1] if tags else "?"
+                        if tag not in self.TITLE_OK:
+                            found.append(f"{rel}:{src.count(chr(10), 0, m.start()) + 1}: title= on <{tag}>")
+                    for m in re.finditer(r"setAttribute\(\s*['\"]title['\"]|\.title\s*=(?!=)", src):
+                        if not src[max(0, m.start() - 8):m.start()].endswith("document"):
+                            found.append(f"{rel}:{src.count(chr(10), 0, m.start()) + 1}: sets a title")
+        for top in ("mods", "lib", "core"):
+            for d, dirs, files in os.walk(J(top)):
+                dirs[:] = [x for x in dirs if x not in ("node_modules", ".last")]
+                for f in files:
+                    if f.endswith(".js"):
+                        p = os.path.join(d, f)
+                        with open(p, encoding="utf-8") as fh:
+                            for n, line in enumerate(fh, 1):
+                                if ".tooltip(" in line:
+                                    found.append(f"{os.path.relpath(p, ROOT)}:{n}: .tooltip(")
+        self.assertFalse(found, "hover tooltips (use aria-label, or show the words):\n" + "\n".join(found))
+
     def test_no_leftovers(self):
         for p in text_files():
             name = os.path.basename(p)
@@ -101,12 +144,13 @@ class Repo(unittest.TestCase):
                     self.assertTrue(spec.startswith("./"), f"core/{f} imports {spec}")
 
     def test_autopilot_from_one_core(self):
-        """Settings › Autopilot (one setting for every space) takes its words, picks and rule from core/autopilot.js on
+        """Settings › Autopilot (Everywhere's and a space's own) takes its words, picks and rule from core/autopilot.js on
         both sides: the window's section and header, and the web app's service, never their own copies."""
         uses = {
-            J("mods", "shepherdr-settings", "autopilot-section.js"): ["AP.ROWS", "AP.PRESETS", "AP.EVENTS", "AP.ABOUT", "AP.SAVED"],
+            J("mods", "shepherdr-settings", "autopilot-section.js"): ["AP.ROWS", "AP.PRESETS", "AP.EVENTS", "AP.ABOUT", "AP.SAVED", "AP.FIELDS"],
             J("mods", "pane-chat", "autopilot.js"): ["pilotFor", "headerDetail"],
-            J("service", "compat.ts"): ["AP.ROWS", "AP.PRESETS", "AP.EVENTS", "AP.ABOUT"],
+            J("service", "settings.ts"): ["AP.ROWS", "AP.PRESETS", "AP.EVENTS", "AP.ABOUT", "AP.levelOf", "AP.FIELDS"],
+            J("service", "compat.ts"): ["AP.blankBeat"],
             J("service", "model.ts"): ["pilotFor", "everywhereOf"],
         }
         for path, names in uses.items():
@@ -133,6 +177,16 @@ class Repo(unittest.TestCase):
         for words in ("Loading files…", "Asking GitHub…", "No checks on it.", "Select a file to see its changes."):
             self.assertNotIn(words, web, f"web/plugins/worktree has its own copy of {words!r}")
 
+    def test_artifacts_open_on_all(self):
+        """The Artifacts panel opens on All (every folder), like Tasks, in the window and the web; a saved web choice
+        lives under a new key, so one saved under the old default ('shepherdr.artifactsAll') starts over on All."""
+        win = open(J("mods", "artifacts", "main.js"), encoding="utf-8").read()
+        self.assertIn("this.all = true;", win)
+        self.assertNotIn("this.all = false;", win)
+        web = open(J("web", "plugins", "artifacts", "client.tsx"), encoding="utf-8").read()
+        self.assertIn("const ALL = 'shepherdr.artifactsAllFolders'", web)
+        self.assertIn("localStorage.getItem(ALL) !== '0'", web)
+
     def test_parity_has_no_open_rows(self):
         """docs/parity/: every element of every surface matches the window (✓) or is a web-only form with its reason
         (◇); a row still marked ✗ fails, and every surface in docs/parity.md has its page."""
@@ -158,9 +212,23 @@ class Repo(unittest.TestCase):
             for n in names:
                 self.assertIn(n, text, f"{os.path.relpath(path, ROOT)} doesn't use {n}")
 
+    def test_web_header_no_hidden_end(self):
+        """The web Assistant header holds no hidden control that ends its agent (SHEP-23): ending or closing is the
+        tab's own × and menu in the tab bar; the header's status is words ("Working…", "Needs you"), never a done tick."""
+        text = open(J("web", "plugins", "coordinators", "client.tsx")).read()
+        self.assertNotIn("PaneEnd", text)
+        self.assertNotIn("endAgent", text)
+        header = text[text.index("function StatusMark("):text.index("/* ---------- the tab bar's +")]
+        self.assertIn("Working…", header)
+        self.assertIn("Needs you", header)
+        self.assertNotIn("'done'", header)
+        self.assertNotIn("XIcon", header)
+        # Autopilot sits on the right with the other controls (order > 10), after the status
+        self.assertIn("{ order: 12, View: StatusMark }, { order: 14, View: AutopilotHeader }", text)
+
     def test_tab_bar_from_one_list(self):
-        """The tab bar's + menu, a tab's menu, Switch agent, a tab's name and the header's End agent are core/menus.js's
-        on both sides (mods/new-menu-tasks, menu-tasks, coordinator, tabs-tasks, pane-chat and the web app's
+        """The tab bar's + menu, a tab's menu, Switch agent, a tab's name and the window header's End agent are
+        core/menus.js's on both sides (mods/new-menu-tasks, menu-tasks, coordinator, tabs-tasks, pane-chat and the web app's
         coordinators plugin), and the header's Autopilot words core/autopilot.js's: neither side keeps its own copy."""
         uses = {
             J("mods", "new-menu-tasks", "main.js"): ["NEW_MENU", "assistantRow", "agentChoices", "agentHint"],
@@ -168,7 +236,7 @@ class Repo(unittest.TestCase):
             J("mods", "coordinator", "main.js"): ["SWITCH_AGENT"],
             J("mods", "tabs-tasks", "main.js"): ["tabName"],
             J("mods", "pane-chat", "main.js"): ["endAgent"],
-            J("web", "plugins", "coordinators", "client.tsx"): ["NEW_MENU", "assistantRow", "agentChoices", "agentHint", "tabMenu", "SWITCH_AGENT", "endAgent", "headerDetail", "appMenu", "openKeybinds"],
+            J("web", "plugins", "coordinators", "client.tsx"): ["NEW_MENU", "assistantRow", "agentChoices", "agentHint", "tabMenu", "SWITCH_AGENT", "headerDetail", "appMenu", "openKeybinds"],
             J("service", "compat.ts"): ["tabName"],
         }
         for path, names in uses.items():
@@ -215,7 +283,7 @@ class Repo(unittest.TestCase):
 
     def test_version_everywhere(self):
         v = re.search(r'^VERSION = "([^"]+)"', open(J("bin", "shepherdr")).read(), re.M).group(1)
-        self.assertEqual(v, "3.1.1")
+        self.assertEqual(v, "3.1.9")
         self.assertRegex(open(J("CHANGELOG.md")).read(), rf"(?m)^## {re.escape(v)}\b", "CHANGELOG's newest entry")
         self.assertIn(v, open(J("RECIPE.md")).read())
         self.assertIn(v, open(J("README.md")).read())
@@ -223,3 +291,55 @@ class Repo(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionNote(unittest.TestCase):
+    """SHEP-42, SHEP-48: the chat's SessionStart hook (mods/chat/session-note.sh) adds every agent's Reactions
+    words (herdr-task _session-note, on or off by its space) to its JSON: an Assistant's, a task worker's, an
+    agent tab's. Outside Herdr it says nothing. hc and herdr-task are fakes."""
+
+    def run_hook(self, role, terminal="t5"):
+        import shutil
+        import subprocess
+        import tempfile
+        if not shutil.which("jq"):
+            self.skipTest("needs jq")
+        d = tempfile.mkdtemp()
+        log = os.path.join(d, "asked")
+        with open(os.path.join(d, "hc"), "w") as f:
+            f.write(f"#!/bin/sh\necho '{json.dumps({'labels': {'herdr.role': role} if role else {}})}'\n")
+        # what _session-note prints: JSON string content, escaped
+        with open(os.path.join(d, "words"), "w") as f:
+            f.write(json.dumps(' Reactions (on in Settings): <hc react="👀" to="x"/>', ensure_ascii=False)[1:-1])
+        with open(os.path.join(d, "herdr-task"), "w") as f:
+            f.write(f"#!/bin/sh\necho \"$@\" >> {log}\ncat {d}/words\n")
+        for x in ("hc", "herdr-task"):
+            os.chmod(os.path.join(d, x), 0o755)
+        env = {**os.environ, "PATH": f"{d}:{os.environ['PATH']}", "HC_TERMINAL_ID": terminal}
+        if not terminal:
+            env.pop("HC_TERMINAL_ID")
+        out = subprocess.run(["sh", os.path.join(ROOT, "mods", "chat", "session-note.sh")], capture_output=True, text=True, env=env)
+        if not terminal:
+            return out.stdout, os.path.exists(log)
+        ctx = json.loads(out.stdout)["hookSpecificOutput"]["additionalContext"]
+        if not os.path.exists(log):
+            return ctx, ""
+        with open(log) as f:
+            return ctx, f.read()
+
+    def test_an_assistant_gets_its_reactions_words(self):
+        ctx, asked = self.run_hook("coordinator")
+        self.assertTrue(ctx.startswith("Herdr chat:"))
+        self.assertTrue(ctx.endswith('`herdr-artifact guide` first. Reactions (on in Settings): <hc react="👀" to="x"/>'), ctx[-120:])
+        self.assertEqual(asked.split(), ["_session-note", "t5"])
+
+    def test_a_worker_and_an_agent_tab_get_theirs_too(self):
+        for role, terminal in ((None, "t9"), ("", "t11")):
+            ctx, asked = self.run_hook(role, terminal)
+            self.assertTrue(ctx.endswith('`herdr-artifact guide` first. Reactions (on in Settings): <hc react="👀" to="x"/>'), ctx[-120:])
+            self.assertEqual(asked.split(), ["_session-note", terminal])
+
+    def test_outside_herdr_it_says_nothing(self):
+        out, asked = self.run_hook(None, "")
+        self.assertEqual(out, "")
+        self.assertFalse(asked)

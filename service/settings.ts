@@ -9,10 +9,15 @@ import { HOME } from "./paths.ts";
 import * as C from "../core/settings.js";
 import * as M from "../core/machines.js";
 import * as HC from "../core/host.js";
+import * as APc from "../core/autopilot.js";
 import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 
-const { TASK_ROWS, DEFAULTS, wordFor, valueFor, ROLES: CORE_ROLES, NOTES: CORE_NOTES, ABOUT, BACKUP, BASE, MACHINES, OLD_NAMES, SECTIONS,
-  WEB, modelLabel, roleSel, otherCli, otherCliWords, backupProblem, homeAbout, webState, sameAs, LOADING_AGENTS, RESET, machineLabel } = C as any;
+const { TASK_ROWS, DEFAULTS, wordFor, valueFor, ROLES: CORE_ROLES, NOTES: CORE_NOTES, ABOUT, BACKUP, REACTIONS, upgradeReactions, BASE, MACHINES, OLD_NAMES, SECTIONS,
+  WEB, modelLabel, roleSel, otherCli, otherCliWords, backupProblem, homeAbout, webState, fromWord, LOADING_AGENTS, RESET, machineLabel } = C as any;
+const AP = APc as any;
+/** Autopilot as Everywhere has it now (herdr-task's view: what Settings keeps, else what it kept before, else the
+ *  defaults): its schedule's words, events, heartbeat words and what wakes it in plain words */
+export type PilotEverywhere = { every: string | null; events: string[]; words: string; trigger?: string };
 const { HOLD } = M as any;
 const FILE = process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json");
 const TEMPLATES = join(HOME, ".config", "herdr-core", "templates");
@@ -63,7 +68,8 @@ export function pushBody(file: any, m: string) {
 export function readSettings(): any {
   let text: string;
   try { text = readFileSync(FILE, "utf8"); } catch (e: any) { if (e?.code === "ENOENT") return {}; throw new Error("The settings file can't be read now. Try again."); }
-  try { const f = JSON.parse(text); if (f && typeof f === "object" && !Array.isArray(f)) return f; } catch {}
+  // SHEP-42's assistant.reactions comes back as agents.reactions, so a change writes it there
+  try { const f = JSON.parse(text); if (f && typeof f === "object" && !Array.isArray(f)) return upgradeReactions(f); } catch {}
   throw new Error("The settings file can't be read now (~/.herdr/shepherdr.json isn't valid JSON).");
 }
 const SAFE = (k: string) => !["__proto__", "constructor", "prototype"].includes(k);
@@ -92,7 +98,7 @@ export class Settings {
 
   private read() {
     let next: any = {};
-    try { next = JSON.parse(readFileSync(FILE, "utf8")); } catch {}
+    try { next = upgradeReactions(JSON.parse(readFileSync(FILE, "utf8")) ?? {}); } catch {}
     if (JSON.stringify(next) === JSON.stringify(this.file)) return;
     this.file = next;
     for (const fn of this.listeners) fn();
@@ -120,7 +126,8 @@ export class Settings {
 
   /** Every page at every level: Agents and Tasks (Everywhere and each space), Machines (all and each machine), Web.
    *  web: what the service last said of the web app (web.json: on, link, why, its QR picture's SVG). */
-  sections(web: { on: boolean; link: string | null; why: string | null; qr?: string | null; serve?: Serve } | string | null, spaces: Scope[] = [], machines: string[] = [], host = LOCAL): SettingSection[] {
+  sections(web: { on: boolean; link: string | null; why: string | null; qr?: string | null; serve?: Serve } | string | null, spaces: Scope[] = [], machines: string[] = [], host = LOCAL,
+    pilot: { everywhere: PilotEverywhere; trigger?: (space: string) => string | undefined } | null = null): SettingSection[] {
     this.host = host;
     this.scopes = spaces;
     this.machineNames = machines;
@@ -131,7 +138,7 @@ export class Settings {
       this.homes = readJson(HOME_ROUND)?.machines ?? {};
     }
     const out: SettingSection[] = [];
-    for (const s of [null, ...spaces]) out.push(this.agents(s), this.tasks(s));
+    for (const s of [null, ...spaces]) out.push(this.agents(s), this.tasks(s), ...(pilot ? [this.pilot(s, pilot.everywhere, pilot.trigger)] : []));
     // Machines, as the window's page: the limits for every machine, then each machine's block
     out.push({ name: title("machines"), level: "all", rows: [null, LOCAL, ...machines].flatMap((m) => this.machines(m)) });
     out.push(this.web(typeof web === "string" ? { on: true, link: web, why: null } : web ?? { on: true, link: null, why: "Tailscale isn't running here" }));
@@ -165,8 +172,8 @@ export class Settings {
         .map((sc) => ({ id: sc.id, name: sc.name }));
       return others.length ? { others } : {};
     }
-    // "Same as everywhere", or the machine a value set before still comes from (its words without "Same as ")
-    const from = sameAs(p.level, p.machine).replace(/^Same as /, "");
+    // "Inherited from Everywhere", or the machine a value set before still comes from
+    const from = fromWord(p.level, p.machine);
     return p.own ? { inherits: { value: word(p.parent), from } } : { from };
   }
   private scopes: Scope[] = [];
@@ -196,6 +203,10 @@ export class Settings {
     const problem = on ? backupProblem(this.checks, s ? b.machine : null, b.value && b.value !== "off" ? b.value : otherCli(worker, menus)) : "";
     rows.push({ label: BACKUP.title, key: "backup.agent", value: ON(on), options: ["on", "off"], hint: problem ? `${BACKUP.about}\n${problem}` : BACKUP.about,
       ...this.follows(s, b, (v) => ON(v !== "off"), "backup", "agent") });
+    // Reactions, for every agent: each reacts to some of your messages with an emoji (herdr-task's reactions.py)
+    const re = this.pick(scope, "agents", "reactions");
+    rows.push({ label: REACTIONS.title, key: "agents.reactions", value: ON(re.value !== false), options: ["on", "off"], hint: REACTIONS.about,
+      ...this.follows(s, re, (v) => ON(v !== false), "agents", "reactions") });
     return { name: title("agents"), level: scope ?? "all", rows };
   }
 
@@ -228,6 +239,42 @@ export class Settings {
       rows.push({ label: n.title, key: `tasks.${n.id}_notes`, value: p.value ?? "", multiline: true, hint: n.about, placeholder: n.example, ...this.follows(s, p, (v) => v ?? "", "tasks", `${n.id}_notes`) });
     }
     return { name: title("tasks"), level: scope ?? "all", rows };
+  }
+
+  /** Autopilot, as the window's page (autopilot-section.js): the heartbeat, the schedule and the events, Everywhere's
+   *  or a space's own (Shepherdr settings' "autopilot"); what a space doesn't set is Everywhere's (e: herdr-task's view
+   *  of it, unless the file says newer). A space switches it on in its Assistant's header. */
+  private pilot(s: Scope | null, e: PilotEverywhere, trigger?: (space: string) => string | undefined): SettingSection {
+    const every = AP.levelOf(this.file), own = s ? AP.levelOf(this.file, s.id) : {};
+    const parent: Record<string, any> = { heartbeat: AP.currentBeat(every.heartbeat ?? e.words ?? ""), every: every.every ?? e.every ?? "", events: every.events ?? e.events ?? [],
+      direction: every.direction ?? "" };
+    if (typeof own.heartbeat === "string") own.heartbeat = AP.currentBeat(own.heartbeat);
+    const pick = (f: string) => ({ value: f in own ? own[f] : parent[f], own: f in own, parent: parent[f], level: "everywhere", machine: null });
+    const others = (f: string) => (s ? {} : (() => {
+      const list = this.scopes.filter((sc) => f in AP.levelOf(this.file, sc.id)).map((sc) => ({ id: sc.id, name: sc.name }));
+      return list.length ? { others: list } : {};
+    })());
+    const under = (f: string, word: (v: any) => string) => (s ? this.follows(s, pick(f), word) : others(f));
+    const preset = (v: string) => AP.PRESETS.find(([x]: string[]) => x === String(v ?? "").trim().toLowerCase())?.[1];
+    const everyWord = (v: string) => (String(v ?? "").trim() ? preset(v) ?? String(v).trim() : "Off");
+    const events = (v: string[]) => AP.eventsIn(v).join(",");
+    const ev = pick("events").value as string[], ew = String(pick("every").value ?? "");
+    // what wakes it, in words: herdr-task's for a level it knows, else its pick's and events' names
+    const named = AP.EVENTS.filter(([x]: string[]) => AP.eventsIn(ev).includes(x)).map(([, l]: string[]) => l).join(", ");
+    const words = (s ? trigger?.(s.id) : e.trigger) ?? ([ew.trim() ? everyWord(ew) : "", named ? `On ${named}` : ""].filter(Boolean).join(" · ") || "Only Run now");
+    const R = AP.ROWS;
+    const rows: SettingRow[] = [
+      // a space's Direction: the one line it steers toward (Everywhere has none to give: it works out its own)
+      ...(s ? [{ label: R.direction.label, key: "autopilot.direction", value: String(pick("direction").value ?? ""), text: true, hint: R.direction.about,
+        placeholder: AP.DIRECTION_PLACEHOLDER } as SettingRow] : []),
+      { label: R.heartbeat.label, key: "autopilot.heartbeat", value: String(pick("heartbeat").value ?? ""), doc: true, hint: R.heartbeat.about,
+        ...under("heartbeat", (v) => String(v ?? "")) } as SettingRow,
+      { label: R.every.label, key: "autopilot.every", value: ew, text: true, hint: R.every.about,
+        trigger: { words, next: [], presets: AP.PRESETS.map(([value, label]: string[]) => ({ label, value })) }, ...under("every", everyWord) } as SettingRow,
+      { label: R.events.label, key: "autopilot.events", value: events(ev), multi: AP.EVENTS.map(([value, label]: string[]) => ({ value, label })),
+        hint: R.events.about, ...under("events", events) } as SettingRow,
+    ];
+    return { name: title("autopilot"), level: s?.id ?? "all", about: AP.ABOUT, rows } as SettingSection;
   }
 
   /** Machines: when new tasks wait and how task agents run, for every machine (null) or one's own; a machine's page
@@ -369,6 +416,24 @@ export class Settings {
         v = { agent: v.agent, model: v.model ?? null, effort: v.effort ?? null, fast: !!v.fast, perm: v.perm ?? null };
       }
       put(field, null, v);
+    } else if (section === "autopilot" && AP.FIELDS.includes(field)) {
+      // Autopilot, Everywhere's or a space's own: a schedule's words (checked by herdr-task first: service/autopilot.ts),
+      // "" for none; events by their names; the heartbeat's words
+      let v: unknown = null;
+      if (word !== null && field === "every") v = word.trim().slice(0, 200);
+      else if (word !== null && field === "events") {
+        const on = word.split(",").map((x) => x.trim()).filter(Boolean);
+        if (on.some((x) => !AP.EVENTS.some(([e]: string[]) => e === x))) throw new Error("Not an event Autopilot knows.");
+        v = AP.eventsIn(on);
+      } else if (word !== null && field === "direction") v = AP.directionOf(word) || null;
+      else if (word !== null) v = word.slice(0, 8000);
+      put("autopilot", field, v);
+    } else if (key === "agents.reactions" || key === "assistant.reactions") {
+      // on or off (assistant.reactions: its key before it was for every agent); the same as what this level would
+      // inherit unsets it, so it follows again (as the window's)
+      if (word !== null && word !== "on" && word !== "off") throw new Error("Not one of its choices.");
+      const parent = space ? file.everywhere?.agents?.reactions ?? DEFAULTS.agents.reactions : DEFAULTS.agents.reactions;
+      put("agents", "reactions", word === null || (word === "on") === parent ? null : word === "on");
     } else if (key === "backup.agent") {
       // off is "off"; on follows what it would get anyway when that is on, else names the other CLI (as the window's)
       const parent = space ? file.everywhere?.backup?.agent ?? null : null;

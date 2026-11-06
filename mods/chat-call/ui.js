@@ -83,9 +83,9 @@ export function toggleSwitch(id, on, onToggle, { disabled = false } = {}) {
 }
 
 // Segmented control ----------------------------------------------------------
-// options: [[value, label, { disabled, tip }?], ...]. Every segment is as wide as its words and
+// options: [[value, label, { disabled }?], ...]. Every segment is as wide as its words and
 // never cut; `fill` stretches the segments over the row (still never narrower than their words).
-// A disabled segment is dim and takes no click; `tip` is its tooltip.
+// A disabled segment is dim and takes no click.
 // opts: { size: "sm" 24 | "lg" 32, disabled, fill }.
 export function segmented(id, options, value, onPick, { size = "sm", disabled = false, fill = false } = {}) {
   const t = theme();
@@ -98,7 +98,6 @@ export function segmented(id, options, value, onPick, { size = "sm", disabled = 
         .whitespace_nowrap().text_size(TEXT.label)
         .when(fill, (el) => el.flex_1())
         .when(!fill, (el) => el.flex_none())
-        .when(Boolean(o?.tip), (el) => el.tooltip(o.tip))
         .when(on, (el) => el.bg(t.background).text_color(t.foreground).font_medium())
         .when(!on && Boolean(o?.disabled), (el) => el.text_color(t.dim).opacity(0.6))
         .when(!on && !o?.disabled, (el) => el.text_color(t.muted))
@@ -203,15 +202,16 @@ export function toast(n) {
 }
 
 // Who a toast is from, its title's first half ("HERD-4 · what", "~ Assistant · what"): a task's
-// agent by its task (herdr-task names it "herd-4-fix-login"), an Assistant by its space, anything
-// else by its program. k: a terminal (terminals()); task: a task ref when known.
+// agent by its task (herdr-task names it "herd-4-fix-login"; on another machine "HERD-4 on vm", as
+// core/toasts.js taskWho), an Assistant by its space, anything else by its program. k: a terminal
+// (terminals()); task: a task ref when known.
 export function toastWho(k, task = null) {
   const l = k?.labels ?? {};
+  const m = String(k?.address ?? "").includes("/") ? k.address.split("/")[0] : null;
   const ref = task ?? (l["herdr.task"] ? (/^([a-z][a-z0-9]*-\d+)/.exec(k?.name ?? "")?.[1] ?? "").toUpperCase() : "");
-  if (ref) return ref;
+  if (ref) return m ? `${ref} on ${m}` : ref;
   if (l["herdr.role"] === "coordinator") {
     const id = l["herdr.coordinator.space"] ?? l["herdr.space"];
-    const m = String(k?.address ?? "").includes("/") ? k.address.split("/")[0] : null;
     const name = id && spaces().find((s) => s.id === (m ? `${m}/${id}` : id))?.name;
     return name ? `${name} Assistant` : "Assistant";
   }

@@ -39,7 +39,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Started from a slot with your words | W:2428 the template part a "New session" row, your words a bubble | D `firstTask()` reads the same data/chat-first/<slot>.txt: "New session" row, then your words | ✓ |
 | Tools row | W:2793 "› Read a file, ran a command" (core summary), opens to each step's line and the first lines it printed | A:316 TurnLine + A:332 ToolSteps (D `activity.summary`, `api/activity` → `results()`) | ✓ (showed raw "Description: command" rows) |
 | Quiet lines sit tight | W spaced(): tools, briefs, news, artifact lines one block, 16px between blocks | C:1084 quiet runs grouped, `gap-4` between blocks | ✓ |
-| Task news line | W:2764 mark (green tick ready, grey tick done, amber started, red needs while live), REF, what, "·", words; Accept at the right while Ready | R:138 NewsRow (D `news`, core `newsWords`/`newsTimeline` incl. start/ready/done from the task's record) | ✓ (was a bordered 2.1 card with raw text) |
+| Task news line | W:2764 mark (green tick ready, grey tick done, amber started, red needs while live), REF, what, "·", words; Review (opens the Accept card) at the right while Ready | R:138 NewsRow (D `news`, core `newsWords`/`newsTimeline` incl. start/ready/done from the task's record) | ✓ (was a bordered 2.1 card with raw text) |
 | Accept on a Ready line | W:2838 opens the Accept card | R:138 → `openAccept` | ✓ |
 | Artifact card / line | W:2748 latest: card "Artifact · v3" + Open; earlier: "Published X v2" | plugins/artifacts ArtifactCard (D emits `artifact` via core `resolveArtifacts`) | ✓ (publishes were missing) |
 | Artifact publishing | W:2807 "Publishing an artifact…" | R:164 PublishingRow (D `publishing`) | ✓ |
@@ -68,7 +68,7 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 | Copy / Copied | W copy icon, check for 1.5 s | R:42 copy icon, check for 1.5 s | ✓ |
 | Rewind (yours, not a /command, not another agent's) | W:1914 the CLI's /rewind, then the terminal | R:42 `bandActs` from core; action `rewind`, then the terminal | ✓ |
 | Fork (agent's) | W:1934 new tab with the CLI's fork | R:42 action `fork` | ✓ |
-| Reactions (pills) | W:2627 always shown: emoji + count; agent's: pills then smiley; yours: smiley then pills | R:42 + X:66 Pills with count 1/2 | ✓ |
+| Reactions (pills) | W:2707 always shown, 20 px tall in the 22 px row: emoji + count, flush under the bubble's outer edge; each side the other's mirror: yours time, reply, copy, rewind, smiley, pills; the agent's pills, smiley, fork, copy, reply, time | R:42 + X:66 Pills with count 1/2, the same order and edge | ✓ |
 | Smiley | W:1852 opens the emoji picker | R:42 → `openPicker` (the full picker) | ✓ |
 | Newest reply while working | W:2477 no band yet | C:1084 `writing` | ✓ |
 | What you just sent | W pending rows have no band | C:102 no band while in the outbox | ✓ |
@@ -120,12 +120,12 @@ State: ✓ matches, ◇ web-only form (why), ✗ still differs (why).
 
 | Element | Window | Web | State |
 |---|---|---|---|
-| Working line | W:2889 spinner, what it does (log call, else its report, else "Working"), m:ss, [■ Stop Esc]; "Stopping…" | A:360 WorkingLine (D `doing`), `elapsed` from core, Stop · Esc | ✓ (was a line in the chat with dots) |
+| Working line | W statusLine: spinner, what it does (its log's open call, else its CLI's live status report, as Claude Code says it: "Computing build times"; else "Working"), m:ss, [■ Stop Esc]; "Stopping…" | A WorkingLine (D `doing`, from the same core/chat-view.js `reportMsg` and `doingWords`: the service reads the report from herdr-core's `status`, where the window's terminals() has it as `report`, and tells the page each time it changes), `elapsed` from core, Stop · Esc | ✓ (was a line in the chat with dots; the web said only "Working" between calls until SHEP-25) |
 | Only waiting | W clock icon, no spinner | A:360 clock (D `waits`) | ✓ |
 | Needs you | W:2979 red dot, "Needs you", what it waits for or "The agent is asking something in the terminal.", Open terminal | A:389 NeedsYou (D `blocked`) | ✓ (was missing) |
 | Starting the Assistant | W:1419 startAgent: the first message in an empty Assistant chat starts it (assistant template, the message its task, the slot's labels), "Starting the Assistant…" | service/actions.ts `send` to a space with no Assistant: the same `hc run` and labels in the window's slot (shared "coordinator.slots"), else the service's own labels; writes data/chat-first; A WorkingLine "Starting the Assistant…" | ✓ |
 | Helpers | W:2972 rows: spinner, name, age; past five, four and "+N more" | A JobsTag: the same rows over the box | ✓ |
-| Background shells and watchers | W background(): after the subagents, a row each for the shells and watchers the agent left running (terminal or eye icon, name, age, chevron), live from its log and its processes (core/bg-jobs.js), gone when they end; a tap opens its command, the last lines it printed (Claude Code's) and Stop; Codex's own long-running shells too. Settings' subagents switch leaves them shown | A JobsTag JobLine: the same rows and the same open row (service compat `jobs`, api/activity `what=job`, action `stop-job`) | ✓ |
+| Background shells and watchers | W background(): after the subagents, a row each for the shells and watchers the agent left running (terminal or eye icon, name, age, chevron), live from its log and its processes (core/bg-jobs.js), gone when they end; a tap opens its command, the last lines it printed (Claude Code's) and Stop; Codex's own long-running shells too. Settings' subagents switch leaves them shown. A background call answered without a task id (cancelled, denied, failed) is no row, and one with no task id stays a minute at most (SHEP-20, core/bg-jobs.js: a window still on an older install keeps such a row for hours, like "Keep watching SHEP-10 · 4h", until it updates) | A JobsTag JobLine: the same rows and the same open row (service compat `jobs`, api/activity `what=job`, action `stop-job`) | ✓ |
 
 ## Cards
 

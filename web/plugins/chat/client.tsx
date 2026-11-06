@@ -26,15 +26,18 @@ import { Markdown } from './markdown.tsx'
 import { answeredBy, cancelReply, canReply, isArtifact, jumpTo, startReply } from './reply.ts'
 import { typing, working } from './typing.ts'
 import { JobsSheet, JobsTag, NeedsYou, TurnLine, WorkingLine } from './activity.tsx'
-import { ClockIcon, PaperClipIcon } from '@heroicons/react/16/solid'
-import { AskedRow, Band, BriefRow, Chips, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
+import { ClockIcon } from '@heroicons/react/16/solid'
+import { AskedRow, Band, BriefRow, Chips, EndedRow, ErrorRow, NoteRow, Notice, HeadRow, ImagesLine, NewsRow, onTerminal, PilotRow, PublishingRow, questionsBelow, ReplyLine, Thumbs, WORDS } from './rows.tsx'
 import { AgentLine, openModelMenu, openRestart, RestartSheet } from '@client/restart.tsx'
+import { expandPicked, forMarkdown, mentionItems, MentionList, pickable, takeItem, useReach, withChips, type Item } from './mentions.tsx'
+import * as MNc from '@core/mentions.js'
+const mentionTyping = (text: string): string | null => (MNc as any).typingTask(text) ?? (MNc as any).typing(text)
 
 /* ---------- messages ---------- */
 
 /** Human messages, including full task briefs and generated settings, exactly as written. */
-function YourText({ text }: { text: string }) {
-  return <div className="whitespace-pre-wrap wrap-anywhere">{text}</div>
+function YourText({ text, chat }: { text: string; chat?: string }) {
+  return <div className="whitespace-pre-wrap wrap-anywhere">{chat ? withChips(text, chat) : text}</div>
 }
 
 export { Markdown }
@@ -194,7 +197,7 @@ function Bubble({ msg, chat, from, out, last, pics, images, writing }: { msg: Me
                     return blocker ? <LinkButton onClick={() => jumpTo(chat.key, blocker.id, { card: true })}>Go to question</LinkButton> : null
                   })()}
                 </> : waitLine(msg.waitsFor)}</div> : null}
-                {msg.text ? <div ref={text} data-text>{you ? <YourText text={msg.text} /> : <Fold id={msg.id}><Markdown text={msg.text} /></Fold>}</div> : null}
+                {msg.text ? <div ref={text} data-text>{you ? <YourText text={msg.text} chat={chat.key} /> : <Fold id={msg.id}><Markdown text={msg.text} chat={chat.key} /></Fold>}</div> : null}
               </div>,
               true,
             )
@@ -243,7 +246,7 @@ function Held({ chatKey }: { chatKey: string }) {
   const ghost = 'flex h-[22px] shrink-0 items-center rounded-[6px] px-2 text-[0.75rem] font-medium text-fg2 hover:bg-hover hover:text-fg phone:h-9'
   const take = (cid: string, then?: () => void) => void act({ type: 'held-drop', cid } as never).then(() => { removeOut(cid); then?.() }, () => { removeOut(cid); then?.() })
   return (
-    <div className="flex flex-col gap-1 pb-1.5">
+    <div className="flex flex-col gap-1">
       {[...rows.values()].map((r) => (
         <div key={r.cid} data-held className="flex h-10 items-center gap-2 rounded-[8px] bg-bg pr-1 pl-2.5 shadow-[inset_0_0_0_1px_var(--line2)] phone:h-12">
           <ClockIcon aria-hidden className="size-3.5 shrink-0 fill-[var(--fg3)]" />
@@ -266,6 +269,7 @@ function waitLine(why: Message['waitsFor']) {
   if (why === 'menu') return 'Waiting for your answer above.'
   if (why === 'start') return 'Goes in once the agent has started'
   if (why === 'turn') return 'Goes in once the agent finishes this step'
+  if (why === 'queue') return WORDS.inQueue
   return 'Goes in once it can be reached'
 }
 
@@ -539,8 +543,13 @@ const tucks = 'shadow-[0_0_0_2px_var(--bg)]'
 
 /* ---------- attachments: each one a message of its own; pictures as small tiles side by side, anything else as a file tile ---------- */
 
+/** pictures picked on this screen, by their file's name (the name stays when the agent's machine gets a copy): drawn
+ *  from the device itself, at once, in the box, in the bubble on its way and once the chat has it */
+const previews = new Map<string, string>()
+const baseName = (path: string) => path.split('/').pop() ?? path
+
 export const fileUrl = (chat: string, path: string, download = false) =>
-  `api/file?chat=${encodeURIComponent(chat)}&path=${encodeURIComponent(path)}${download ? '&download=1' : ''}`
+  (!download && previews.get(baseName(path))) || `api/file?chat=${encodeURIComponent(chat)}&path=${encodeURIComponent(path)}${download ? '&download=1' : ''}`
 
 /** a picture on its own, with no words: it shows as a tile, and the viewer pages through every one in the chat */
 export const isPicture = (m: Message) => !!m.file && !m.text && !m.answered && isImage(m.file.name)
@@ -1004,7 +1013,7 @@ function Card({ card: c, chat, at, press, keys, className }: { card: UpdateCard;
   const status = t?.status ?? c.status ?? 'idle'
   const needs = (c.ask?.open || status === 'need') && registry.views.needs
   const pr = c.pr ?? t?.pr
-  // Shepherdr 3: a news line says what happened at its moment and is never rewritten after; a Ready one has Accept
+  // Shepherdr 3: a news line says what happened at its moment and is never rewritten after; a Ready one has Review (opens the Accept card)
   // while its task still waits for it
   const accept = c.status === 'ready' && t?.status === 'ready' && !t.archived
   const line = (
@@ -1024,7 +1033,7 @@ function Card({ card: c, chat, at, press, keys, className }: { card: UpdateCard;
       {accept ? (
         <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); openAccept(task) }} onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); openAccept(task) } }}
           className="press-dim ml-auto h-6 shrink-0 rounded-full bg-fg px-2.5 text-xs/6 font-medium text-bg phone:h-8 phone:px-3 phone:text-sm/8">
-          Accept
+          Review
         </span>
       ) : null}
     </button>
@@ -1120,7 +1129,7 @@ const Messages = memo(function Messages({ chat, from }: { chat: Chat; from: stri
   const rows: (Item | Quiet)[] = []
   const pics = new Map<Message, Message[]>()
   const imgLines = new Map<Message, number>()
-  const isQuiet = (m: Message) => !!(m.activity || m.brief || m.news || m.publishing || m.ended)
+  const isQuiet = (m: Message) => !!(m.activity || m.brief || m.news || m.publishing || m.ended || m.pilot)
   for (const it of items) {
     const last = rows.at(-1)
     if ('msg' in it && isQuiet(it.msg)) {
@@ -1184,7 +1193,7 @@ const Messages = memo(function Messages({ chat, from }: { chat: Chat; from: stri
                 <div data-quiet className="flex w-full flex-col">
                   {it.quiet.map((m) => (
                     <div key={m.id} data-msg={m.id} data-chat={chat.key} className="w-full">
-                      {m.activity ? <TurnLine a={m.activity} chat={chat.key} /> : m.brief ? <BriefRow msg={m} /> : m.news ? <NewsRow msg={m} /> : m.ended ? <EndedRow msg={m} /> : <PublishingRow />}
+                      {m.activity ? <TurnLine a={m.activity} chat={chat.key} /> : m.brief ? <BriefRow msg={m} /> : m.news ? <NewsRow msg={m} /> : m.ended ? <EndedRow msg={m} /> : m.pilot ? <PilotRow msg={m} /> : <PublishingRow />}
                     </div>
                   ))}
                 </div>
@@ -1647,7 +1656,10 @@ async function deliver(o: Outgoing) {
   // a reload now would cut it off on its way
   const release = holdReload()
   try {
-    const r = (await act({ type: 'send', chat: o.chat, text: o.text, attachments: o.files.map((f) => f.path), cid: o.cid, reply: o.reply?.id, human: true, ...(o.hold ? { hold: true } : {}) } as never, AbortSignal.timeout(SEND_TIMEOUT))) as {
+    // a file still uploading goes once it is up
+    const files = o.files.some((f) => uploads.has(f.path)) ? await uploaded(o.files) : o.files
+    if (files !== o.files) patch(() => ({ files }))
+    const r = (await act({ type: 'send', chat: o.chat, text: o.text, attachments: files.map((f) => f.path), cid: o.cid, reply: o.reply?.id, human: true, ...(o.hold ? { hold: true } : {}) } as never, AbortSignal.timeout(SEND_TIMEOUT))) as {
       waiting?: boolean
       waitsFor?: Outgoing['waitsFor']
       at?: number
@@ -1671,7 +1683,7 @@ function retry(cid: string) {
   const s = getState()
   const o = s.outbox.find((x) => x.cid === cid)
   if (!o) return
-  const again: Outgoing = { ...o, cid: o.lost ? newCid() : o.cid, state: 'sending', error: undefined, lost: undefined, waiting: undefined, waitsFor: undefined, queued: undefined, serverAt: undefined, wentAt: undefined, busyAt: undefined, at: Date.now(), prior: priorOf(s.chats[o.chat]) }
+  const again: Outgoing = { ...o, cid: o.lost ? newCid() : o.cid, state: 'sending', error: undefined, lost: undefined, waiting: undefined, waitsFor: undefined, queued: undefined, serverAt: undefined, wentAt: undefined, busyAt: undefined, pastAt: undefined, at: Date.now(), prior: priorOf(s.chats[o.chat]) }
   setOutbox((all) => all.map((x) => (x.cid === cid ? again : x)))
   deliver(again)
 }
@@ -1699,37 +1711,12 @@ function SlashList({ chatKey, text, pick }: { chatKey: string; text: string; pic
   const shown = slashMatch(list, word)
   if (!shown.length) return null
   return (
-    <div role="listbox" aria-label="Commands" className="mb-1.5 overflow-hidden rounded-box bg-bg p-1 shadow-menu">
+    <div role="listbox" aria-label="Commands" className="overflow-hidden rounded-box bg-bg p-1 shadow-menu">
       {shown.map((c: { name: string; about: string }) => (
         <button key={c.name} type="button" role="option" aria-selected={false} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(c.name)}
           className="flex w-full min-w-0 items-baseline gap-2 rounded-row px-2.5 py-1.5 text-left hover:bg-hover phone:py-2.5">
           <span className="shrink-0 font-medium">/{c.name}</span>
           <span className="min-w-0 truncate text-fg3">{c.about}</span>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-/** "#4" at the end of the box, as the window's: the chat's space's tasks, by number or title; a tap puts its id in */
-function TaskList({ chatKey, text, pick }: { chatKey: string; text: string; pick: (text: string) => void }) {
-  const snap = useSnap()
-  const h = /(?:^|\s)#([\w-]*)$/.exec(text.replace(/\n+$/, ''))
-  if (!h || !snap) return null
-  const own = taskChatId(chatKey)
-  const place = own ? taskOf(snap, own)?.place : snap.places.find((p) => p.chat === chatKey)?.id
-  const q = h[1].toLowerCase()
-  const refOf = (id: string) => id.split(':').pop() ?? id
-  const list = (snap.tasks ?? []).filter((t) => t.place === place && (!q || refOf(t.id).toLowerCase().includes(q) || t.name.toLowerCase().includes(q))).slice(0, 8)
-  if (!list.length) return null
-  return (
-    <div role="listbox" aria-label="Tasks" className="mb-1.5 overflow-hidden rounded-box bg-bg p-1 shadow-menu">
-      {list.map((t) => (
-        <button key={t.id} type="button" role="option" aria-selected={false} onMouseDown={(e) => e.preventDefault()} onClick={() => pick(text.replace(/\n+$/, '').replace(/#[\w-]*$/, `${refOf(t.id)} `))}
-          className="flex w-full min-w-0 items-baseline gap-2.5 rounded-row px-2.5 py-1.5 text-left hover:bg-hover phone:py-2.5">
-          <span className="shrink-0 font-medium">{refOf(t.id)}</span>
-          <span className="min-w-0 flex-1 truncate text-fg2">{t.name}</span>
-          {t.state ? <span className="shrink-0 text-[0.6875rem] text-fg3">{t.state}</span> : null}
         </button>
       ))}
     </div>
@@ -1804,8 +1791,19 @@ function Composer({ chatKey, placeholder, cli }: { chatKey: string; placeholder:
   // Up in an empty box: which earlier message shows (-1: none), and its words (editing them makes it a new one)
   const recall = useRef(-1)
   const recalled = useRef('')
+  // the "#" list: spaces this chat's agent reaches; the "@" list: tasks in them (mentions.tsx). Escape closes it for
+  // what is typed, Up and Down choose, Enter or Tab takes
+  const snap = useSnap()
+  const word = mentionTyping(text)
+  const [mclosed, setMclosed] = useState<string | null>(null)
+  const reach = useReach(chatKey, word !== null)
+  const mentions = word !== null && mclosed !== text ? mentionItems(snap, chatKey, text, reach) : []
+  const choosable = pickable(mentions)
+  const [msel, setMsel] = useState(0)
+  useEffect(() => setMsel(0), [word, (MNc as any).typingTask(text) === null])
+  const takeMention = (i: Item) => { setText(takeItem(chatKey, text, i)); ref.current?.focus() }
   const send = (hold = false) => {
-    const t = text.trim()
+    const t = expandPicked(chatKey, text.trim())
     if (!t && !files.length) return
     recall.current = -1
     const reply = getState().ui.reply[chatKey]
@@ -1839,142 +1837,147 @@ function Composer({ chatKey, placeholder, cli }: { chatKey: string; placeholder:
     deliver(out)
   }
   return (
-    // what goes with the box (send, +, a file's x, its menu) leaves the box the focus: a phone's keyboard stays up
-    <div data-kb data-keep-box className={clsx('mx-auto w-full max-w-read shrink-0 px-4 pt-2', keyboard && device === 'phone' ? 'pb-1' : 'pb-2.5')}>
+    // what goes with the box (send, +, a file's x, its menu) leaves the box the focus: a phone's keyboard stays up. What
+    // shows over the box (working, queued, jobs, lists) is a stack with one gap, none of its own: as the window's
+    <div data-kb data-keep-box className={clsx('mx-auto flex w-full max-w-read shrink-0 flex-col gap-2 px-4 pt-2', keyboard && device === 'phone' ? 'pb-1' : 'pb-2.5')}>
       {registry.composerAbove.map(({ View }, i) => (
         <View key={i} chatKey={chatKey} cli={cli} />
       ))}
       <SlashList chatKey={chatKey} text={text} pick={(name) => { setText(`/${name} `); ref.current?.focus() }} />
-      <TaskList chatKey={chatKey} text={text} pick={(next) => { setText(next); ref.current?.focus() }} />
-      {/* a pill: the corners are half its one-line height, so one line has round ends; taller, the buttons keep their
-          size and spot in the bottom corners, with the same curve around them (like iMessage) */}
-      <div data-composer className="round-box bg-bg p-1.5 shadow-box has-[textarea:focus]:shadow-box-focus">
+      <MentionList items={mentions} sel={msel} from={reach?.from ?? null} pick={takeMention} />
+      {/* the window's box: the words across its full width, then a row in it of attach on the left and on the right
+          what the agent runs on (the model menu), the mic and Send (or Call); nothing under it. Its corners are half a
+          round button and the padding, so the buttons sit in the bottom ones with the same curve round them */}
+      <div data-composer className="relative round-box bg-bg p-1.5 shadow-box has-[textarea:focus]:shadow-box-focus">
         {/* what it replies to: one quiet line inside the box, over the words (like WhatsApp and Telegram) */}
         <ReplyStrip chatKey={chatKey} />
-        <div data-btns className={live ? 'flex items-center gap-1' : 'grid grid-cols-[auto_minmax(0,1fr)_auto] items-end gap-1'}>
-          {live ? (
+        {live ? (
+          <div data-btns className="flex items-center gap-1">
             <live.View chatKey={chatKey} />
-          ) : (
-            <>
+          </div>
+        ) : (
+          <>
+            <div className="relative flex min-w-0">
+              <textarea
+                ref={ref}
+                name="message"
+                data-chat={chatKey}
+                data-kept
+                data-quiet
+                aria-label={placeholder}
+                rows={1}
+                value={text}
+                placeholder=""
+                onChange={(e) => setText(e.target.value)}
+                onPaste={(e) => {
+                  // a screenshot or a copied file attaches, as + does; text pastes as text
+                  const list = pasted(e.clipboardData)
+                  if (!list.length) return
+                  e.preventDefault()
+                  attach(chatKey, list)
+                }}
+                onScroll={(e) => fades(e.currentTarget)}
+                // the caret moved (an arrow key, a tap, a letter typed, after which a phone scrolls to the caret
+                // itself, short of the padding): its line comes into full view
+                onSelect={(e) => {
+                  reveal(e.currentTarget)
+                  fades(e.currentTarget)
+                }}
+                onFocus={() => setUI({ focus: chatKey })}
+                onBlur={() => getState().ui.focus === chatKey && setUI({ focus: null })}
+                onKeyDown={(e) => {
+                  if (choosable.length && !e.nativeEvent.isComposing) {
+                    const n = choosable.length, at = Math.min(msel, n - 1)
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); return setMsel((at + (e.key === 'ArrowDown' ? 1 : n - 1)) % n) }
+                    if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey && device === 'desktop')) { e.preventDefault(); return takeMention(choosable[at]) }
+                    if (e.key === 'Escape') { e.preventDefault(); return setMclosed(text) }
+                  }
+                  // as the window's: Up in an empty box (or one showing a recalled message) brings back your earlier
+                  // messages, newest first; Down goes back toward the empty box
+                  if ((e.key === 'ArrowUp' && (!text || recall.current >= 0)) || (e.key === 'ArrowDown' && recall.current >= 0)) {
+                    if (recall.current >= 0 && text !== recalled.current) recall.current = -1
+                    else {
+                      const mine = [...new Set((getState().chats[chatKey]?.messages ?? []).filter((m) => m.who === 'you' && m.text && !m.brief).map((m) => m.text!).reverse())]
+                      const next = recall.current + (e.key === 'ArrowUp' ? 1 : -1)
+                      if (mine.length && next >= -1 && next < mine.length) {
+                        e.preventDefault()
+                        recall.current = next
+                        recalled.current = next < 0 ? '' : mine[next]
+                        setText(recalled.current)
+                        return
+                      }
+                    }
+                  }
+                  if (e.key === 'Enter' && !e.shiftKey && device === 'desktop' && !e.nativeEvent.isComposing) {
+                    e.preventDefault()
+                    // Shepherdr 3: Ctrl+Enter holds it until the agent is free
+                    send(e.ctrlKey || e.metaKey)
+                  }
+                  if (e.key === 'Escape') {
+                    e.preventDefault()
+                    // a reply is dropped first; an empty box stops a working agent (the window's Esc); then the box lets go
+                    if (getState().ui.reply[chatKey]) return cancelReply(chatKey)
+                    if (!text.trim() && getState().chats[chatKey]?.working) return void act({ type: 'stop', chat: chatKey }).catch(() => undefined)
+                    ref.current?.blur()
+                    setUI({ focus: null })
+                  }
+                }}
+                className={clsx(
+                  // at most 8 lines (less with a phone's keyboard up): past that it scrolls inside, an edge with more
+                  // words past it fading out over its padding, so no line looks cut and every whole line stays crisp
+                  // (the one you type too), the scrollbar only while it moves
+                  'max-h-[min(calc(8lh+0.875rem),calc(var(--app-h,100dvh)*0.32))] min-h-[34px] w-full flex-1 resize-none self-center overflow-y-auto overscroll-y-contain bg-transparent px-2.5 py-[7px] text-fg outline-none phone:max-h-[min(calc(8lh+1rem),calc(var(--app-h,100dvh)*0.32))] phone:min-h-10 phone:px-3.5 phone:py-2',
+                  '[--fade-down:0px] [--fade-up:0px] [mask-image:linear-gradient(transparent,#000_var(--fade-up),#000_calc(100%-var(--fade-down)),transparent)] data-more-down:[--fade-down:7px] data-more-up:[--fade-up:7px] phone:data-more-down:[--fade-down:10px] phone:data-more-up:[--fade-up:10px]',
+                  text ? 'whitespace-pre-wrap' : 'whitespace-nowrap',
+                )}
+              />
+              {!text ? (
+                <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-2.5 left-2.5 flex items-center text-fg3 phone:right-3.5 phone:left-3.5">
+                  <span className="truncate">{placeholder}</span>
+                </span>
+              ) : null}
+            </div>
+            <div data-btns className="flex items-center gap-1">
               {registry.composerPlus ? (
-                // the window's paperclip: the device's file picker; a phone's also offers its camera (a menu)
+                // the window's plus: the device's file picker; a phone's also offers its camera (a menu)
                 <IconButton
                   label={WORDS.attach}
                   className={roundBtn}
                   pressed={plus}
                   onClick={() => device === 'phone' ? setUI({ plus: plus ? null : chatKey }) : document.querySelector<HTMLInputElement>(`input[name=file][data-chat="${CSS.escape(chatKey)}"]`)?.click()}
                 >
-                  <PaperClipIcon className={ic} />
+                  <PlusIcon className={ic} />
                 </IconButton>
               ) : null}
-              <div className="relative col-start-2 flex min-w-0 self-stretch">
-                <textarea
-                  ref={ref}
-                  name="message"
-                  data-chat={chatKey}
-                  data-kept
-                  data-quiet
-                  aria-label={placeholder}
-                  rows={1}
-                  value={text}
-                  placeholder=""
-                  onChange={(e) => setText(e.target.value)}
-                  onPaste={(e) => {
-                    // a screenshot or a copied file attaches, as + does; text pastes as text
-                    const list = pasted(e.clipboardData)
-                    if (!list.length) return
-                    e.preventDefault()
-                    attach(chatKey, list)
+              <div className="flex-1" />
+              <AgentLine chatKey={chatKey} cli={cli} />
+              {Mic ? <Mic chatKey={chatKey} /> : null}
+              {text.trim() || files.length || !Idle ? (
+                <button
+                  type="button"
+                  aria-label="Send"
+                  // Shepherdr 3 on a phone: a long press on Send holds it until the agent is free (the phone's Ctrl+Enter)
+                  onPointerDown={() => { held.current = false; holdTimer.current = setTimeout(() => { held.current = true; buzz(); send(true) }, 500) }}
+                  onPointerUp={() => clearTimeout(holdTimer.current)}
+                  onPointerLeave={() => clearTimeout(holdTimer.current)}
+                  onContextMenu={(e) => e.preventDefault()}
+                  onClick={() => {
+                    if (held.current) return
+                    // a light tap from the phone as it goes, like ChatGPT's
+                    if (matchMedia('(pointer: coarse)').matches) buzz()
+                    send()
                   }}
-                  onScroll={(e) => fades(e.currentTarget)}
-                  // the caret moved (an arrow key, a tap, a letter typed, after which a phone scrolls to the caret
-                  // itself, short of the padding): its line comes into full view
-                  onSelect={(e) => {
-                    reveal(e.currentTarget)
-                    fades(e.currentTarget)
-                  }}
-                  onFocus={() => setUI({ focus: chatKey })}
-                  onBlur={() => getState().ui.focus === chatKey && setUI({ focus: null })}
-                  onKeyDown={(e) => {
-                    // as the window's: Up in an empty box (or one showing a recalled message) brings back your earlier
-                    // messages, newest first; Down goes back toward the empty box
-                    if ((e.key === 'ArrowUp' && (!text || recall.current >= 0)) || (e.key === 'ArrowDown' && recall.current >= 0)) {
-                      if (recall.current >= 0 && text !== recalled.current) recall.current = -1
-                      else {
-                        const mine = [...new Set((getState().chats[chatKey]?.messages ?? []).filter((m) => m.who === 'you' && m.text && !m.brief).map((m) => m.text!).reverse())]
-                        const next = recall.current + (e.key === 'ArrowUp' ? 1 : -1)
-                        if (mine.length && next >= -1 && next < mine.length) {
-                          e.preventDefault()
-                          recall.current = next
-                          recalled.current = next < 0 ? '' : mine[next]
-                          setText(recalled.current)
-                          return
-                        }
-                      }
-                    }
-                    if (e.key === 'Enter' && !e.shiftKey && device === 'desktop' && !e.nativeEvent.isComposing) {
-                      e.preventDefault()
-                      // Shepherdr 3: Ctrl+Enter holds it until the agent is free
-                      send(e.ctrlKey || e.metaKey)
-                    }
-                    if (e.key === 'Escape') {
-                      e.preventDefault()
-                      // a reply is dropped first; an empty box stops a working agent (the window's Esc); then the box lets go
-                      if (getState().ui.reply[chatKey]) return cancelReply(chatKey)
-                      if (!text.trim() && getState().chats[chatKey]?.working) return void act({ type: 'stop', chat: chatKey }).catch(() => undefined)
-                      ref.current?.blur()
-                      setUI({ focus: null })
-                    }
-                  }}
-                  className={clsx(
-                    // at most 8 lines (less with a phone's keyboard up): past that it scrolls inside, an edge with more
-                    // words past it fading out over its padding, so no line looks cut and every whole line stays crisp
-                    // (the one you type too), the scrollbar only while it moves
-                    'max-h-[min(calc(8lh+0.875rem),calc(var(--app-h,100dvh)*0.32))] min-h-[34px] w-full flex-1 resize-none self-center overflow-y-auto overscroll-y-contain bg-transparent py-[7px] pl-1.5 text-fg outline-none phone:max-h-[min(calc(8lh+1.25rem),calc(var(--app-h,100dvh)*0.32))] phone:min-h-11 phone:py-2.5',
-                    '[--fade-down:0px] [--fade-up:0px] [mask-image:linear-gradient(transparent,#000_var(--fade-up),#000_calc(100%-var(--fade-down)),transparent)] data-more-down:[--fade-down:7px] data-more-up:[--fade-up:7px] phone:data-more-down:[--fade-down:10px] phone:data-more-up:[--fade-up:10px]',
-                    !registry.composerPlus && 'pl-3',
-                    text ? 'whitespace-pre-wrap' : 'whitespace-nowrap',
-                  )}
-                />
-                {!text ? (
-                  <span
-                    aria-hidden="true"
-                    className={clsx('pointer-events-none absolute inset-y-0 right-0 flex items-center text-fg3', registry.composerPlus ? 'left-1.5' : 'left-3')}
-                  >
-                    <span className="truncate">{placeholder}</span>
-                  </span>
-                ) : null}
-              </div>
-              <div data-btns className="col-start-3 flex items-center gap-1">
-                {Mic ? <Mic chatKey={chatKey} /> : null}
-                {text.trim() || files.length || !Idle ? (
-                  <button
-                    type="button"
-                    aria-label="Send"
-                    // Shepherdr 3 on a phone: a long press on Send holds it until the agent is free (the phone's Ctrl+Enter)
-                    onPointerDown={() => { held.current = false; holdTimer.current = setTimeout(() => { held.current = true; buzz(); send(true) }, 500) }}
-                    onPointerUp={() => clearTimeout(holdTimer.current)}
-                    onPointerLeave={() => clearTimeout(holdTimer.current)}
-                    onContextMenu={(e) => e.preventDefault()}
-                    onClick={() => {
-                      if (held.current) return
-                      // a light tap from the phone as it goes, like ChatGPT's
-                      if (matchMedia('(pointer: coarse)').matches) buzz()
-                      send()
-                    }}
-                    className="press-dim relative grid size-[34px] shrink-0 place-items-center rounded-full bg-fg text-bg after:absolute after:-inset-1.5 phone:size-11"
-                  >
-                    <UpIcon className={ic} />
-                  </button>
-                ) : (
-                  <Idle chatKey={chatKey} />
-                )}
-              </div>
-            </>
-          )}
-        </div>
+                  className="press-dim relative grid size-[34px] shrink-0 place-items-center rounded-full bg-fg text-bg after:absolute after:-inset-1.5 phone:size-11"
+                >
+                  <UpIcon className={ic} />
+                </button>
+              ) : (
+                <Idle chatKey={chatKey} />
+              )}
+            </div>
+          </>
+        )}
       </div>
-      <AgentLine chatKey={chatKey} cli={cli} />
     </div>
   )
 }
@@ -2074,7 +2077,7 @@ function Attachments({ chatKey }: { chatKey: string }) {
       ref={row}
       role="list"
       aria-label="Attached files"
-      className="-mx-4 mb-2 flex gap-2 overflow-x-auto overscroll-x-contain px-4 motion-safe:scroll-smooth [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      className="scroll-x -mx-4 flex shrink-0 gap-2 px-4 motion-safe:scroll-smooth"
     >
       {files.map((f, i) => (
         <Pending key={`${f.path ?? f.name}-${i}`} f={f} chatKey={chatKey} onRemove={() => remove(f)} />
@@ -2104,7 +2107,7 @@ function Pending({ f, chatKey, onRemove }: { f: { name: string; path?: string };
           <img src={fileUrl(chatKey, path)} alt={f.name} draggable={false} onError={() => setBroken(true)} className="size-full object-cover" />
         </button>
       ) : (
-        <div title={f.name} className="flex h-full w-[184px] items-center gap-2.5 rounded-box bg-bubble pr-8 pl-2.5 phone:w-[200px]">
+        <div className="flex h-full w-[184px] items-center gap-2.5 rounded-box bg-bubble pr-8 pl-2.5 phone:w-[200px]">
           <span className="grid size-10 shrink-0 place-items-center rounded-[calc(var(--box-radius)-var(--spacing)*2.5)] bg-bg text-fg2">
             <FileIcon className={ic} />
           </span>
@@ -2129,25 +2132,46 @@ function Pending({ f, chatKey, onRemove }: { f: { name: string; path?: string };
   )
 }
 
-/** files from +, a paste or a drop: each uploads to the agent's machine and waits in the message box until it is sent */
+/** a file still uploading, by the stand-in path it waits in the box with: its path once uploaded (none: it failed) */
+const uploads = new Map<string, Promise<string | undefined>>()
+
+/** the paths a message's files went up to, once each has (Send can come before an upload is done) */
+async function uploaded(files: Outgoing['files']) {
+  const paths = await Promise.all(files.map((f) => uploads.get(f.path) ?? f.path))
+  if (paths.some((p) => !p)) throw new Error("A file didn't upload.")
+  return files.map((f, i) => ({ ...f, path: paths[i]! }))
+}
+
+/** files from +, a paste or a drop: each shows in the message box at once (a picture as itself, from the device) while
+ *  it uploads to Shepherdr, and waits there until it is sent */
 async function attach(chatKey: string, list: File[]) {
   if (!list.length) return
   const release = holdReload()
-  let added: { name: string; path?: string }[]
-  try {
-    added = await Promise.all(
-      list.map(async (f) => {
-        const body = new FormData()
-        body.append('chat', chatKey)
-        body.append('file', f)
-        const r = await fetch('api/upload', { method: 'POST', body, headers: { 'x-shepherdr': '1' } }).then((x) => x.json()).catch(() => null)
-        return { name: f.name, path: r?.path as string | undefined }
-      }),
-    )
-  } finally {
-    release()
-  }
+  const added = list.map((f) => {
+    const id = `upload:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+    const url = isImage(f.name) ? URL.createObjectURL(f) : null
+    if (url) previews.set(id, url)
+    const up = fetch('api/upload', { method: 'POST', body: form(chatKey, f), headers: { 'x-shepherdr': '1' } })
+      .then((x) => x.json())
+      .then((r) => r?.path as string | undefined, () => undefined)
+      .then((path) => {
+        if (path && url) previews.set(baseName(path), url)
+        // in the box still: its real path (none: it shows as a file that didn't go up)
+        setUI((u) => ({ files: { ...u.files, [chatKey]: (u.files[chatKey] ?? []).map((x) => (x.path === id ? { name: x.name, path } : x)) } }))
+        return path
+      })
+    uploads.set(id, up)
+    return { name: f.name, path: id }
+  })
   setUI((u) => ({ plus: null, files: { ...u.files, [chatKey]: [...(u.files[chatKey] ?? []), ...added] } }))
+  await Promise.all(added.map((a) => uploads.get(a.path))).finally(release)
+}
+
+function form(chatKey: string, f: File) {
+  const body = new FormData()
+  body.append('chat', chatKey)
+  body.append('file', f)
+  return body
 }
 
 /** the + menu, and the device's file pickers it opens: they stay once the menu has closed, to hear what was picked */
@@ -2196,8 +2220,8 @@ function PlusOpen({ chatKey, file, photo }: { chatKey: string; file: RefObject<H
   }
   const settings = snap ? registry.composerSettings.filter((x) => x.when(snap, chatKey)) : []
   return (
-    <Menu label={WORDS.attach} tabs onClose={close} className="mb-2 w-fit max-w-full origin-bottom-left">
-      {/* a phone's paperclip: Attach files, or its camera; the model is the button under the box */}
+    <Menu label={WORDS.attach} tabs onClose={close} className="w-fit max-w-full origin-bottom-left">
+      {/* a phone's plus: Attach files, or its camera; the model is the button in the box */}
       <MenuItem
         icon={<FileIcon className={ic} />}
         onClick={() => {
@@ -2233,7 +2257,7 @@ export function toggleDictation(chatKey: string) {
   const at = box && document.activeElement === box ? [box.selectionStart, box.selectionEnd] : null
   // the box records instead of taking typing, so the keyboard goes down
   ;(document.activeElement as HTMLElement | null)?.blur?.()
-  setUI({ dict: chatKey, dictStarted: Date.now(), dictDone: false, focus: null, plus: null })
+  setUI({ dict: chatKey, dictStarted: Date.now(), dictDone: false, dictError: null, focus: null, plus: null })
   dictation = dictate((said) => {
     dictation = null
     if (getState().ui.dict !== chatKey) return
@@ -2257,7 +2281,22 @@ export function toggleDictation(chatKey: string) {
       el.setSelectionRange(caret, caret)
     }
     requestAnimationFrame(back)
-  })
+  }, (why) => setUI({ dictError: { chat: chatKey, text: why } }))
+}
+
+/** talk to type that didn't work: why, over the box (what was typed stays as it was), until dismissed or tried again */
+function DictError({ chatKey }: { chatKey: string }) {
+  const why = useUI((u) => (u.dictError?.chat === chatKey ? u.dictError.text : null))
+  if (!why) return null
+  return (
+    <div role="alert" className="flex items-start gap-2 rounded-box bg-bubble py-2 pr-1.5 pl-3 text-[0.8125rem] text-pretty text-fg2 phone:text-[0.9375rem]">
+      <span aria-hidden="true" className="mt-[0.45em] size-1.5 shrink-0 rounded-full bg-need" />
+      <p className="min-w-0 flex-1">Dictation didn’t work. {why}</p>
+      <IconButton label="Dismiss" className="-my-1 size-7 shrink-0" onClick={() => setUI({ dictError: null })}>
+        <XIcon className={ic} />
+      </IconButton>
+    </div>
+  )
 }
 
 function boxOf(chatKey: string) {
@@ -2610,7 +2649,9 @@ function DropFiles({ chatKey, children }: { chatKey: string; children: ReactNode
   return (
     <div
       data-drop
-      className="relative flex min-h-0 flex-1 flex-col"
+      // its own stacking context: the Latest pill, the drop note and a message's menu layer over the chat only, so a
+      // drawer, sheet or menu over the chat covers them all, whatever their z
+      className="isolate relative flex min-h-0 flex-1 flex-col"
       onDragEnter={(e) => {
         if (!draggingFiles(e.dataTransfer)) return
         e.preventDefault()
@@ -2667,6 +2708,7 @@ export default definePlugin({
     reg.composerPlus = PlusMenu
     reg.composerMic = Mic
     reg.composerLive.push({ when: (ui, chatKey) => ui.dict === chatKey, View: DictationBox })
+    reg.composerAbove.push({ order: 40, View: DictError })
     // while it records, Enter puts it in the box and Esc drops it
     reg.keys.push({
       order: 5,

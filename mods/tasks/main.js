@@ -19,16 +19,17 @@ import { spaces, panes, agents, terminals, inRender } from "./live.js";
 import { items as needs, ASKS, toAgent, reasonOf, reqReason, REASONS, fit } from "./inbox.js";
 import { words } from "./core/asks.js";
 import { taskDot, ownProgress } from "./dot.js";
+import { taskMenu } from "./core/menus.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
 import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, machineOf, machineName, refOf, taskKey, autoPrefix, place,
-  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short } from "./core/tasks.js";
+  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
-import { button, TEXT, H, RADIUS, red, amber } from "./ui.js";
+import { TEXT, H, RADIUS, red, amber } from "./ui.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 const DONE_SHOWN = 5; // Done rows a group shows before "Show N more"
-// Task ids in a monospace column (Herdr ships JetBrains Mono: each character is 0.6 em wide).
-const ID_FONT = "JetBrains Mono", ID_SIZE = TEXT.id, ID_CHAR = ID_SIZE * 0.6;
+// Task ids in monospace, small and dim at the start of a row's second line (Herdr ships JetBrains Mono).
+const ID_FONT = "JetBrains Mono", ID_SIZE = TEXT.id;
 // Every list in ~/.herdr/tasks on a machine is read with READ_LISTS and kept by taskLists (one
 // rule with herdr-task's: tasklists.js).
 // Pinned tasks, as Pinned spaces (mods/spaces-chat): a view choice, never a change to the task.
@@ -260,17 +261,13 @@ export default class Tasks extends View {
     const pinNamed = new Set(pinned.map((p) => `${p.list.machine ?? ""}:${p.list.folder}:${refOf(p.list, p.task)}`));
     const pinLive = new Set(pinned.flatMap((p) => p.live.map((a) => a.address)));
     const pinNeed = (x) => pinNamed.has(`${x.machine ?? ""}:${x.folder}:${x.ref}`) || Boolean(x.terminal && pinLive.has(x.terminal));
-    // Ids sit in a column as wide as the longest one anywhere here, so every title lines up.
-    // Automations go by name, with no id (their own group).
-    const ids = [...this.lists.flatMap((l) => l.tasks.map((x) => refOf(l, x))),
-      ...inbox.map((x) => x.ref ?? (x.terminal && this.taskRef(x.terminal)) ?? "")];
-    this.idWidth = Math.ceil(Math.max(0, ...ids.map((x) => String(x).length)) * ID_CHAR) + 1;
     // In the sidebar's order: each list as its space, a list no space works in after its machine's
     // spaces, by name.
     const lists = [...this.lists].sort((a, b) => spaceOf(a).at - spaceOf(b).at || this.lists.indexOf(a) - this.lists.indexOf(b));
     // Group by (the ⋯ menu): by machine only while more than one machine has tasks; Machine › Space
     // is then by space.
     const multi = new Set(this.lists.filter((l) => l.tasks.length || l.automations?.length).map((l) => l.machine ?? "")).size > 1;
+    this.multi = multi;
     const chosen = groupBy(shared("tasks.groupby"));
     const by = multi || !chosen.startsWith("machine") ? chosen : chosen === "machine" ? "status" : "space";
     this.names = { machine: true, space: true };
@@ -339,8 +336,7 @@ export default class Tasks extends View {
         // quiet after its name (Shepherdr's note).
         const spaceGroup = (l, note) => {
           const ps = sorted(rest.filter((p) => p.list === l));
-          return ps.length ? this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note,
-            hint: l.machine ? `${l.machine}:${l.folder}` : tilde(l.folder, home()), done: ps.filter((p) => p.section === "done").length }) : null;
+          return ps.length ? this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note, done: ps.filter((p) => p.section === "done").length }) : null;
         };
         const machinesOf = [...new Set(this.lists.map((l) => l.machine ?? null))];
         if (by === "space") body.push(...lists.map((l) => spaceGroup(l, multi ? machineName(l.machine) : null)).filter(Boolean));
@@ -371,7 +367,7 @@ export default class Tasks extends View {
         .child(div().font_semibold().child("Tasks"))
         .child(div().flex_1())
         .child(h_flex().id("task-more").size(H.sm).flex_none().items_center().justify_center().rounded(RADIUS.control).cursor_pointer().text_color(t.muted)
-          .hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Group by")
+          .hover((s) => s.bg(t.hover).text_color(t.foreground))
           // Its menu (mods/tasks-menu): a 28 heading, then 32 rows (ui.js menuRow).
           .on_click(() => openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 200, height: 8 + 28 + (multi ? 4 : 2) * 32, props: { menu: "group", machines: multi } }))
           .child(svg("mods/tasks/more.svg").size(14).flex_none())))
@@ -497,7 +493,7 @@ export default class Tasks extends View {
         .child(svg("mods/workspace-chrome/search.svg").size(14).flex_none().text_color(t.dim))
         .child(Input.new(this.query).flex_1().min_w(0).text_size(13).text_color(t.foreground))
         .when(Boolean(q), (el) => el.child(h_flex().id("task-search-x").size(H.sm - 2).flex_none().items_center().justify_center().rounded(RADIUS.control)
-          .cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Clear")
+          .cursor_pointer().text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => { cx.stop_propagation(); this.query.set_value(""); cx.notify(); })
           .child(svg("mods/workspace-chrome/x.svg").size(13).flex_none())))
         .when(!q && !this.searching, (el) => el.child(searchKey(t))));
@@ -531,7 +527,7 @@ export default class Tasks extends View {
     return v_flex().flex_none().gap(1)
       .child(h_flex().h(30).pl(2).pr(8).gap(6).items_center().text_size(TEXT.label)
         .child(h_flex().id("task-archived-back").size(H.sm).flex_none().items_center().justify_center().rounded(RADIUS.control).cursor_pointer()
-          .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("Back to tasks")
+          .text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
           .on_click((_e, cx) => { this.archivedOpen = false; cx.notify(); })
           .child(svg("mods/workspace-chrome/chevron-left.svg").size(14).flex_none()))
         .child(div().flex_1().min_w(0).truncate().font_medium().text_color(t.dim).child("Archived"))
@@ -560,27 +556,29 @@ export default class Tasks extends View {
   // note: quiet after the label (by space across machines, the machine). machine: a machine's
   // heading (by machine, or over its spaces' groups: count, theirs), a step above the others: its
   // name brighter and larger, and a hairline over it but the first (Shepherdr's MachineHeading).
-  group(key, label, rows, t, { hint, done = 0, open = false, note = null, machine = false, first = false, count = rows.length } = {}) {
+  group(key, label, rows, t, { done = 0, open = false, note = null, machine = false, first = false, count = rows.length } = {}) {
     const shut = !open && this.shut(key);
     const all = open || this.allDone.has(key);
     const cut = !all && done > DONE_SHOWN ? done - DONE_SHOWN : 0;
     const shown = cut ? rows.slice(0, rows.length - cut) : rows;
     return v_flex().flex_none().gap(1)
       .when(machine && !first, (el) => el.mt(4).pt(6).border_t(1).border_color(t.border))
+      // a step of room over each group, so groups read as sections (as the web's)
+      .when(!machine, (el) => el.pt(6))
       // As Shepherdr's: the whole heading is the button; the chevron in the rows' icon column
-      // (brighter on hover), the label small and dim, the count at the far right.
-      .child(h_flex().id(`head-${key}`).h(30).px(8).gap(10).items_center().rounded(RADIUS.card).text_size(TEXT.label)
+      // (brighter on hover), the label small, its count right by it ("Ready 2"), not across the panel.
+      .child(h_flex().id(`head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
         .when(!open, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
           .on_hover((on, cx) => { this.hoverHead = on ? key : this.hoverHead === key ? null : this.hoverHead; cx.notify(); })
           .on_click((_e, cx) => { this.fold(key, !shut); cx.notify(); }))
         .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
           .child(svg(`mods/workspace-chrome/chevron-${shut ? "right" : "down"}.svg`).size(12).flex_none()
             .text_color(this.hoverHead === key ? t.foreground : t.dim)))
-        .child(h_flex().id(`head-${key}-label`).flex_1().min_w(0).gap(4).items_center().when(Boolean(hint), (el) => el.tooltip(hint))
+        .child(h_flex().id(`head-${key}-label`).flex_1().min_w(0).gap(6).items_center()
           .child(div().min_w(0).truncate().when(machine, (el) => el.text_size(TEXT.body).font_semibold().text_color(t.muted))
-            .when(!machine, (el) => el.font_medium().text_color(t.dim)).child(label))
-          .when(Boolean(note), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${note}`))))
-        .child(div().flex_none().text_color(t.dim).child(count ? String(count) : "")))
+            .when(!machine, (el) => el.font_medium().text_color(t.muted)).child(label))
+          .when(Boolean(note), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${note}`)))
+          .when(Boolean(count), (el) => el.child(div().flex_none().text_color(t.dim).child(String(count))))))
       .when(!shut, (el) => el.children(shown)
         .when(cut > 0 || (!open && all && done > DONE_SHOWN), (el) => el.child(h_flex().id(`more-${key}`).h(28).pl(32).pr(8).items_center().rounded(RADIUS.card).cursor_pointer()
           .text_size(TEXT.label).text_color(t.muted).hover((s) => s.bg(t.hover).text_color(t.foreground))
@@ -598,18 +596,24 @@ export default class Tasks extends View {
   }
 
   // An automation (herdr-task auto), by its name (no id), and on the right when it runs next
-  // ("Didn't start" in red, the error on the title's hover). A click opens its last task.
+  // ("Didn't start" in red). A click opens its last task.
   autoRow(list, a, placed, t) {
     const last = list.tasks.find((x) => `${list.prefix}-${x.id}` === a.last_task);
     const p = last && (placed.find((q) => q.task === last) ?? this.place(list, last));
     const go = p ? this.target(p) : null;
     const err = a.last_error?.message;
     // Why it won't run as planned goes on the second line, as every reason does; when it runs next stays on the right.
-    const sub = err ? "Didn't start" : a.paused ? "Paused" : null;
+    // One set off by another folder's task events (--from) says by what and where, unless something is wrong.
+    const src = a.from?.folder ? { machine: a.from.machine ?? list.machine ?? null, folder: a.from.folder } : null;
+    const from = src ? fromLine(a.on, `${machineName(src.machine)} · ${spaceOf(src).name ?? String(src.folder).split("/").filter(Boolean).pop()}`) : null;
+    const sub = err ? "Didn't start" : a.paused ? "Paused" : from;
     const when = !err && !a.paused && a.next_run ? day(a.next_run) : null;
+    // Where it is: its machine (with more than one) and space whatever the grouping, as the Automations group sits
+    // under no machine or space heading; none with "Where on task rows" off.
+    const where = shared("tasks.place") === false ? null : autoWhere(machineName(list.machine), placeName(list), this.multi);
     return this.line(`auto-${list.machine ?? ""}:${list.folder}#${a.id}`, {
-      go, why: err, glyph: svg("mods/tasks/repeat.svg").size(14).flex_none().text_color(err ? red() : t.dim),
-      ref: null, title: a.title, dim: a.paused, sub, meta: when, where: this.whereOf(list.machine, placeName(list)),
+      go, glyph: svg("mods/tasks/repeat.svg").size(14).flex_none().text_color(err ? red() : t.dim),
+      ref: null, title: a.title, dim: a.paused, sub, meta: when, where,
     }, t);
   }
 
@@ -618,23 +622,23 @@ export default class Tasks extends View {
   needRow(x, t) {
     // Where it is: a task's folder, an agent's space (and its machine, when not this computer).
     const at = this.whereOf(x.machine ?? machineOf(x.terminal), x.name ?? (x.terminal ? agents().find((a) => a.address === x.terminal)?.space_name : null), true);
-    const v = (glyph, title, go, why, ref = x.ref, sub = reasonOf(x)) => this.line(`need-${x.key}`, { glyph, ref, title, go, why, where: at, sub }, t);
+    const v = (glyph, title, go, ref = x.ref, sub = reasonOf(x)) => this.line(`need-${x.key}`, { glyph, ref, title, go, where: at, sub }, t);
     // An agent's item: its task's title when it works on one, else its name.
     const who = (address) => this.taskTitle(address) ?? agentName(address);
     switch (x.kind) {
       case "ask": {
         const w = this.asks.get(x.id);
-        return v(needDot(), who(x.terminal), () => this.toWorker(x.terminal), null, this.taskRef(x.terminal), w?.reason ?? reasonOf(x));
+        return v(needDot(), who(x.terminal), () => this.toWorker(x.terminal), this.taskRef(x.terminal), w?.reason ?? reasonOf(x));
       }
-      case "blocked": return v(needDot(), who(x.terminal), () => this.toWorker(x.terminal), null, this.taskRef(x.terminal));
-      case "provider": return v(needDot(), who(x.terminal), () => this.toWorker(x.terminal), null, this.taskRef(x.terminal));
+      case "blocked": return v(needDot(), who(x.terminal), () => this.toWorker(x.terminal), this.taskRef(x.terminal));
+      case "provider": return v(needDot(), who(x.terminal), () => this.toWorker(x.terminal), this.taskRef(x.terminal));
       // A task's own item: the task opens, as its row anywhere does.
-      case "check": return v(needDot(), x.title ?? x.ref, () => this.openNeed(x), x.attention?.length > 40 ? x.attention : null);
+      case "check": return v(needDot(), x.title ?? x.ref, () => this.openNeed(x));
       case "waiting":
       case "stopped": return v(needDot(), x.title ?? x.ref, () => this.openNeed(x));
       // An automation goes by its name, with no id.
       case "auto": return v(svg("mods/tasks/repeat.svg").size(14).flex_none().text_color(red()),
-        x.title ?? x.ref, () => this.fold("automations", false), x.error?.message, null, x.error?.kind === "fire" ? "Didn't run" : "Didn't start its task");
+        x.title ?? x.ref, () => this.fold("automations", false), null, x.error?.kind === "fire" ? "Didn't run" : "Didn't start its task");
     }
     return null;
   }
@@ -752,18 +756,20 @@ export default class Tasks extends View {
     const shown = this.frame ? (this.frame.agents ??= new Map(agents().map((a) => [a.address, a]))) : new Map(agents().map((a) => [a.address, a]));
     const focused = live.some((a) => shown.get(a.address)?.focused);
     // The second line, as Shepherdr's: Working, what its agent says it's doing (herdr-task status),
-    // its minutes left under the dot, or a provider retry's line while Herdr waits; Needs you,
-    // why; Queued, what it waits for ("after HERD-3"); Merging, why it waits. Never on the right.
+    // its time left short under the glyph, or a provider retry's line while Herdr waits; Needs you,
+    // why; Queued, what it waits for ("after HERD-3"); Merging, why it waits. The id leads it.
     const w = reportOf(task, section, live);
     const sub = this.statusLine(p, w);
+    // Scheduled (SHEP-38): its time until it starts under its calendar ("6h"), where a working row's time left goes, in grey.
     const left = leftOf(p, w);
     // Pin / Unpin in its right-click menu (not an archived task's: archived ones drop out of Pinned).
     const key = taskKey(list, task);
     return this.line(`task-${key}`, {
-      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left,
+      go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
       dim: section === "done", selected: focused, where: this.whereOf(list.machine, placeName(list)),
       action: section === "ready" ? this.acceptButton(p, t) : null,
-      pin: this.shelved(p) ? null : { key, on: this.pins().has(key) },
+      pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
+        ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
     }, t);
   }
 
@@ -786,18 +792,34 @@ export default class Tasks extends View {
 
   // The row's right-click menu (mods/tasks-menu): Pin / Unpin, at the pointer. Rows show no pin of
   // their own: a pinned task sits in the Pinned group.
+  // A task not started yet also starts later (SHEP-38): a few times, and a scheduled one Start now and Unschedule
+  // (core/menus.js taskMenu; the web's Other time… types any time, here the Assistant does).
   rowMenu(pin) {
-    openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 160, height: 8 + 32, props: { menu: "row", key: pin.key, on: pin.on } });
+    const items = taskMenu({ pinned: pin.on, status: pin.status }).filter((x) => !x.typed);
+    // As tasks-menu draws it: a section per line or heading, 4 apart; a heading 28, a row 32.
+    let height = 8, first = true;
+    for (const x of items) {
+      if ((x.sep || x.heading) && !first) height += 4;
+      height += x.sep ? 0 : x.heading ? 28 : 32;
+      first = false;
+    }
+    openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 220, height, props: { menu: "row", key: pin.key, on: pin.on,
+      status: pin.status, machine: pin.machine, folder: pin.folder, ref: pin.ref, sub: pin.sub } });
   }
 
-  // Ready = "looks done, your call": Accept is the person's one action here, one solid 20 button
-  // (ui.js). It merges first when there is something to merge (herdr-task accept follows the merge
+  // Ready = "looks done, your call": Review (opens the Accept card) is the person's one action here, at the row's end. It merges first when there is something to merge (herdr-task accept follows the merge
   // settings), else it's done. "Accepting…" while the Accept card's accept runs (shared
   // "tasks.accepting", accepting()).
-  acceptButton(p, _t) {
+  acceptButton(p, t) {
     const key = `${p.list.machine ?? ""}:${p.list.folder}:${refOf(p.list, p.task)}`;
     const busy = accepting(key);
-    return button(`accept-${key}`, busy ? "Accepting…" : "Accept", { kind: "primary", size: "xs", disabled: busy, onClick: () => this.accept(p) });
+    // Soft, as the chat header's Review: there is one per Ready row, so never the solid look.
+    return h_flex().id(`accept-${key}`).h(24).px(10).flex_none().items_center().rounded(12).whitespace_nowrap()
+      .text_size(TEXT.label).font_medium().text_color(t.foreground).bg(t.hover)
+      .when(busy, (el) => el.opacity(0.6))
+      .when(!busy, (el) => el.cursor_pointer().hover((s) => s.bg(t.selected))
+        .on_click((_e, cx) => { cx.stop_propagation(); this.accept(p); cx.notify(); }))
+      .child(busy ? "Accepting…" : "Review");
   }
 
   // Accept shows what you approve first: the Accept card (mods/accept-card) runs herdr-task
@@ -807,65 +829,47 @@ export default class Tasks extends View {
       props: { ref: refOf(p.list, p.task), folder: p.list.folder, machine: p.list.machine ?? null, title: p.task.title } });
   }
 
-  // One row (as Shepherdr's): the glyph, the dim id in its fixed column, then the title, which owns
-  // the first line: cut only at the row's edge, never the id. Anything else goes on a second line
-  // that starts where the title does: why it needs you or what its agent does (at most 40
-  // characters, cut at a word), then at its end the folder (with All) and the button (Accept, the
-  // compact 20 one, centred on that line, so the row stays as tall as any other and the title keeps
-  // the whole first line). A row with nothing to say under its title is one line, its folder dim at the right.
-  // The row has no hover hint: the title has one when it's likely cut (then the whole title) or
-  // the row can only name an error (`why`, its message); the second line, when it was cut.
-  // `left`: the minutes left, small under the glyph in the working color. `meta`: a short note at
-  // the first line's end (an automation's next run). `pin`: { key, on }: Pin / Unpin in the row's right-click menu.
-  line(id, { go, why, glyph, ref, title, sub, left, dim, selected, meta, metaColor, where, action, pin }, t) {
-    const idCol = this.idWidth > 1 && Boolean(ref);
-    const two = Boolean(sub) || Boolean(action);
-    const tip = [this.titleCut(title, { meta }) ? title : null, why].filter(Boolean).join(" · ");
-    const place = () => div().flex_shrink_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.dim).child(where);
-    // The folder gives way first (its strong shrink weight; a direct child of the line, so no
-    // wrapper's minimum width holds it): the title is cut only once the folder is gone (the end
-    // note, `meta`, stays whole), so a title is never cut while the folder shows.
-    const first = h_flex().min_w(0).gap(8).items_center()
-      .when(idCol, (el) => el.child(div().flex_none().w(this.idWidth).font_family(ID_FONT).text_size(ID_SIZE).text_color(t.dim).child(ref)))
-      .child(div().id(`${id}-title`).flex_auto().min_w(64).truncate().text_color(dim ? t.muted : t.foreground).when(Boolean(tip), (el) => el.tooltip(tip)).child(title))
-      .when(Boolean(meta), (el) => el.child(div().flex_none().pl(4).text_size(TEXT.id).text_color(metaColor ?? t.dim).child(meta)))
-      .when(!two && Boolean(where), (el) => el.child(place().flex_shrink(1000).when(!meta, (el) => el.pl(4))));
-    const row = h_flex().id(id).relative().flex_none().px(8).gap(10).rounded(RADIUS.card)
+  // One row (as Shepherdr's web Tasks list), three parts with one job each:
+  // - the glyph, level with the title, and under it, level with the second line, the time left
+  //   ("2h", "<1m": short, in the working color, centred on the glyph; wider than it, it overflows
+  //   evenly, so the column and the titles never move);
+  // - the text: the title owns the first line, cut only at its own end; under it one quiet line read
+  //   left to right, never pushed apart: the task's id (dim, monospace), what it says now (why it
+  //   needs you or what its agent does: at most 40 characters, cut at a word), then where it is after
+  //   a dot (it gives way first);
+  // - the end, centred on the row: the one thing to act on or watch: Review or an automation's next
+  //   run (`meta`).
+  // A row with nothing under its title is one line. Nothing shows on hover: no tooltips (SHEP-25).
+  // `pin`: { key, on }: Pin / Unpin in the row's right-click menu.
+  line(id, { go, glyph, ref, title, sub, left, leftColor, dim, selected, meta, metaColor, where, action, pin }, t) {
+    // Every second line is at most 40 characters (herdr-task cuts an agent's own; this catches the
+    // derived ones: a long queue, a check's message).
+    const said = sub ? capital(sub) : null;
+    const shown = said ? fit(said) : null;
+    const two = Boolean(ref) || Boolean(shown) || Boolean(where);
+    const end = action ?? (meta ? div().flex_none().whitespace_nowrap().text_size(TEXT.label).text_color(metaColor ?? t.dim).child(meta) : null);
+    const row = h_flex().id(id).relative().flex_none().px(8).gap(12).items_center().rounded(RADIUS.card)
       .when(Boolean(selected), (el) => el.bg(t.selected))
       .when(Boolean(pin), (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); this.rowMenu(pin); }))
       .when(Boolean(go), (el) => el.cursor_pointer().hover((s) => s.bg(selected ? t.selected : t.hover)).on_click((_e, cx) => { go(); cx.notify(); }));
-    if (!two) return row.h(32).items_center()
-      .child(h_flex().w(14).h(14).flex_none().items_center().justify_center().child(glyph))
-      .child(first.flex_1());
-    // Every second line is at most 40 characters (herdr-task cuts an agent's own; this catches the
-    // derived ones: a long queue, a check's message), the whole of it on hover.
-    const said = sub ? capital(sub) : null;
-    const shown = said ? fit(said) : null;
-    // The status line keeps its words: the folder takes only the room left after it (none on a
-    // narrow panel), and the button never gives way. The button (20) overflows the 16 line evenly.
-    const second = h_flex().h(16).gap(8).items_center().when(idCol, (el) => el.pl(this.idWidth + 8))
-      .when(Boolean(shown), (el) => el.child(div().id(`${id}-sub`).flex_shrink_1().min_w(0).truncate().text_size(TEXT.label).text_color(t.muted)
-        .when(shown !== said, (el) => el.tooltip(said)).child(shown)))
-      .child(h_flex().flex_1().min_w(0).justify_end().when(Boolean(where), (el) => el.child(place())))
-      .when(Boolean(action), (el) => el.child(action));
-    return row.py(6).items_start()
-      // The glyph sits level with the title; the minutes level with the second line.
-      .child(v_flex().w(14).flex_none().items_center()
-        .child(h_flex().w(14).h(18).items_center().justify_center().child(glyph))
-        .when(Boolean(left), (el) => el.child(div().h(16).mt(2).flex().items_center().flex_none().font_family(ID_FONT).text_size(TEXT.id)
-          .font_semibold().text_color(amber()).child(left))))
-      .child(v_flex().flex_1().min_w(0).gap(2).child(first.h(18)).child(second));
+    const mark = h_flex().w(14).h(20).flex_none().items_center().justify_center().child(glyph);
+    const head = div().id(`${id}-title`).min_w(0).truncate().text_color(dim ? t.muted : t.foreground).child(title);
+    if (!two) return row.h(32).child(mark).child(head.flex_1()).when(Boolean(end), (el) => el.child(end));
+    // The words keep their room: where it is takes only what is left after them, and gives way first.
+    const second = h_flex().h(16).min_w(0).gap(6).items_center().text_size(TEXT.label)
+      .when(Boolean(ref), (el) => el.child(div().flex_none().font_family(ID_FONT).text_size(ID_SIZE).text_color(t.dim).child(ref)))
+      .when(Boolean(shown), (el) => el.child(div().id(`${id}-sub`).flex_shrink_1().min_w(0).truncate().text_color(t.muted).child(shown)))
+      .when(Boolean(where), (el) => el.child(div().flex_shrink(1000).min_w(0).truncate().text_color(t.dim)
+        .child(ref || shown ? `· ${where}` : where)));
+    // The time left as tall as the second line (16), 2 under the glyph as the line is under the title.
+    return row.py(8)
+      .child(v_flex().w(14).flex_none().self_start().gap(2).child(mark)
+        .when(Boolean(left), (el) => el.child(h_flex().w(14).h(16).items_center().justify_center().whitespace_nowrap()
+          .font_family(ID_FONT).text_size(ID_SIZE).font_semibold().text_color(leftColor ?? amber()).child(left))))
+      .child(v_flex().flex_1().min_w(0).gap(2).child(h_flex().h(20).min_w(0).items_center().child(head.flex_1())).child(second))
+      .when(Boolean(end), (el) => el.child(end));
   }
 
-  // Whether a row's title is likely cut: the panel's width less the row's fixed parts (border,
-  // list and row padding, glyph, id column, and its end note; a folder gives way first), about 7px
-  // a character.
-  titleCut(title, { meta }) {
-    const est = (s) => String(s).length * 7;
-    let room = (this.width ?? 360) - 2 - 12 - 16 - 24 - (this.idWidth > 1 ? this.idWidth + 8 : 0);
-    if (meta) room -= est(meta) + 12;
-    return est(title) > room;
-  }
 }
 
 const searchKey = (t) => h_flex().h(18).px(5).mr(3).flex_none().items_center().rounded(4).border_1().border_color(t.border)
@@ -878,8 +882,6 @@ function bindSearchKeys(cx, context) {
   boundSearch.add(context);
   try { cx.bind_keys([{ keystroke: "escape", action: `${context}_clear`, context: `${context} > Input` }]); } catch {}
 }
-
-const tilde = (p, h) => (h && (p === h || p.startsWith(h + "/")) ? `~${p.slice(h.length)}` : p);
 
 // An agent's name: the one it was given (hc --name), else its program's.
 function agentName(address) {

@@ -47,6 +47,7 @@ export {
   Cog6ToothIcon as CogIcon,
   CommandLineIcon as TermIcon,
   CpuChipIcon as ModelIcon,
+  CursorArrowRaysIcon as MarkUpIcon,
   DocumentDuplicateIcon as CopyIcon,
   DocumentIcon as FileIcon,
   EllipsisHorizontalIcon as MoreIcon,
@@ -63,6 +64,7 @@ export {
   MinusCircleIcon,
   MinusIcon,
   PauseIcon,
+  PlayIcon,
   PencilIcon as RenameIcon,
   PhoneXMarkIcon as EndCallIcon,
   PlusIcon,
@@ -517,6 +519,7 @@ const STATUS_WORD: Record<Status, string> = {
   work: 'Working',
   idle: 'Stopped',
   queued: 'Queued',
+  scheduled: 'Scheduled',
   todo: 'To do',
   done: 'Done',
   off: "Can't reach",
@@ -553,7 +556,7 @@ export function AttentionBadge({ need: allNeed, ready: allReady, scope }: { need
   const label = `${need} needs you, ${ready} ready · ${scope}`
   const cap = (n: number) => n > 9 ? '9+' : String(n)
   return (
-    <span role="img" aria-label={label} title={label} data-attention-badge={split ? 'both' : need ? 'need' : 'ready'}
+    <span role="img" aria-label={label} data-attention-badge={split ? 'both' : need ? 'need' : 'ready'}
       className={clsx('attention-badge', split && 'attention-badge-split')}>
       {need > 0 ? <span aria-hidden="true" className="attention-badge-need">{cap(need)}</span> : null}
       {ready > 0 ? <span aria-hidden="true" className="attention-badge-ready">{cap(ready)}</span> : null}
@@ -621,6 +624,23 @@ export function Primary({ className, children, soft, ...p }: Btn & { soft?: bool
       className={clsx(
         'press-dim relative inline-flex h-[34px] shrink-0 items-center gap-1.5 rounded-full px-3.5 font-medium after:absolute after:-inset-1 disabled:cursor-default disabled:opacity-40 coarse:h-11 phone:h-11',
         soft ? 'bg-bg text-fg shadow-soft enabled:hover:bg-hover' : 'bg-fg text-bg focus-visible:outline-offset-2',
+        className,
+      )}
+      {...p}
+    >
+      {children}
+    </button>
+  )
+}
+
+/** A header's one button with words (a Ready task's Review): soft, and as tall as the header's other buttons (28px, 44px on
+ *  a phone as its round ones) */
+export function HeadButton({ className, children, ...p }: Btn) {
+  return (
+    <button
+      type="button"
+      className={clsx(
+        'press-dim relative inline-flex h-7 shrink-0 items-center rounded-full bg-bubble px-3 text-[0.8125rem] font-medium whitespace-nowrap text-fg after:absolute after:-inset-x-0.5 after:-inset-y-2 enabled:hover:bg-sel disabled:cursor-default disabled:opacity-40 coarse:h-9 phone:h-11 phone:px-4 phone:text-[0.9375rem]',
         className,
       )}
       {...p}
@@ -1043,21 +1063,16 @@ export function Head({ children, className, conversation }: { children: ReactNod
 
 /** A phone screen's top: round buttons either side, the title centred and as wide as the buttons leave room for; a
  *  mark after the subtitle */
-export function PhoneTop({ left, dot, icon, p, name, kind, mark, right, report, expandName }: { left?: ReactNode; dot?: Status; icon?: ReactNode; p?: number; name: string; kind?: ReactNode; mark?: ReactNode; right?: ReactNode; report?: Report; expandName?: boolean }) {
-  const [expanded, setExpanded] = useState(false)
+export function PhoneTop({ left, dot, icon, p, name, kind, mark, right, report }: { left?: ReactNode; dot?: Status; icon?: ReactNode; p?: number; name: string; kind?: ReactNode; mark?: ReactNode; right?: ReactNode; report?: Report }) {
   return (
     // under a bar at the top (offline, a call) the notch is already kept clear
-    <div data-kb data-chrome className={clsx('relative grid shrink-0 items-center gap-2 border-b border-line px-3 pt-[calc(env(safe-area-inset-top)+6px)] pb-1.5 [[data-topbar]~*_&]:pt-1.5', expandName ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[1fr_minmax(0,auto)_1fr]')}>
+    <div data-kb data-chrome className="relative grid shrink-0 grid-cols-[1fr_minmax(0,auto)_1fr] items-center gap-2 border-b border-line px-3 pt-[calc(env(safe-area-inset-top)+6px)] pb-1.5 [[data-topbar]~*_&]:pt-1.5">
       <div className="flex gap-1">{left}</div>
       <div className="min-w-0 text-center">
         <div className="flex items-center justify-center gap-1.5 font-semibold">
           {dot ? <Dot s={dot} p={p} halo /> : null}
           {icon}
-          {expandName ? (
-            <button type="button" aria-label={`${expanded ? 'Collapse' : 'Show full'} task title: ${name}`} aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className={clsx('min-w-0 text-left break-words', !expanded && 'line-clamp-2')}>
-              {name}
-            </button>
-          ) : <span className="truncate">{name}</span>}
+          <span className="truncate">{name}</span>
         </div>
         {mark && !report ? (
           // a mark (a coordinator's mode) ends the subtitle line, whole; the words before it give way first
@@ -1066,9 +1081,8 @@ export function PhoneTop({ left, dot, icon, p, name, kind, mark, right, report, 
             {mark}
           </div>
         ) : (
-          <div className={clsx('text-[0.8125rem]/[18px] text-fg2', !report && 'truncate')}>{expandName ? kind : report ? <ReportLine w={report} head wrap /> : kind}</div>
+          <div className={clsx('text-[0.8125rem]/[18px] text-fg2', !report && 'truncate')}>{report ? <ReportLine w={report} head wrap /> : kind}</div>
         )}
-        {expandName && report ? <div className="text-[0.8125rem]/[18px] text-fg2"><ReportLine w={report} head wrap /></div> : null}
       </div>
       <div className="flex justify-end gap-1">{right}</div>
     </div>
@@ -1200,13 +1214,3 @@ export function MarkBadge({ x, y }: { x: number; y: number }) {
   )
 }
 
-/** Mark up: a pointer and a speech bubble, a note left on a spot (like a design tool's comment). No Heroicon exists for
- *  it; drawn solid at 16px like the Micro set beside it */
-export function MarkUpIcon() {
-  return (
-    <svg viewBox="0 0 16 16" aria-hidden="true" className={clsx(ic, 'fill-current')}>
-      <path d="M1.5 6.1a.6.6 0 0 1 .95-.49l6.6 4.75a.6.6 0 0 1-.28 1.08l-2.6.32 1.45 2.8a.75.75 0 1 1-1.33.7L4.85 12.5l-2.37 1.7a.6.6 0 0 1-.95-.5Z" />
-      <path d="M9.75 1h3.5A1.75 1.75 0 0 1 15 2.75v2.5A1.75 1.75 0 0 1 13.25 7H12.5l-1.85 1.85A.4.4 0 0 1 10 8.57V7h-.25A1.75 1.75 0 0 1 8 5.25v-2.5A1.75 1.75 0 0 1 9.75 1Z" />
-    </svg>
-  )
-}

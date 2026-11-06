@@ -2,9 +2,9 @@
 // - the task tick (herdr-task tick: queued tasks start, merged ones are done) every 15 s and 2 s after a task's agent
 //   changes, and about once a minute the automations scheduler's check, here and on other machines with tasks: every
 //   service ticks its own machine; the machine that serves the web app (Serve from, service/host.ts tickOn) ticks the
-//   others that have no service of their own, and another service does that only while the host can't be reached
-//   (herdr-task's own lock keeps two ticks of one machine from ever running at once);
-// - another machine's agent asking for a secret (herdr.secret.want): herdr-secret serve answers it from the vault here;
+//   others that have no service of their own (and those running an Assistant: their tick brings agents back after a
+//   crash), and another service does that only while the host can't be reached (herdr-task's own lock keeps two ticks
+//   of one machine from ever running at once);
 // - a chat open on a web page: the question hook's flag (data/chat-asks/open/<terminal>), so its cards come to the page
 //   (another machine's agent: its flag there, through herdr-core).
 // The window sees this service running (GET /api/health: jobs) and leaves the same work to it (lib/service.js), and
@@ -44,13 +44,22 @@ export function windowLeavesIt() {
   return existsSync(join(APP, "mods", "tabs-tasks", "service.js"));
 }
 
+/** Other machines with a live Assistant or an agent that comes back after a crash (label herdr.resume). */
+export function agentMachines(terminals: Iterable<any>): string[] {
+  const out = new Set<string>();
+  for (const k of terminals) {
+    const at = String(k?.address ?? "").indexOf("/");
+    if (at > 0 && k.state === "live" && (k.labels?.["herdr.role"] === "coordinator" || k.labels?.["herdr.resume"])) out.add(k.address.slice(0, at));
+  }
+  return [...out];
+}
+
 export class Jobs {
   readonly on = windowLeavesIt();
   private ticking = false;
   private rounds = 0;
   private soon: ReturnType<typeof setTimeout> | null = null;
   private seen = "";
-  private served = new Set<string>();
   /** terminals a web page shows now (service/live.ts tells) */
   watched: () => string[] = () => [];
   private flagged = new Map<string, number>();
@@ -63,7 +72,7 @@ export class Jobs {
     setInterval(() => void this.tick(), 15_000);
     void this.tick();
     this.hub.on((e) => {
-      if (e.type === "reset" || ("terminal" in e && e.terminal)) { this.onChange(); this.serveSecrets(); }
+      if (e.type === "reset" || ("terminal" in e && e.terminal)) this.onChange();
     });
     setInterval(() => this.flags(), 4000);
   }
@@ -79,6 +88,12 @@ export class Jobs {
       let remote: string[] = [];
       if (this.host) remote = this.host.tickOn();
       else try { remote = readdirSync(join(HOME, ".herdr", "tasks", ".remote")).filter((x) => /^[\w.-]+$/.test(x) && !x.endsWith(".secret")); } catch {}
+      // and those running an Assistant with no tasks yet: their tick brings it back after a crash (herdr-task revive.py)
+      if (!this.host || this.host.serving() || !this.host.reachable()) {
+        const own = this.host?.participants() ?? new Set<string>();
+        remote = [...new Set([...remote, ...agentMachines(this.hub.terminals.values())])].filter((m) => !own.has(m)
+          && (!this.host || this.host.machines.get(m)?.state === "connected"));
+      }
       for (const m of remote) {
         await run([cli, "--on", m, "tick", "--json"]);
         if (ensure) await run([cli, "--on", m, "scheduler", "--ensure", "--json"]);
@@ -97,17 +112,6 @@ export class Jobs {
     this.seen = now;
     if (first || this.soon) return;
     this.soon = setTimeout(() => { this.soon = null; void this.tick(); }, 2000);
-  }
-
-  /** Each remote request for a secret, once (herdr-secret serve also refuses a second answer). */
-  private serveSecrets() {
-    for (const t of this.hub.terminals.values()) {
-      const w = t.labels?.["herdr.secret.want"];
-      if (!w || !t.address.includes("/") || this.served.has(w)) continue;
-      this.served.add(w);
-      void run([tool("herdr-secret", "bin/herdr-secret"), "serve", t.address]);
-    }
-    if (this.served.size > 200) this.served.clear();
   }
 
   /** The hook asks a chat only while its flag is fresh (ask-hook.sh: 15 s): a page showing a local Claude agent's chat

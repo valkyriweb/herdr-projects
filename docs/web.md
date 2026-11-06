@@ -33,7 +33,19 @@ connection it came on). A page from anywhere else can't change anything: writes 
   `herdr-artifact convert` turns an older drawn artifact into a recipe.
 - The task browser: Kitty in the window, a live view of the same browser on the web.
 - Voice calls and dictation: the machine's microphone in the window, the phone's on the web, through the service
-  (the same ElevenLabs voice agent, `core/voice.js`; whisper.cpp for dictation).
+  (the same ElevenLabs voice agent, `core/voice.js`; ElevenLabs speech to text, Scribe, for dictation, with the
+  same key). The voice agent has four tools (`core/voice.js` TOOLS), answered by the service with the web app's
+  reach (`service/voice-tools.ts`): `look` reads anything (the call's context, any chat or a search in it, spaces,
+  machines, tasks, a task's summary and checks, Needs you, news, Autopilot, automations, settings, secret names,
+  artifacts), `open` shows something in the app the call runs in: the very page or window that started it (the page gets
+  a `nav` message on its call socket and answers `navved` with what it shows; the window's chat mod gets `nav/*.json`
+  in the call folder and answers `navved/*.json`). The agent hears it's on screen only after that answer, else why
+  not (`navWords`). Spaces are found with their machine's names, the serving one's key too ("Mac mini Home" while it
+  calls itself This computer); several that fit make it ask which. `send` writes as the person to any chat, and `act` runs one of the web app's
+  actions only after the person said yes out loud (`confirmed`). The window's call asks its own machine's service
+  (`POST /api/voice/tool`, local token); without it only its own chat works. Both sides tell the call what the app shows
+  (the page's `where` message, the window's `where.json`). The agent's spec carries a fingerprint (`SPEC`): an agent
+  made from an older one is PATCHed on the next call (`ensureAgent`).
 - Keys: 3.0's keys work in the web app too (Settings → Keyboard shortcuts on a desktop).
 
 ## Install
@@ -83,7 +95,7 @@ Settings → Web shows the new link and its QR code everywhere. It needs Python 
 | Work | Runs on |
 | --- | --- |
 | The task tick, the automations scheduler's check (herdr-task) | each machine with a Shepherdr service ticks its own; the host ticks the machines with none (VMs) that any service ran tasks on; another service ticks those only while the host can't be reached (herdr-task's lock keeps two ticks of one machine apart) |
-| Autopilot wakes and automations | each machine's own scheduler (one per machine: herdr-task's lock); the tick above only checks it runs |
+| Autopilot wakes and automations | each machine's own scheduler (one per machine: herdr-task's lock); the tick above only checks it runs. A space's switch flipped from another machine is handed to herdr-task on the space's own machine, which keeps it and wakes it |
 | News, the memory guard, retries of cut turns | inside each machine's tick, so with it |
 | Push alerts to phones | the host only (the pages subscribe there) |
 | A web page's question cards (the ask flag; the cards read and answered there) | the host, on the agent's machine through the link |

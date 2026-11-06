@@ -1,3 +1,4 @@
+import * as APc from "../core/autopilot.js";
 import { expect, test } from "bun:test";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,6 +9,7 @@ const file = join(mkdtempSync(join(tmpdir(), "shep-settings-")), "shepherdr.json
 writeFileSync(file, JSON.stringify({ everywhere: { machine: { start_load: 2 } }, spaces: { sp1: { folder: "/x" } } }));
 process.env.HERDR_TASK_SETTINGS = file;
 const { Settings } = await import("./settings.ts");
+const CORE: any = await import("../core/settings.js");
 
 test("the Tasks rows say the window's words, and a change keeps the rest of the file", () => {
   const s = new Settings();
@@ -34,13 +36,56 @@ test("a space's own values go in its layer with its folder, and Reset drops them
   let f = JSON.parse(readFileSync(file, "utf8"));
   expect(f.spaces.sp2).toEqual({ folder: "/repo", name: "web", tasks: { merge: "auto" }, worker: { agent: "codex", model: "gpt-5", effort: "high", fast: false, perm: null } });
   const tasks = s.sections(null, [scope]).find((x) => x.name === "Tasks" && x.level === "sp2")!;
-  // as the window's: "Changed here · Reset", Reset back to Everywhere's; Base branch only in a space's own
-  expect(tasks.rows.find((r) => r.key === "tasks.merge")).toMatchObject({ value: "Right away", inherits: { from: "everywhere" } });
+  // as the window's: "Set for this space · Reset", Reset back to Everywhere's; Base branch only in a space's own
+  expect(tasks.rows.find((r) => r.key === "tasks.merge")).toMatchObject({ value: "Right away", inherits: { from: "Everywhere" } });
   expect(tasks.rows.find((r) => r.key === "tasks.base")).toMatchObject({ label: "Base branch", text: true, placeholder: "Its current branch" });
   s.set("tasks.merge", null, "sp2", scope);
   f = JSON.parse(readFileSync(file, "utf8"));
   expect(f.spaces.sp2.tasks).toBeUndefined();
   expect(() => s.set("tasks.merge", "Right away", "sp3", null)).toThrow();
+});
+
+test("Autopilot: Everywhere's unless a space sets its own, kept with the rest and sent to its machine", async () => {
+  const { pushBody } = await import("./settings.ts");
+  const s = new Settings();
+  s.start();
+  const web = { id: "sp4", name: "web", machine: null, folder: "/web" }, api = { id: "pi/sp5", name: "api", machine: "pi", folder: "/api" };
+  const pilot = { everywhere: { every: "every 60 minutes", events: ["ready"], words: "Keep it green." } };
+  s.set("autopilot.every", "weekdays 9:00", "pi/sp5", api);
+  s.set("autopilot.heartbeat", "Only the API.", "pi/sp5", api);
+  s.set("autopilot.events", "merged,ready", "all");
+  let f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.spaces["pi/sp5"].autopilot).toEqual({ every: "weekdays 9:00", heartbeat: "Only the API." });
+  expect(f.everywhere.autopilot).toEqual({ events: ["ready", "merged"] });
+  expect(JSON.parse(pushBody(f, "pi")).spaces.sp5.autopilot.every).toBe("weekdays 9:00");
+  const page = (level: string) => s.sections(null, [web, api], ["pi"], "box", pilot).find((x) => x.name === "Autopilot" && x.level === level)!;
+  const row = (level: string, key: string) => page(level).rows.find((r) => r.key === key)!;
+  expect(row("pi/sp5", "autopilot.every")).toMatchObject({ value: "weekdays 9:00", inherits: { value: "Every hour", from: "Everywhere" } });
+  expect(row("pi/sp5", "autopilot.events")).toMatchObject({ value: "ready,merged", from: "Everywhere" });
+  expect(row("sp4", "autopilot.every")).toMatchObject({ value: "every 60 minutes", from: "Everywhere" });
+  expect(row("sp4", "autopilot.heartbeat")).toMatchObject({ value: "Keep it green." });
+  expect(row("all", "autopilot.every").others).toEqual([{ id: "pi/sp5", name: "api" }]);
+  expect(() => s.set("autopilot.events", "lunch", "all")).toThrow();
+  // a space's Direction: one line; empty, none (Everywhere's page has no Direction row)
+  s.set("autopilot.direction", "  Launch the\n  shop ", "sp4", web);
+  expect(JSON.parse(readFileSync(file, "utf8")).spaces.sp4.autopilot).toEqual({ direction: "Launch the shop" });
+  expect(row("sp4", "autopilot.direction")).toMatchObject({ value: "Launch the shop", text: true });
+  expect(row("all", "autopilot.direction")).toBeUndefined();
+  s.set("autopilot.direction", "", "sp4", web);
+  expect(JSON.parse(readFileSync(file, "utf8")).spaces.sp4.autopilot).toBeUndefined();
+  // an earlier version's starter in Settings shows as today's
+  s.set("autopilot.heartbeat", APc.OLD_STARTERS[0], "sp4", web);
+  expect(row("sp4", "autopilot.heartbeat").value).toBe(APc.STARTER);
+  s.set("autopilot.heartbeat", null, "sp4", web);
+  expect(page("all").about).toContain("push the project forward");
+  expect(page("all").about).toContain("never asking you");
+  // Reset: back to Everywhere's
+  s.set("autopilot.every", null, "pi/sp5", api);
+  s.set("autopilot.heartbeat", null, "pi/sp5", api);
+  f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.spaces["pi/sp5"].autopilot).toBeUndefined();
+  // without its add-on, no page
+  expect(s.sections(null, [web], [], "box", null).some((x) => x.name === "Autopilot")).toBe(false);
 });
 
 test("machine limits: percents on the page, the file's own units, and this computer as local", () => {
@@ -106,7 +151,7 @@ test("Agents and Tasks say the window's words: the model button, Other CLI, Must
   s.start();
   s.choices = C.choicesFrom({ claude: { model: "opus[1m]", effort: "high", per: {} }, codex: { models: [{ id: "gpt-5", label: "GPT-5", efforts: ["low", "high"] }] } });
   const agents = s.sections(null).find((x) => x.name === "Agents" && x.level === "all")!;
-  expect(agents.rows.map((r) => r.label)).toEqual(["Assistant", "Workers", "Reviewer", "Backup agent"]);
+  expect(agents.rows.map((r) => r.label)).toEqual(["Assistant", "Workers", "Reviewer", "Backup agent", "Reactions"]);
   expect(agents.rows[0].value).toBe("Opus 5.5 · 1M · High");
   expect(agents.rows[2]).toMatchObject({ value: "Other CLI (Codex)", agent: { unset: true, other: false } });
   const tasks = s.sections(null).find((x) => x.name === "Tasks" && x.level === "all")!;
@@ -115,4 +160,48 @@ test("Agents and Tasks say the window's words: the model button, Other CLI, Must
   const web = s.sections({ on: true, link: "https://box/shepherdr/", why: null }).find((x) => x.name === "Web")!;
   expect(web.rows.map((r) => r.label)).toEqual(["Shepherdr on the web", "Link"]);
   expect(web.rows[0].hint).toBe("On, private to your tailnet.");
+});
+
+// SHEP-48: Reactions, one Agents row for every agent: on by default, off Everywhere, a space's own on, Reset back
+test("Reactions: on by default for every agent, Everywhere's or a space's own", () => {
+  writeFileSync(file, "{}");
+  const s = new Settings();
+  s.start();
+  const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop" };
+  const row = (level: string) => s.sections(null, [sp]).find((x) => x.name === "Agents" && x.level === level)!.rows;
+  expect(row("all").at(-1)).toMatchObject({ key: "agents.reactions", label: "Reactions", value: "on", options: ["on", "off"], hint: CORE.REACTIONS.about });
+  expect(CORE.REACTIONS.about).not.toMatch(/Assistant/);
+  s.set("agents.reactions", "off", "all");
+  let f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere.agents).toEqual({ reactions: false });
+  expect(row("sp7").find((r) => r.key === "agents.reactions")).toMatchObject({ value: "off", from: "Everywhere" });
+  s.set("agents.reactions", "on", "sp7", sp);
+  f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.spaces.sp7.agents).toEqual({ reactions: true });
+  expect(row("sp7").find((r) => r.key === "agents.reactions")).toMatchObject({ value: "on", inherits: { value: "off", from: "Everywhere" } });
+  expect(row("all").find((r) => r.key === "agents.reactions")?.others).toEqual([{ id: "sp7", name: "shop" }]);
+  // the same as what it would inherit unsets it; Reset too; back on Everywhere is the default again
+  s.set("agents.reactions", null, "sp7", sp);
+  s.set("agents.reactions", "on", "all");
+  f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.spaces.sp7.agents).toBeUndefined();
+  expect(f.everywhere.agents).toBeUndefined();
+  expect(() => s.set("agents.reactions", "maybe", "all")).toThrow();
+});
+
+// SHEP-48: SHEP-42 kept it as the Assistant's (assistant.reactions): read as the Agents row, moved on the next change
+test("Reactions set as the Assistant's before still apply, and move to agents on a change", () => {
+  writeFileSync(file, JSON.stringify({ everywhere: { assistant: { reactions: false } }, spaces: { sp7: { folder: "/shop", assistant: { reactions: true } } } }));
+  const s = new Settings();
+  s.start();
+  const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop" };
+  const row = (level: string) => s.sections(null, [sp]).find((x) => x.name === "Agents" && x.level === level)!.rows.find((r) => r.key === "agents.reactions");
+  expect(row("all")).toMatchObject({ value: "off" });
+  expect(row("sp7")).toMatchObject({ value: "on", inherits: { value: "off", from: "Everywhere" } });
+  // its old key still sets it (a page from before), written as agents'
+  s.set("assistant.reactions", "on", "all");
+  const f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere).toEqual({});
+  expect(f.spaces.sp7).toEqual({ folder: "/shop", agents: { reactions: true } });
+  expect(CORE.upgradeReactions({ everywhere: { assistant: { reactions: false }, agents: { reactions: true } } })).toEqual({ everywhere: { agents: { reactions: true } } });
 });

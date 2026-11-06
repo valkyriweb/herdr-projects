@@ -32,10 +32,10 @@ import { useMotion } from '@client/motion.ts'
 import { isDark, useDark } from '@client/theme.ts'
 import {
   BackIcon,
+  CheckIcon,
   NextIcon,
   dimmed,
   FilterBox,
-  Ghost,
   ic,
   IconButton,
   List,
@@ -49,7 +49,7 @@ import {
   UpIcon,
   XIcon,
 } from '@client/ui.tsx'
-import type { Artifact, Chat, Message } from '@shared/types.ts'
+import type { Artifact, ArtifactVersion, Chat, Message } from '@shared/types.ts'
 
 const { withIds } = R as any
 const { MARKUP, markupHint, markupSent, describe } = M as any
@@ -69,9 +69,8 @@ export function ago(ms: number) {
 /** which version, who made it and when: "v3 · Claude Code · 2h ago" (the window's) */
 const detailOf = (a: Artifact) => [`v${a.v}`, a.by, a.at ? ago(a.at) : null].filter(Boolean).join(' · ')
 
-/** the version stepper the window's artifact bars have: ‹ v2 of 5 ›, then "· Latest ›" while an older one shows (its
- *  tooltip the latest's number); one version only: "v3" in the sidebar's head (when it came on hover), "v3 · 2h ago" in
- *  the viewer's bar */
+/** the version stepper the window's artifact bars have: ‹ v2 of 5 ›, then "· Latest ›" while an older one shows; one
+ *  version only: "v3" in the sidebar's head, "v3 · 2h ago" in the viewer's bar */
 function Stepper({ art, shown, onStep, bar }: { art: Artifact; shown: number; onStep: (n: number | undefined) => void; bar: 'sidebar' | 'viewer' }) {
   const kept = [...art.versions.map((x) => x.n)].sort((a, b) => a - b)
   const latest = art.v
@@ -81,20 +80,20 @@ function Stepper({ art, shown, onStep, bar }: { art: Artifact; shown: number; on
   const me = art.versions.find((x) => x.n === shown)
   const when = me?.at ? ago(me.at) : undefined
   if (kept.length <= 1 && !older)
-    return <div title={bar === 'sidebar' ? when : undefined} className="shrink-0 text-xs text-fg2 tabular-nums phone:text-[0.8125rem]">v{shown}{bar === 'viewer' && when ? ` · ${when}` : ''}</div>
+    return <div className="shrink-0 text-xs text-fg2 tabular-nums phone:text-[0.8125rem]">v{shown}{bar === 'viewer' && when ? ` · ${when}` : ''}</div>
   return (
     <div className="flex shrink-0 items-center text-xs tabular-nums phone:text-[0.8125rem]">
       <IconButton label={prev ? `v${prev}` : `v${shown}`} disabled={!prev} className="rounded-full! disabled:opacity-40" onClick={() => prev && onStep(prev)}>
         <BackIcon className={ic} />
       </IconButton>
-      <span title={when} className={clsx('px-0.5', older ? 'text-fg' : 'text-fg2')}>v{shown} of {latest}</span>
+      <span className={clsx('px-0.5', older ? 'text-fg' : 'text-fg2')}>v{shown} of {latest}</span>
       <IconButton label={next ? `v${next}` : `v${shown}`} disabled={!next} className="rounded-full! disabled:opacity-40" onClick={() => next && onStep(next === latest ? undefined : next)}>
         <NextIcon className={ic} />
       </IconButton>
       {older ? (
         <>
           <span className="px-1 text-fg3">·</span>
-          <button type="button" title={`v${latest}`} className="press-dim rounded-full px-1.5 py-1 font-medium text-focus hover:bg-hover" onClick={() => onStep(undefined)}>Latest ›</button>
+          <button type="button" className="press-dim rounded-full px-1.5 py-1 font-medium text-focus hover:bg-hover" onClick={() => onStep(undefined)}>Latest ›</button>
         </>
       ) : null}
     </div>
@@ -217,7 +216,6 @@ function MarkupLayer({ art, v, onEnd }: { art: Artifact; v: number; onEnd: () =>
             <button
               type="button"
               aria-label="Send"
-              title="Send  Enter"
               disabled={!text.trim() || sending}
               onClick={() => void send()}
               className={clsx('press-dim relative grid size-8 shrink-0 place-items-center rounded-row bg-fg text-bg after:absolute after:-inset-1.5 phone:size-11', dimmed)}
@@ -286,6 +284,29 @@ export function showInPanel(id: string) {
   setUI(ui.device === 'phone' ? { task: null, tab: 'artifacts', pick: null, plus: null, menu: false } : { task: ui.task && !taskInMiddle(ui, snap) ? null : ui.task, side: 'artifacts' })
 }
 
+/** Mark up / Done, one look in the viewer's bar and the panel's (and the window's, mods/artifacts/main.js and
+ *  chat-image/artifact-bar.js): a pointer clicking a spot and its name, round like every header button. round: on a
+ *  phone's bar it is a grey circle with only the pointer, like Close beside it. While marking it says Done with a tick,
+ *  tinted the blue of the frame round what you mark. */
+function MarkUpButton({ on, onClick, round }: { on: boolean; onClick: () => void; round?: boolean }) {
+  return (
+    <button
+      type="button"
+      aria-label={on ? 'Done' : 'Mark up'}
+      aria-pressed={on}
+      onClick={onClick}
+      className={clsx(
+        'hit press-dim inline-flex h-7 shrink-0 items-center gap-1.5 rounded-full pr-2.5 pl-2 text-[0.8125rem] font-medium whitespace-nowrap coarse:h-9 phone:h-11 phone:gap-2 phone:pr-4 phone:pl-3.5 phone:text-[0.9375rem]',
+        on ? 'bg-[color-mix(in_srgb,var(--focus)_14%,var(--bg))] text-fg' : 'text-fg2 hover:bg-hover hover:text-fg',
+        round && !on && 'phone:w-11 phone:justify-center phone:bg-bubble phone:px-0',
+      )}
+    >
+      {on ? <CheckIcon className={clsx(ic, 'text-focus')} /> : <MarkUpIcon className={ic} />}
+      <span className={clsx(round && !on && 'phone:hidden')}>{on ? 'Done' : 'Mark up'}</span>
+    </button>
+  )
+}
+
 /** An artifact in the side panel, under the window's sidebar bar: ‹ Artifacts back to the list, its title, which
  *  version (‹ v2 of 5 ›, · Latest ›), and Mark up / Done, which marks it up right there */
 function PanelArtifact({ art, onBack }: { art: Artifact; onBack: () => void }) {
@@ -301,9 +322,7 @@ function PanelArtifact({ art, onBack }: { art: Artifact; onBack: () => void }) {
         </button>
         <div className="min-w-0 flex-1 truncate font-semibold">{art.title}</div>
         <Stepper art={art} shown={shown} bar="sidebar" onStep={(n) => { setMarking(false); setV(n) }} />
-        <Ghost aria-pressed={marking} onClick={() => setMarking(!marking)} className="shrink-0 aria-pressed:bg-sel aria-pressed:text-fg">
-          <MarkUpIcon /> {marking ? 'Done' : 'Mark up'}
-        </Ghost>
+        <MarkUpButton on={marking} onClick={() => setMarking(!marking)} />
       </div>
       <div className="relative min-h-0 flex-1">
         <div className="absolute inset-0">
@@ -350,11 +369,13 @@ const useWindowHeight = () =>
 /** how tall each page last said it is, so a card scrolled back into the chat doesn't jump */
 const heights = new Map<string, number>()
 
-/** Shepherdr 3.1: a recipe artifact is drawn here as the web's own HTML (Recipe.tsx); an older one made for the Herdr
- *  window says so; a 2.1 page (none here now) still has its frame. */
+/** Shepherdr 3.1: a recipe artifact is drawn here as the web's own HTML (Recipe.tsx); a custom panel only the Herdr
+ *  window runs shows the window's picture of it; a 2.1 page (none here now) still has its frame. Each version by its own
+ *  kind: a converted one was a panel before it became a recipe. */
 export function ArtifactFrame(p: Parameters<typeof PageFrame>[0]) {
-  if (p.art.kind === 'recipe') return <RecipeFrame {...p} />
-  if (p.art.kind === 'gpui') return <WindowOnly />
+  const kind = p.art.versions.find((x) => x.n === p.v)?.kind ?? p.art.kind
+  if (kind === 'recipe') return <RecipeFrame {...p} />
+  if (kind === 'gpui') return <WindowPicture {...p} />
   return <PageFrame {...p} />
 }
 
@@ -383,9 +404,23 @@ function RecipeFrame({ art, v, full }: Parameters<typeof PageFrame>[0]) {
   )
 }
 
-/** made before recipes, for the Herdr window only */
-function WindowOnly() {
-  return <p className="p-4 text-pretty text-fg3">Made for the Herdr window: open it there.</p>
+/** A custom panel, for the Herdr window only: the picture the window last took of it (herdr-artifact picture, as it
+ *  showed it), this version's or else the newest before it, with where to open it small underneath. */
+function WindowPicture({ art, v, full }: Parameters<typeof PageFrame>[0]) {
+  const shot = (x: ArtifactVersion) => (x.kind ?? art.kind) === 'gpui' && !!x.picture
+  // newest first
+  const pic = art.versions.find((x) => x.n === v && shot(x)) ?? art.versions.find((x) => x.n < v && shot(x))
+  const on = art.machine ? `&on=${encodeURIComponent(art.machine)}` : ''
+  if (!pic) return <p className="p-4 text-pretty text-fg3">Made for the Herdr window: open it there.</p>
+  return (
+    <figure className={clsx('flex flex-col gap-1.5 overflow-y-auto p-4 phone:p-5', full ? 'h-full' : 'max-h-[70dvh]')}>
+      <img src={`api/artifacts/${encodeURIComponent(art.id)}/file/.window.png?v=${pic.n}&t=${pic.picture}${on}`} alt={art.title}
+        className="h-auto max-w-full self-start rounded-box shadow-box" />
+      <figcaption className="text-pretty text-xs text-fg3">
+        {pic.n === v ? '' : `As v${pic.n} looked. `}Made for the Herdr window: open it there.
+      </figcaption>
+    </figure>
+  )
 }
 
 /** An artifact's page in a sealed frame: scripts and forms run, never with this app's origin, and it loads nothing. */
@@ -564,21 +599,14 @@ function Viewer() {
           <PageIcon className={clsx(ic, 'shrink-0 text-fg2 phone:hidden')} />
           <div className="min-w-0 flex-1 truncate font-medium">{art.title || 'Artifact'}</div>
           <Stepper art={art} shown={shown} bar="viewer" onStep={(n) => openArtifact(art.id, n)} />
-          <IconButton
-            label={markup ? 'Done' : 'Mark up'}
-            pressed={markup}
-            className={clsx(barBtn, 'w-auto! px-2 gap-1 inline-flex! aria-pressed:bg-[color-mix(in_srgb,var(--accent)_16%,var(--bg))]')}
-            onClick={() => setMarkup(!markup)}
-          >
-            <MarkUpIcon /><span className="phone:hidden">{markup ? 'Done' : 'Mark up'}</span>
-          </IconButton>
+          <MarkUpButton on={markup} onClick={() => setMarkup(!markup)} round />
           {/* beside the chat, in the Artifacts panel */}
           {phone ? null : (
             <IconButton label="Open in sidebar" onClick={() => showInPanel(art.id)} className="rounded-full!">
               <PanelIcon className={ic} />
             </IconButton>
           )}
-          <IconButton label="Close" title="Close  Esc" onClick={closeArtifact} className={barBtn}>
+          <IconButton label="Close" onClick={closeArtifact} className={barBtn}>
             <XIcon className={ic} />
           </IconButton>
         </div>
@@ -609,9 +637,11 @@ function ViewerShell({ label, phone, children }: { label: string; phone: boolean
 
 
 
-/** "All" in the list's bar: every folder's artifacts, or the shown space's (the window's toggle), kept on this device */
-const ALL = 'shepherdr.artifactsAll'
-let allOn = (() => { try { return localStorage.getItem(ALL) === '1' } catch { return false } })()
+/** "All" in the list's bar: every folder's artifacts (the default, like Tasks), or the shown space's (the window's
+ *  toggle), kept on this device. A new key: a choice saved under the old one ('shepherdr.artifactsAll', off by
+ *  default) starts over on All. */
+const ALL = 'shepherdr.artifactsAllFolders'
+let allOn = (() => { try { localStorage.removeItem('shepherdr.artifactsAll'); return localStorage.getItem(ALL) !== '0' } catch { return true } })()
 const allListeners = new Set<() => void>()
 function setAll(on: boolean) {
   allOn = on

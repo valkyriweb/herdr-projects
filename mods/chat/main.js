@@ -24,16 +24,18 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, TextareaState, Textarea, Scrollbar, VirtualListScrollHandle, TextView, v_virtual_list, InputState, Input } from "gpui-base";
-import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines } from "herdr";
+import { focused, props, run, theme, home, hc, exec, shared, setShared, watchFolder, window, settings, playSound, notify, appHome, readTextFile, writeTextFile, nextCommand, openOverlay, knownAgents, machines, layout } from "herdr";
 import { agents, panes, terminals, spaces, inRender } from "./live.js";
 import * as fs from "fs/promises";
-import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names } from "./core/chat-log.js";
+import { FIND, LOG, Conversation, records, resultText, summary, excerpt, names, pilotLine } from "./core/chat-log.js";
 import { BgJobs } from "./core/bg-jobs.js";
 import { words, howAnswered } from "./core/asks.js";
 // The rows' words and rules the web app's chat draws by too (core/chat-view.js).
-import { WORDS, clock, senderName, briefLabel, newsWords, resolveArtifacts, unsigned, fitThumbs, bandActs, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
+import { WORDS, clock, senderName, briefLabel, fromName, sentTo, selfName, initialOf, newsWords, resolveArtifacts, unsigned, ownWords, fitThumbs, bandActs, bandOrder, imagesLine, questionsBelow, notSent, published, artifactLine, elapsed, reportMsg, doingWords, LOST, lostMessage, shellWord, sessionStarted, sessionFailed } from "./core/chat-view.js";
 // Sending the person's words, as the web app does (core/send.js).
-import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn } from "./core/send.js";
+import { refusal, taskTag, messageBody, replyInstead, steerNow, reactionLine, mentionedIn, sendTyped } from "./core/send.js";
+// hc whose send goes as the person, with no caller: never "Another agent" on another machine (SHEP-3, core/person.js).
+import { asPerson } from "./core/person.js";
 import { AskCards, linkCtl } from "./cards.js";
 import * as strips from "./strips.js";
 import { button, red, green, amber, H, RADIUS, TEXT, toast, toastWho, plainError } from "./ui.js";
@@ -43,10 +45,11 @@ import * as secrets from "./secrets.js";
 import { taskDot, ownProgress } from "./dot.js";
 import * as attach from "./attach.js";
 import * as slash from "./slash.js";
+import * as mentions from "./core/mentions.js";
 import * as agent from "./agent.js";
 import * as choices from "./settings.js";
 import { Dictation } from "./dictate.js";
-import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD } from "./panel.js";
+import { PanelHost, inner, openTaskThread, backToTasks, requestWorkerTerminal, THREAD, STACK as TASKS_STACK, BODY as THREAD_BODY, CHAT as THREAD_CHAT, TERM as THREAD_TERM, FILES as THREAD_FILES, CHANGES as THREAD_CHANGES, PR as THREAD_PR, BROWSER as THREAD_BROWSER } from "./panel.js";
 import { markRead, onScreen, unread } from "./unread.js";
 import { notifies } from "./notify.js";
 import { ScreenWatch, screenStrips, openCard, cardsOf, starting, cliOf } from "./screens.js";
@@ -67,6 +70,14 @@ const TEMPLATE = 'dir="$HOME/.config/herdr-core/templates"; ';
 // Whether a machine's layout is here now (it's connected); this computer always is.
 const online = (machine) => !machine || machines().find((m) => m.name === machine)?.layout === "ready";
 const same = (a, b) => norm(a) === norm(b);
+// The person's words into the agent's terminal: plain input from them, here and on another machine (core/person.js).
+const personHc = asPerson({ hc, exec });
+// This machine's name in herdr-core, once known: another machine's agent writes our terminals as "<it>/t75" (SHEP-12).
+let ownName = null, askedName = false;
+const coreName = () => {
+  if (!askedName) { askedName = true; hc(["server", "status"]).then((r) => { ownName = JSON.parse(r.stdout || "{}")?.core?.name || null; }).catch(() => { askedName = false; }); }
+  return ownName;
+};
 // When an ask was made: its id is <terminal>.<seconds>.<pid> (ask-hook.sh), taken at the end of
 // that second so it sits after what was said in it.
 const askAt = (id) => { const p = String(id).split("."); const sec = Number(p[p.length - 2]); return Number.isFinite(sec) && sec > 1e9 ? sec * 1000 + 999 : Date.now(); };
@@ -82,10 +93,10 @@ const THUMB = 56, THUMB_GAP = 6;
 // The live row's level wave: each bar's width and the gap between bars, in px.
 const WAVE_BAR = 3, WAVE_GAP = 2;
 // ONE row under each message, its band (a list row of its own), on the message's side (left
-// for the agent, right for the person), in this order: the time (dim), reply, copy, rewind or
-// fork; then on the agent's the reaction pills and the smiley to add one, furthest right, and
-// on the person's the smiley and then the pills, furthest right (flush under the bubble's
-// edge). The pills always show; the rest only while the pointer is on the message, in room
+// for the agent, right for the person), the reaction pills flush under the bubble's outer edge
+// and the smiley to add one beside them, each side the other's mirror: on the person's the time
+// (dim), reply, copy, rewind, the smiley and then the pills (furthest right); on the agent's the
+// pills (furthest left), the smiley, fork, copy, reply and then the time. The pills always show; the rest only while the pointer is on the message, in room
 // that is always kept, so nothing moves. barLayout() places every part; hitBar() reads the
 // same places.
 // One even rhythm on a 4 px scale (spaced()): under every message its band, always kept: BAND_IN
@@ -116,13 +127,16 @@ function findModel(menus, name) {
 // About how many lines words take at a width (px), for a row's height before it's measured.
 const wrapLines = (text, width) => String(text ?? "").split("\n").reduce((n, l) => n + Math.max(1, Math.ceil((l.length * 7) / Math.max(120, width))), 0);
 const ICONS = { copy: "copy", reply: "reply", rewind: "rewind", fork: "git-fork", react: "smile-plus" };
-// Reaction pills: this wide, this far apart; and the gap before the first and after the last.
-const PILL = 46, PILL_GAP = 4, PILL_EDGE = 6;
+// Reaction pills: this wide and tall (inside the ACT row, so they sit on the icons' center line
+// without towering over them), this far apart; and the gap between them and the smiley.
+const PILL = 46, PILL_H = 20, PILL_GAP = 4, PILL_EDGE = 6;
 // A task's id as shown and typed: herdr-task's PREFIX-n (`ref`, e.g. HAT-1), else #n.
 const taskRef = (x) => (x?.ref ? String(x.ref) : `#${x?.id}`);
+// herdr-task's status, as core/mentions.js TASK_RANK orders tasks
+const SECTION_DOT = { needs: "need", need: "need", working: "work", work: "work", merging: "merging", ready: "ready", queued: "queued", scheduled: "scheduled", todo: "todo", done: "done" };
 // Task chips under a message: this wide, this far apart.
 const TASK = 170, TASK_GAP = 6;
-// A Ready task's news line: its Accept, this wide, at the line's right end.
+// A Ready task's news line: its Review (opens the Accept card), this wide, at the line's right end.
 const ACCEPT = 64;
 // The picker's Frequently used before there is any history.
 const FREQUENT = ["👍", "👎", "❓", "✅", "👀", "🎉", "❤️", "🔥", "🙏"];
@@ -288,6 +302,11 @@ export default class Chat extends View {
     this.slashSel = 0;
     this.slashOff = null;
     this.cmds = [];
+    // "#": the spaces this agent's machine reaches (core/mentions.js) and the ones picked into the box
+    this.reach = null;
+    this.picked = [];
+    // "@": the tasks picked into the box (core/mentions.js taskToken at send)
+    this.pickedTasks = [];
     this.copied = null;
     this.note = null;
     this.dflt = null;
@@ -970,6 +989,7 @@ export default class Chat extends View {
       cx.spawn(async (cx) => { this.dflt = await agent.defaults(kind, this.machine); cx.notify(); });
       cx.spawn(async (cx) => { this.cmds = await slash.commands(kind, this.machine, t.foreground?.cwd ?? t.cwd); cx.notify(); });
       cx.spawn(async (cx) => { await this.loadTasks(); cx.notify(); });
+      cx.spawn(async (cx) => { await this.loadReach(); cx.notify(); });
       if (this.assistant()) cx.spawn(async (cx) => { await this.loadSpaceTasks(); cx.notify(); });
     }
     const f = await exec("sh", ["-c", FIND, "chat", kind, String(pid)], { on: this.machine });
@@ -1025,9 +1045,17 @@ export default class Chat extends View {
     const users = this.conv.items.filter((x) => x.kind === "user");
     // An answer written in the box is in once the log has it as an answer.
     if (this.replied?.length) this.replied = this.replied.filter((r) => !users.some((u) => u.answer && (u.at ?? 0) >= r.at - 5000 && norm(u.text).includes(norm(r.text))));
+    // The person's words that came wrapped as another machine's process's message (a send that named its caller):
+    // theirs, as sent from here (core/chat-view.js ownWords).
+    for (const u of users) if (this.own?.has(u.id)) delete u.from;
     if (!this.pending?.length) return;
-    this.pending = this.pending.filter((p) => !users.some((u) => (u.at ?? 0) >= p.at - 5000 &&
-      (same(u.text, p.sent) || (p.match && norm(u.text).includes(p.match)) || (!p.match && u.images))));
+    const matches = (u, p) => (u.at ?? 0) >= p.at - 5000 &&
+      (same(u.text, p.sent) || (p.match && norm(u.text).includes(p.match)) || (!p.match && u.images));
+    for (const id of ownWords(users, this.pending, matches)) {
+      (this.own ??= new Set()).add(id);
+      delete users.find((u) => u.id === id).from;
+    }
+    this.pending = this.pending.filter((p) => !users.some((u) => matches(u, p)));
   }
 
   // The newest page first; after that, what the log gained since.
@@ -1151,7 +1179,7 @@ export default class Chat extends View {
         if (this.firstSend && k?.status?.state === "idle" && !openCard(this.addr)) {
           const text = this.firstSend;
           this.firstSend = null;
-          const sent = await hc(["send", this.addr, text]).catch(() => null);
+          const sent = await personHc(["send", this.addr, text]).catch(() => null);
           if (sent?.code !== 0) this.firstSend = text;
         }
         this.alerts(cx);
@@ -1181,7 +1209,10 @@ export default class Chat extends View {
   // Enter: now (while the agent works, it takes it mid-turn). Ctrl+Enter while it
   // works: held, and sent by itself once it is free.
   send(cx, hold = false) {
-    const text = this.box.value().trim();
+    // A picked "#space" goes as its mention, which names its target (core/mentions.js).
+    const text = mentions.expandTasks(mentions.expand(this.box.value().trim(), this.picked), this.pickedTasks);
+    this.picked = [];
+    this.pickedTasks = [];
     // Also while the agent asks in its terminal: the words answer it there (deliver()).
     if (!text && !this.files.length) return;
     const msg = { id: `m${Date.now()}`, text, files: this.files, quote: this.quote };
@@ -1211,6 +1242,7 @@ export default class Chat extends View {
     const list = this.suggestions();
     if (list.length) {
       const c = list[Math.min(this.slashSel, list.length - 1)];
+      if (c.task || c.space) { this.pick(c, cx); const v = this.box.value(); cx.timer.after(30, () => this.box.set_value(v)); return; }
       if (this.box.value().trim() !== `/${c.name}`) { this.pick(c, cx); cx.timer.after(30, () => this.box.set_value(`/${c.name} `)); return; }
     }
     this.send(cx, hold);
@@ -1222,7 +1254,7 @@ export default class Chat extends View {
     const st = this.status();
     if (st === "working" || st === "blocked" || this.asks.length || openCard(this.addr) || this.pending.some((p) => !p.failed && !p.late)) return;
     const msg = this.queue.shift();
-    if (msg.raw) hc(["send", this.addr, msg.text]);
+    if (msg.raw) personHc(["send", this.addr, msg.text]);
     else this.deliver(msg, cx);
     this.saveSoon(cx);
     cx.notify();
@@ -1256,7 +1288,8 @@ export default class Chat extends View {
       try {
         const paths = await attach.deliver(msg.files, this.addr, this.machine);
         p.sent = [body, ...paths].filter(Boolean).join("\n\n");
-        r = await hc(["send", this.addr, p.sent]);
+        // (a message with pictures: its Enter again if Claude Code lost it, sendTyped())
+        r = await sendTyped(this.sendIo(cx), this.addr, this.kind, p.sent);
         // Its own dialog is open in its terminal (a question or a permission with no card
         // here): the words answer it the "Reply instead…" way.
         if (r.code !== 0 && refusal(r).kind === "blocked" && (this.kind === "claude" || this.kind === "codex")) r = await this.replyInstead(p.sent, cx);
@@ -1297,7 +1330,7 @@ export default class Chat extends View {
 
   // What core/send.js needs from here: hc, a sleep, the agent's status now.
   sendIo(cx) {
-    return { hc, sleep: (ms) => cx.sleep(ms), status: () => this.status() };
+    return { hc: personHc, sleep: (ms) => cx.sleep(ms), status: () => this.status() };
   }
 
   // A message that didn't go, pressed: it goes again.
@@ -1315,7 +1348,7 @@ export default class Chat extends View {
   // A held message sent at once (the agent takes it mid-turn).
   sendQueued(msg, cx) {
     this.queue = this.queue.filter((m) => m !== msg);
-    if (msg.raw) hc(["send", this.addr, msg.text]);
+    if (msg.raw) personHc(["send", this.addr, msg.text]);
     else this.deliver(msg, cx);
     this.saveSoon(cx);
   }
@@ -1358,12 +1391,19 @@ export default class Chat extends View {
     // Enter's new line may already be in the box when the submit comes.
     const v = this.box.value().replace(/\n+$/, "");
     if (this.slashOff === v) return [];
-    // "#4" at the end: this folder's tasks (herdr-task), by number or title.
-    const h = /(?:^|\s)#([\w-]*)$/.exec(v);
-    if (h && this.tasks?.length) {
-      const q = h[1].toLowerCase();
-      return this.tasks.filter((x) => !q || String(x.id).startsWith(q) || taskRef(x).toLowerCase().includes(q) || x.title.toLowerCase().includes(q)).slice(0, 8)
-        .map((x) => ({ task: true, name: taskRef(x), about: x.title, state: x.status_text ?? x.state }));
+    // "#" at the end: the spaces this agent reaches (a pick names one for it).
+    const h = mentions.typing(v);
+    if (h !== null) {
+      const sp = mentions.match(this.reach?.spaces ?? [], h.toLowerCase()).map((x) => ({ space: x, name: `#${x.name}`, about: x.route ? x.machine : "This machine", key: `space-${x.id}` }));
+      if (sp.length) return sp;
+    }
+    // "@" at the end: the tasks on this agent's machine (herdr-task), by ID or title; a pick names
+    // the exact one (its folder when not this one's).
+    const at = mentions.typingTask(v);
+    if (at !== null) {
+      const tk = mentions.matchTasks(this.mentionableTasks().map((x) => ({ ref: taskRef(x), title: x.title, status: SECTION_DOT[x.status ?? x.state] ?? x.state, at: x.ready_at ?? x.started ?? 0, x })), at, 8)
+        .map(({ x }) => ({ task: x, name: `@${taskRef(x)}`, about: x.title, state: x.status_text ?? x.state, key: `task-${x.folder}-${taskRef(x)}` }));
+      if (tk.length) return tk;
     }
     const w = slash.typing(v);
     if (w === null || !this.cmds.length) return [];
@@ -1371,11 +1411,18 @@ export default class Chat extends View {
   }
 
   pick(c, cx) {
-    if (c.task) {
-      const v = this.box.value().replace(/\n+$/, "");
-      const next = v.replace(/#[\w-]*$/, `${c.name} `);
+    if (c.space) {
+      const next = mentions.pickInto(this.box.value(), c.space);
+      this.picked = [...this.picked.filter((x) => x.name !== c.space.name), c.space];
       this.box.set_value(next);
-      this.slashOff = next;
+      this.slashOff = next.replace(/\n+$/, "");
+    } else if (c.task) {
+      const own = (this.t?.foreground?.cwd ?? this.t?.cwd) === c.task.folder;
+      const t = { ref: taskRef(c.task), route: "", folder: own ? "" : c.task.folder ?? "" };
+      const next = mentions.pickTaskInto(this.box.value(), t);
+      this.pickedTasks = [...this.pickedTasks.filter((x) => x.ref !== t.ref), t];
+      this.box.set_value(next);
+      this.slashOff = next.replace(/\n+$/, "");
     } else {
       this.box.set_value(`/${c.name} `);
       this.slashOff = `/${c.name} `;
@@ -1522,7 +1569,7 @@ export default class Chat extends View {
       this.wasFocused = false;
       if (machine && msg?.files.length) {
         // On another machine: the files once the agent runs there.
-        cx.spawn(async () => { const paths = await attach.deliver(msg.files, this.addr, this.machine).catch(() => []); if (paths.length) await hc(["send", this.addr, paths.join("\n")]); });
+        cx.spawn(async () => { const paths = await attach.deliver(msg.files, this.addr, this.machine).catch(() => []); if (paths.length) await personHc(["send", this.addr, paths.join("\n")]); });
       }
       cx.spawn(async (cx) => this.follow(cx));
       if (!this.machine) cx.spawn(async (cx) => this.watchAsks(cx));
@@ -1651,6 +1698,39 @@ export default class Chat extends View {
       .child(icon("find-prev", "mods/chat/chevron-up.svg", (cx) => this.findStep(-1, rows, cx)))
       .child(icon("find-next", "mods/chat/chevron-down.svg", (cx) => this.findStep(1, rows, cx)))
       .child(icon("find-x", "mods/chat/x.svg", (cx) => this.closeFind(cx)));
+  }
+
+  // ---- spaces (#shop) -------------------------------------------------------------------------
+
+  // The spaces the agent's machine reaches, from its herdr-task reach map (what tell-assistant
+  // follows); none there yet: the spaces on its own machine.
+  async loadReach() {
+    const r = await exec("sh", ["-c", mentions.REACH_FILE], { on: this.machine }).catch(() => null);
+    let graph = null;
+    try { graph = JSON.parse(r?.stdout || "null")?.graph ?? null; } catch {}
+    const here = graph ? null : (spaces() ?? []).filter((x) => (x.machine ?? null) === (this.machine ?? null))
+      .map((x) => ({ id: String(x.id).split("/").pop(), name: x.name, route: "", machine: this.machine ?? "", target: String(x.id).split("/").pop(), assistant: false }));
+    this.reach = { from: graph?.core?.name ?? this.machine, spaces: graph ? mentions.reachable(graph) : here };
+  }
+
+  // A message's words with each #-mention in plain markdown: its name and machine, and "out of
+  // reach" when this agent can't reach that space.
+  mentionsIn(text) {
+    if (!mentions.hasMention(text)) return text;
+    const ids = this.reach ? new Set(this.reach.spaces.map((x) => x.id)) : null;
+    const by = new Map((this.reach?.spaces ?? []).map((x) => [x.id, x.machine]));
+    const title = (m) => this.mentionableTasks().find((x) => taskRef(x) === m.ref && (!m.folder || x.folder === m.folder))?.title;
+    return mentions.plain(text, ids, (m) => by.get(m.id), title);
+  }
+
+  // The tasks "@" lists: this folder's, then (an Assistant's) every folder's on its machine.
+  mentionableTasks() {
+    const seen = new Set(), out = [];
+    for (const x of [...(this.tasks ?? []), ...(this.spaceTasks ?? [])]) {
+      const k = `${x.folder}|${taskRef(x)}`;
+      if (x.ref && !seen.has(k) && !x.archived) { seen.add(k); out.push(x); }
+    }
+    return out;
   }
 
   // ---- tasks (#4) -----------------------------------------------------------------------------
@@ -1837,13 +1917,17 @@ export default class Chat extends View {
     const parts = [];
     let at = 0;
     const add = (what, w, gap, more = {}) => { at += parts.length ? gap : 0; parts.push({ what, x: at, w, ...more }); at += w; };
-    if (time) add("time", time.length > 5 ? 82 : 38, 0, { hover: true, text: time });
-    for (const a of bar.acts) add(a, ACT, ACT_GAP, { hover: true });
-    const pills = () => (bar.pills ?? []).forEach((p, i) => add(`pill:${p.emoji}`, PILL, i ? PILL_GAP : PILL_EDGE, { pill: p }));
+    // Many pills in a narrow pane: the time goes first, so the row stays inside the column.
+    const room = right - left, timeW = time ? (time.length > 5 ? 82 : 38) + ACT_GAP : 0;
+    const need = bar.acts.length * (ACT + ACT_GAP) + ACT + (bar.pills?.length ?? 0) * (PILL + PILL_EDGE);
     // Reactions off (an add-on): no smiley; the pills already there still show.
-    const react = addonOn("reactions");
-    if (bar.side === "user") { if (react) add("react", ACT, ACT_GAP, { hover: true }); pills(); }
-    else { pills(); if (react) add("react", ACT, bar.pills?.length ? PILL_EDGE : ACT_GAP, { hover: true }); }
+    const order = bandOrder(bar.side, bar.acts, { time: Boolean(time) && need + timeW <= room, react: addonOn("reactions") });
+    for (const what of order) {
+      if (what === "time") add("time", timeW - ACT_GAP, ACT_GAP, { hover: true, text: time });
+      // The pills PILL_GAP apart, PILL_EDGE from what comes before or after them.
+      else if (what === "pills") (bar.pills ?? []).forEach((p, i) => add(`pill:${p.emoji}`, PILL, i ? PILL_GAP : PILL_EDGE, { pill: p }));
+      else add(what, ACT, what === "react" && bar.side !== "user" ? PILL_EDGE : ACT_GAP, { hover: true });
+    }
     const x0 = bar.side === "user" ? right - at : left;
     for (const p of parts) p.x += x0;
     return { x: x0, w: at, parts };
@@ -1949,7 +2033,7 @@ export default class Chat extends View {
     if (st === "blocked" || this.asks.length) {
       this.queue.push({ id: `r${Date.now()}`, text: line, files: [], quote: null, raw: true, label: on ? `${emoji} reaction` : `${emoji} reaction removed` });
       this.saveSoon(cx);
-    } else hc(["send", this.addr, line]);
+    } else personHc(["send", this.addr, line]);
     cx.notify();
   }
 
@@ -1969,7 +2053,7 @@ export default class Chat extends View {
     const back = i < 0 ? 1 : users.length - i;
     cx.spawn(async (cx) => {
       if (this.kind === "claude") {
-        await hc(["send", this.addr, "/rewind"]);
+        await personHc(["send", this.addr, "/rewind"]);
         await cx.sleep(700);
         await hc(["keys", this.addr, ...Array(back).fill("up")]);
       } else {
@@ -2061,8 +2145,11 @@ export default class Chat extends View {
     const dir = this.callDir;
     const keyFile = `${appHome()}/secrets/elevenlabs.env`;
     const ok = await exec("sh", ["-c", 'grep -q "^[[:space:]]*\\(export[[:space:]]*\\)\\{0,1\\}ELEVENLABS_API_KEY=." "$1" 2>/dev/null && echo yes', "x", keyFile]);
-    // Or kept in Settings › Secrets (Everywhere): voice.ts reads it from the vault itself.
-    const kept = ok.stdout.trim() === "yes" || (await secrets.entries().catch(() => [])).some((e) => e.name === "ELEVENLABS_API_KEY" && e.scope === "everywhere");
+    // Or kept in Settings › Secrets (Everywhere), here or on the machine that keeps the secrets: voice.ts reads it
+    // itself. The help only when that machine truly has none: one that can't be asked now (entries() fails) lets the
+    // call try, and voice.ts says it can't reach it.
+    const list = ok.stdout.trim() === "yes" ? null : await secrets.entries().catch(() => null);
+    const kept = !list || list.some((e) => e.name === "ELEVENLABS_API_KEY" && e.scope === "everywhere");
     if (!kept) {
       this.call = null;
       this.callHelp = true;
@@ -2074,6 +2161,7 @@ export default class Chat extends View {
     const name = `${agent.NAMES[this.kind] ?? "the agent"}`;
     await exec("sh", ["-c", 'rm -rf "$1" "$1.level" && mkdir -p "$1/in" && touch "$1/alive"', "x", dir]);
     this.callRecent();
+    this.callWhereWas = null;
     // The helper runs beside the app (setsid: not tied to this mod's exec); it ends itself when
     // the chat stops touching `alive`.
     await exec("sh", ["-c", 'setsid bun "$2" "$1" "$3" "$4" </dev/null >"$1/log" 2>&1 &', "x", dir, `${appHome()}/mods/chat/voice.ts`, this.addr, name]);
@@ -2123,8 +2211,89 @@ export default class Chat extends View {
         const w = { dir, next: watchFolder(dir).catch(() => null).finally(() => { if (this.callWatch === w) this.callWatch = null; }) };
         this.callWatch = w;
       }
+      // What the window shows, for the call's "here"; what the voice agent asked to show.
+      this.callWhere();
+      await this.callNav();
       await Promise.race([this.callWatch.next, cx.sleep(1000)]);
     }
+  }
+
+  // What the window shows now, for the voice agent's "here", "this task" (voice.ts reads where.json): the space
+  // selected, and the task open in the Tasks panel with its tab. Written only when it changes.
+  callWhere() {
+    const find = (node, id) => { if (!node || typeof node !== "object") return null; if (node.id === id) return node; for (const c of node.children ?? []) { const hit = find(c, id); if (hit) return hit; } return null; };
+    const s = spaces().find((x) => x.active);
+    const place = s ? (s.machine && !String(s.id).includes("/") ? `${s.machine}/${s.id}` : String(s.id)) : null;
+    const tree = layout();
+    const panel = find(tree, "panel"), thread = shared("tasks.thread");
+    const open = panel && !panel.hidden && find(tree, "panel-body")?.active === TASKS_STACK && find(tree, TASKS_STACK)?.active === THREAD && thread?.task;
+    const m = open && String(thread.terminal ?? "").includes("/") ? String(thread.terminal).split("/")[0] : null;
+    const TAB = { [THREAD_CHAT]: "chat", [THREAD_TERM]: "terminal", [THREAD_FILES]: "files", [THREAD_CHANGES]: "changes", [THREAD_PR]: "pr", [THREAD_BROWSER]: "browser" };
+    const w = JSON.stringify({ place, task: open ? (m ? `${m}:${thread.task}` : String(thread.task)) : null, tab: open ? TAB[find(tree, THREAD_BODY)?.active] ?? "chat" : null });
+    if (w === this.callWhereWas) return;
+    this.callWhereWas = w;
+    fs.writeFile(`${this.callDir}/where.json`, w).catch(() => {});
+  }
+
+  // What the voice agent asked to show (service/voice-tools.ts Nav, written by voice.ts into nav/), done here.
+  async callNav() {
+    const box = `${this.callDir}/nav`;
+    const names = (await fs.readdir(box).catch(() => [])).filter((f) => f.endsWith(".json")).sort();
+    for (const f of names) {
+      let nav = null;
+      try { nav = JSON.parse(await fs.readFile(`${box}/${f}`, "utf8")); } catch {}
+      await fs.rm(`${box}/${f}`).catch(() => {});
+      if (!nav) continue;
+      // said back by the nav's name (voice.ts waits for it before the voice agent may say it's on screen)
+      let ack;
+      try { ack = this.voiceNav(nav) ?? { ok: true }; } catch (e) { console.error(`voice nav: ${e?.message ?? e}`); ack = { ok: false, why: "it failed in the window" }; }
+      await fs.mkdir(`${this.callDir}/navved`, { recursive: true }).catch(() => {});
+      await fs.writeFile(`${this.callDir}/navved/${f}`, JSON.stringify(ack)).catch(() => {});
+    }
+  }
+
+  // What the voice agent asked to show, done in this window: { ok } once done, else { ok: false, why }.
+  voiceNav(nav) {
+    const spaceOf = (place) => spaces().find((x) => String(x.id) === place || (x.machine && `${x.machine}/${x.id}` === place));
+    const no = (why) => ({ ok: false, why });
+    if (nav.kind === "space") {
+      const sp = spaceOf(nav.place);
+      if (!sp) return no("this window doesn't have that space");
+      run("space.select", { id: sp.id });
+      return { ok: true };
+    }
+    if (nav.kind === "chat") {
+      // the call's own chat: its pane; another chat: its space, or its task's chat in the Tasks panel
+      if (nav.addr === this.addr) { const mine = this.myPane() ?? this.lastPane; if (!mine) return no("its pane isn't open"); this.revealPane(mine); return { ok: true }; }
+      if (/\/worker$/.test(nav.chat ?? "") && nav.addr) { openTaskThread(nav.addr, nav.chat.slice(0, -7).split(":").pop(), null); return { ok: true }; }
+      if (String(nav.chat ?? "").startsWith("p:")) { const sp = spaceOf(nav.chat.slice(2).replace(":", "/")); if (!sp) return no("this window doesn't have that space"); run("space.select", { id: sp.id }); return { ok: true }; }
+      return no("that chat isn't running");
+    }
+    if (nav.kind === "task") {
+      if (nav.tab === "review" && nav.ref && nav.folder) {
+        openOverlay({ mod: "accept-card", kind: "dialog", modal: true, width: 640, height: 640, props: { ref: nav.ref, folder: nav.folder, machine: nav.machine ?? null, title: nav.title } });
+        return { ok: true };
+      }
+      if (!nav.addr) {
+        // no agent running: the Tasks panel, searched for it
+        setShared("tasks.searchreq", { q: `${nav.ref ?? nav.task} ${nav.title ?? ""}`.trim(), at: Date.now() });
+        run("layout.select", { stack: "panel-body", child: TASKS_STACK }); backToTasks(); run("layout.show", { id: "panel" });
+        return { ok: true };
+      }
+      openTaskThread(nav.addr, nav.ref ?? String(nav.task).split(":").pop(), nav.title ?? null);
+      const child = { terminal: THREAD_TERM, files: THREAD_FILES, changes: THREAD_CHANGES, pr: THREAD_PR, browser: THREAD_BROWSER }[nav.tab];
+      if (child) { if (nav.tab === "terminal") requestWorkerTerminal(nav.addr); run("layout.select", { stack: THREAD_BODY, child }); }
+      return { ok: true };
+    }
+    if (nav.kind === "tasks" || nav.kind === "needs") {
+      run("layout.select", { stack: "panel-body", child: TASKS_STACK });
+      backToTasks();
+      run("layout.show", { id: "panel" });
+      return { ok: true };
+    }
+    if (nav.kind === "artifact") { openViewer({ id: nav.artifact, title: nav.title, version: nav.v, latest: nav.v, machine: nav.machine ?? null }); return { ok: true }; }
+    if (nav.kind === "settings") { run("app.settings", nav.section ? { section: String(nav.section).toLowerCase() } : {}); return { ok: true }; }
+    return no("the window can't show that");
   }
 
   callSay(m) {
@@ -2214,18 +2383,19 @@ export default class Chat extends View {
         }
         const { dflts, icons, installed } = this.pickCache;
         if (this.kind) dflts[this.kind] = this.dflt ?? dflts[this.kind];
-        const remote = this.machine && !this.t?.labels?.["herdr.task"] ? "This computer only" : null;
+        // another machine's Assistant: its machine, said once in the menu (only that machine restarts it)
+        const remote = this.machine && !this.t?.labels?.["herdr.task"] ? this.machine : null;
         const currentRow = agent.rowFor(c.agent, c);
         // Installed agents only (and always the one running).
         const menus = Object.fromEntries(agent.AGENTS.filter((k) => k === c.agent || installed[k])
           .map((k) => [k, agent.menuFor(k, dflts[k], k === c.agent ? currentRow : null)]));
-        // As tall as the menu can get (chat-models' sizes): border and padding, Model header and
-        // rows, separator, Reasoning header and levels, Fast, Permissions, Restart.
-        const rows = Object.values(menus).reduce((n, m) => n + m.models.length, 0);
-        const W = 300, H = 2 + 10 + 26 + 31 * rows + 9 + 26 + 34 + 31 + 31 + 33;
+        // As tall as the menu can get (chat-models' sizes): border and padding, another machine's
+        // line, agent tabs, search, the list (it scrolls past 8 rows), separator, Reasoning header
+        // and levels, Fast, Permissions, the new conversation's two lines, Restart (two lines).
+        const W = 340, H = 2 + 10 + 20 + 34 + 36 + 8 * 31 + 9 + 26 + 34 + 31 + 31 + 40 + 50;
         openOverlay({ mod: "chat-models", kind: "popup", frame: "none", width: W, height: H,
           at: at ? { x: Math.max(8, at.x - W + 90), y: Math.max(8, at.y - H - 10) } : "pointer",
-          props: { pane: this.pickKey(), remote, height: H, select: name ? findModel(menus, name) : null,
+          props: { pane: this.pickKey(), remote, width: W, height: H, select: name ? findModel(menus, name) : null,
             current: { agent: c.agent, model: currentRow, effort: c.effort ?? null, fast: c.fast, perm: c.perm ?? null },
             menus, icons, permDefault: Object.fromEntries(agent.AGENTS.map((k) => [k, agent.permDefault(k, dflts[k])])) } });
       } finally {
@@ -2429,7 +2599,15 @@ export default class Chat extends View {
       while (ti < tasks.length && x.at && tasks[ti].at < x.at) { dated(tasks[ti].at); put(tasks[ti++]); }
       if (i === qAt) { putCard(ownQ); continue; }
       if (x.kind === "news") { const r = news.inline.get(x.id); if (r) { dated(x.at); out.push(r); } continue; }
+      // An Autopilot wake: one quiet line, never its words (core/chat-log.js pilotLine).
+      if (x.kind === "pilot") { dated(x.at); out.push({ kind: "pilot", id: x.id, text: pilotLine(x) }); continue; }
       if (x.kind !== "mark") dated(x.at);
+      // A message this agent sent another (SHEP-27): "Assistant → SHEP-4", drawn as another agent's message is.
+      if (x.kind === "sent") {
+        if (x.text) out.push({ kind: "brief", id: x.id, label: `Message to ${sentTo(x, (a) => this.sender(a))}`, text: unsigned(x.text), at: x.at,
+          who: selfName({ assistant: this.role === "coordinator" || assistant(this.t), task: this.taskRef, kind: this.kind }), to: sentTo(x, (a) => this.sender(a)) });
+        continue;
+      }
       if (x.kind === "artifact") {
         // A published artifact: its card (the latest publish of it; earlier ones a line), or a
         // quiet line while the registry doesn't list it yet.
@@ -2450,7 +2628,8 @@ export default class Chat extends View {
         // Not typed by the person: a launch brief or another agent's message, as a quiet row.
         // A fresh start's handover says it all in its label.
         const restart = /^<restart>/.test(x.text ?? "");
-        out.push({ kind: "brief", id: x.id, label: this.brief(x, i), text: restart ? x.text.replace(/<\/?restart>/g, "") : x.from ? unsigned(x.text) : x.text, bare: restart });
+        // Another agent's message (who: its sender) is drawn as a message (SHEP-12).
+        out.push({ kind: "brief", id: x.id, label: this.brief(x, i), text: restart ? x.text.replace(/<\/?restart>/g, "") : x.from ? unsigned(x.text) : x.text, bare: restart, ...(x.from ? { who: fromName(x, (f, t) => this.sender(f, t), this.names()), at: x.at } : {}) });
         continue;
       }
       if (x.kind === "user") {
@@ -2502,14 +2681,26 @@ export default class Chat extends View {
     while (ti < tasks.length) { dated(tasks[ti].at); put(tasks[ti++]); }
     // Words that answered a card, shown at once, until the log has them right after their
     // question (log.js answers()): they are the newest thing said, so they go last.
-    if (this.replied.length || this.pending.length) dated(Date.now());
+    // What was typed while it works (here, in the web app or its terminal) waits in its CLI's
+    // queue until it takes it at its next step: shown at once, quietly, as Queued.
+    const st = this.status();
+    const queue = st === "working" || st === "blocked" ? this.conv?.queued?.() ?? [] : [];
+    const inQueue = new Set(queue.map((q) => norm(q.text)));
+    if (this.replied.length || this.pending.length || queue.length) dated(Date.now());
     for (const r of this.replied) out.push({ kind: "user", id: `rp:${r.id}`, text: r.text });
     for (const p of this.pending) {
       const from = out.length;
       if (p.replyTo) out.push({ kind: "replyref", id: `rr:${p.id}`, to: p.replyTo, of: p.id, side: "user" });
-      out.push({ kind: "pending", id: p.id, text: p.text, files: p.files, failed: p.failed, late: p.late, waiting: p.waiting, delivered: p.delivered });
+      const queued = p.delivered && inQueue.has(norm(p.text)) ? WORDS.inQueue : undefined;
+      out.push({ kind: "pending", id: p.id, text: p.text, files: p.files, failed: p.failed, late: p.late, waiting: p.waiting ?? queued, delivered: p.delivered });
       if (p.paths?.length) out.push({ kind: "imgs", id: `i:${p.id}`, paths: p.paths, faded: !p.delivered });
       block(from, p.id);
+    }
+    for (const q of queue) {
+      if (this.pending.some((p) => norm(p.text) === norm(q.text))) continue;
+      const from = out.length;
+      out.push({ kind: "pending", id: `q:${q.id}`, text: q.text, files: q.images ? [imagesLine(q.images)] : [], delivered: true, waiting: WORDS.inQueue });
+      block(from, `q:${q.id}`);
     }
     if (this.note) out.push({ kind: "note", id: this.note.id, text: this.note.text });
     if (out.length) out.push({ kind: "end", id: "end" });
@@ -2555,7 +2746,7 @@ export default class Chat extends View {
   // (tools, "Message from …", artifact lines) sitting tight together, a card. A band is always
   // ACT_ROW: BAND_IN of air, then the actions' row at its foot, shown or not.
   spaced(rows) {
-    const quiet = (r) => r.kind === "tools" || r.kind === "brief" || r.kind === "askend" || r.kind === "tasknews" || (r.kind === "artifact" && (r.line || r.pending));
+    const quiet = (r) => r.kind === "tools" || r.kind === "brief" || r.kind === "askend" || r.kind === "pilot" || r.kind === "tasknews" || (r.kind === "artifact" && (r.line || r.pending));
     const of = (r) => r.blk ?? (quiet(r) ? "quiet" : r.id);
     // How far a row's words sit inside its edge once its outer room is gone (a reply line's
     // small text sits in an 18 px line; it only ever starts a block).
@@ -2587,7 +2778,12 @@ export default class Chat extends View {
   // the message with (text: "From HERD-76: …"), else "Another agent".
   sender(from, text = null) {
     // core/chat-view.js: the web app's chat names senders the same way.
-    return senderName(from, text, { find: (a) => terminals().find((x) => x.address === a), machine:this.machine, taskOf: (a) => this.workerTasks().get(a)?.ref ?? null });
+    return senderName(from, text, { find: (a) => terminals().find((x) => x.address === a), machine:this.machine, taskOf: (a) => this.workerTasks().get(a)?.ref ?? null, here: coreName(), machineName: this.names().machineName });
+  }
+
+  // How another Assistant's machine is named (core/chat-view.js fromName): the person's name for it, as the sidebar's.
+  names() {
+    return { machineName: (m) => shared("spaces-chat")?.machines?.[m]?.name || null, here: this.machine ?? coreName() };
   }
 
   // Whose ask a card shows: the CLI's short name ("Claude asks").
@@ -2607,7 +2803,7 @@ export default class Chat extends View {
   // for a task (herdr-task); and any message another agent sent with hc.
   brief(x, i) {
     // core/chat-view.js: the web app's chat labels them the same way.
-    return briefLabel(x, i, { start: this.start, template: this.t?.template ?? null, task: Boolean(this.t?.labels?.["herdr.task"]), sender: (f, t) => this.sender(f, t) });
+    return briefLabel(x, i, { start: this.start, template: this.t?.template ?? null, task: Boolean(this.t?.labels?.["herdr.task"]), sender: (f, t) => this.sender(f, t), ...this.names() });
   }
 
   // What a row's height depends on: measured once per key and width.
@@ -2630,7 +2826,7 @@ export default class Chat extends View {
     switch (x.kind) {
       case "end": return 10;
       case "top": case "loading": case "note": return 36;
-      case "brief": return this.opened.has(x.id) ? 32 + lines(x.text, w) * 19 : 20;
+      case "brief": return this.opened.has(x.id) ? (x.who ? 46 + lines(x.text, w - 50) * 20 : 32 + lines(x.text, w) * 19) : 20;
       case "replyref": return 22;
       case "chips": return 30;
       case "imgs": return this.fitThumbs(x.paths).h + 8;
@@ -2681,7 +2877,7 @@ export default class Chat extends View {
     const icon = (a) => div().size(ACT).flex().items_center().justify_center().rounded(5).cursor_pointer()
       .text_color(done && a === "copy" ? t.foreground : t.dim).hover((s) => s.bg(t.hover).text_color(t.foreground))
       .child(svg(`mods/chat/${done && a === "copy" ? "check" : ICONS[a]}.svg`).size(14));
-    const pill = (p) => h_flex().w(PILL).h(22).gap(4).items_center().justify_center().rounded(11).border_1().cursor_pointer()
+    const pill = (p) => h_flex().w(PILL).h(PILL_H).gap(4).items_center().justify_center().rounded(PILL_H / 2).border_1().cursor_pointer()
       .when(p.you, (el) => el.bg(t.accent + "26").border_color(t.accent))
       .when(!p.you, (el) => el.border_color(t.border).hover((s) => s.bg(t.hover)))
       .child(div().text_size(13).child(p.emoji))
@@ -2690,7 +2886,7 @@ export default class Chat extends View {
     return div().absolute().left(0).right(0).bottom(bottom).h(bar.box?.h ?? ACT_ROW)
       .children(parts.filter((p) => Boolean(p.hover) === hover).map((p) => div().absolute().top(0).bottom(0).left(p.x).w(p.w).flex().items_center()
         .when(bar.side === "user" && p.what === "time", (el) => el.justify_end())
-        .child(p.what === "time" ? div().pr(bar.side === "user" ? 4 : 0).pl(bar.side === "user" ? 0 : 2).text_size(11.5).text_color(t.dim).child(p.text)
+        .child(p.what === "time" ? div().pr(bar.side === "user" ? 4 : 0).pl(bar.side === "user" ? 0 : 4).text_size(11.5).text_color(t.dim).child(p.text)
           : p.pill ? pill(p.pill) : icon(p.what))));
   }
 
@@ -2707,14 +2903,14 @@ export default class Chat extends View {
       // accent's own text color on the full accent was too faint on light accents).
       div().max_w(most).px(12).py(8).rounded(12).bg(t.accent + "33").border_1().border_color(t.accent + "4d")
         .text_color(t.foreground).when(faded, (el) => el.opacity(0.55))
-        .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(text)) || " ").selectable(true)));
+        .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(typed(this.mentionsIn(text))) || " ").selectable(true)));
     const theirs = (text) => h_flex().w_full().justify_start().child(
       div().max_w(most).px(12).py(8).rounded(12).bg(t.raised).text_color(t.foreground)
         .child(x.clip ? this.clipped(t.raised, x.clip, div().id(`${pre}fold-in-${x.id}`).flex_none()
           // Its words' drawn height: a reply shorter than it looked isn't folded (foldOf()).
           .on_size_change((size, cx) => { const was = this.natural.get(x.id); if (!was || Math.abs(was - size.height) > 1) { this.natural.set(x.id, size.height); cx.notify(); } })
-          .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(text) || " ").selectable(true)))
-          : TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(text) || " ").selectable(true)));
+          .child(TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").selectable(true)))
+          : TextView.markdown(`${pre}chat-md-${x.id}`, this.findMark(this.mentionsIn(text)) || " ").selectable(true)));
     const fileLine = (label) => h_flex().gap(5).items_center().text_size(12).text_color(t.dim)
       .child(svg("mods/chat/paperclip.svg").size(12).flex_none()).child(div().truncate().child(label));
     switch (x.kind) {
@@ -2754,6 +2950,24 @@ export default class Chat extends View {
           .child(div().min_w(0).truncate().text_color(t.muted).child(k.title)))), 18, 3);
       case "brief": {
         const open = this.opened.has(x.id);
+        // Agent to agent, as a group chat (SHEP-12, SHEP-27): a message another agent sent ("Assistant on Mac mini ·
+        // Home") or this one sent another ("Assistant → SHEP-4"). One quiet row like a news line: a speech bubble in the
+        // accent, who (→ whom) a step stronger, its first words, its time; open, the sender's initial in place of the
+        // icon and the whole message as a speech bubble from it, closed again from the same line.
+        if (x.who) {
+          const avatar = div().size(20).flex_none().rounded(10).flex().items_center().justify_center().text_size(10).font_semibold()
+            .bg(x.to ? t.foreground + "1a" : t.accent + "2e").text_color(x.to ? t.muted : t.accent).child(initialOf(x.who));
+          return col(v_flex().w_full().px(6).py(QUIET_PY).rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
+            .child(h_flex().h(20).gap(6).items_center().text_size(12).text_color(t.muted)
+              .child(open ? avatar : svg("mods/chat/message.svg").size(14).flex_none().text_color(t.accent))
+              .child(div().flex_none().font_medium().text_color(t.foreground).child(x.who))
+              .when(Boolean(x.to), (el) => el.child(svg("mods/chat/arrow-right.svg").size(12).flex_none().text_color(t.dim))
+                .child(div().flex_none().font_medium().text_color(t.foreground).child(x.to)))
+              .child(div().flex_1().min_w(0).truncate().child(open ? "" : String(x.text ?? "").split("\n").find((l) => l.trim()) ?? ""))
+              .when(x.at > 1e12, (el) => el.child(div().flex_none().text_color(t.dim).child(clock(x.at)))))
+            .when(open, (el) => el.child(h_flex().w_full().pl(26).pt(6).pb(2).child(div().max_w(most).px(12).py(8).rounded(12).bg(t.raised)
+              .text_size(13).text_color(t.foreground).child(TextView.markdown(`${pre}chat-brief-${x.id}`, x.text || " ").selectable(true))))), 12, 0);
+        }
         return col(v_flex().w_full().px(6).py(QUIET_PY).rounded(7).cursor_pointer().hover((s) => s.bg(t.hover))
           .child(h_flex().gap(6).items_center().text_size(12).text_color(t.dim)
             .child(svg(`mods/workspace-chrome/chevron-${open ? "down" : "right"}.svg`).size(12).flex_none())
@@ -2793,6 +3007,11 @@ export default class Chat extends View {
         // One strip of a card waiting on the person (strips.js): its presses come through
         // clickRow(), by where they were.
         return col(strips.strip(t, x.s, x.first, x.last, pre), 18, 0);
+      case "pilot":
+        // An Autopilot wake: why it woke and, once it shows, how it went; quiet, as a closed ask.
+        return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12).text_color(t.dim)
+          .child(svg("mods/chat/rocket.svg").size(12).flex_none())
+          .child(div().min_w(0).truncate().child(x.text)), 18, 0);
       case "askend":
         // A closed ask: what it asked and how it went, quiet (the card itself is gone).
         return col(h_flex().w_full().py(QUIET_PY).gap(6).items_center().text_size(12).text_color(t.dim)
@@ -2928,15 +3147,15 @@ export default class Chat extends View {
 
   // What the agent says it waits for (its status report), e.g. "Do you prefer tea or coffee? (Tea · Coffee)".
   asking() {
-    const msg = terminals().find((x) => x.address === this.addr)?.report?.msg;
-    return typeof msg === "string" && msg.trim() ? msg.replace(/^answer:\s*/i, "").trim() : null;
+    const msg = reportMsg(terminals().find((x) => x.address === this.addr));
+    return msg ? msg.replace(/^answer:\s*/i, "").trim() : null;
   }
 
   // ---- what sits under the conversation -----------------------------------------------------
 
   // The Tasks panel's Accept (ui.js), drawn here without a handler: a news line is a list row.
   acceptButton(busy) {
-    return button("accept-news", busy ? "Accepting…" : "Accept", { kind: "primary", size: "xs", disabled: Boolean(busy) });
+    return button("accept-news", busy ? "Accepting…" : "Review", { kind: "primary", size: "xs", disabled: Boolean(busy) });
   }
 
   statusLine(t, st) {
@@ -2952,9 +3171,9 @@ export default class Chat extends View {
       // What it is doing, in plain words, for how long, and Stop. The line has the composer box's
       // edges (same width and padding), so Stop's right edge is the box's.
       const secs = Math.max(0, Math.floor((Date.now() - (this.workingSince ?? Date.now())) / 1000));
-      const report = terminals().find((x) => x.address === this.addr)?.report?.msg;
-      const doing = this.stopping ? WORDS.stopping
-        : this.conv?.doing ?? (typeof report === "string" && report.trim() && !/^answer:/i.test(report) ? report.trim() : WORDS.working);
+      // (core/chat-view.js: the web app's working line says the same)
+      const report = reportMsg(terminals().find((x) => x.address === this.addr));
+      const doing = this.stopping ? WORDS.stopping : doingWords(this.conv, report) ?? WORDS.working;
       // Only waiting (hc wait, a sleep, a monitor, a helper it waits on): calm, no spinner; a
       // message wakes it (or comes in at once).
       const waiting = this.waitingNow() && !this.stopping;
@@ -3145,11 +3364,11 @@ export default class Chat extends View {
     if (!list.length) return null;
     const sel = Math.min(this.slashSel, list.length - 1);
     return v_flex().w_full().p(4).gap(1).border_b(1).border_color(t.border).children(list.map((c, i) =>
-      h_flex().id(`slash-${c.name}`).h(28).px(8).gap(10).items_center().rounded(6).cursor_pointer()
+      h_flex().id(`slash-${c.key ?? c.name}`).h(28).px(8).gap(10).items_center().rounded(6).cursor_pointer()
         .when(i === sel, (el) => el.bg(t.selected))
         .hover((s) => s.bg(t.hover))
         .on_click((_e, cx) => { cx.stop_propagation(); this.pick(c, cx); })
-        .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(c.task ? c.name : `/${c.name}`))
+        .child(div().flex_none().text_size(12.5).font_medium().text_color(t.foreground).child(c.task || c.space ? c.name : `/${c.name}`))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(c.task ? t.muted : t.dim).child(c.about))
         .when(Boolean(c.state), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(c.state)))));
   }
@@ -3483,7 +3702,7 @@ export default class Chat extends View {
       .when(rec !== "idle", (el) => el.child(this.recordingRow(t)))
       .when(rec === "idle", (el) => el.child(h_flex().h(36).pl(6).pr(6).gap(4).items_center()
         // Attach on the left, as ChatGPT and Claude have it: the desktop's file picker.
-        .child(this.round("chat-attach", "mods/chat/paperclip.svg", t, "ghost", (cx) => this.pickFiles(cx)).tooltip(WORDS.attach))
+        .child(this.round("chat-attach", "mods/chat/plus.svg", t, "ghost", (cx) => this.pickFiles(cx)))
         .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(t.blocked).child(rec === "idle" ? this.dict.error ?? "" : ""))
         .when(Boolean(this.addr), (el) => el.children(this.pickParts(t, true)))
         .when(!this.addr && this.phase === "fresh" && Boolean(this.choice?.sel) && Boolean(cx), (el) => el.child(this.freshPick(t, cx)))

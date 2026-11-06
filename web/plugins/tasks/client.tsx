@@ -1,12 +1,12 @@
 // Tasks, as Shepherdr 3's Tasks panel (mods/tasks): every task on every machine, Pinned first, then Needs you
 // (tasks and what any agent asks), then by the header's Group by (Status, Space, Machine, Machine › Space; kept on this
 // device). A filter row picks one status (All statuses, Needs you, Working, Ready, the rest under More). Each heading
-// folds what is under it away. A row says where its task is, as far as the grouping doesn't; a Ready row has Accept. A
+// folds what is under it away. A row says where its task is, as far as the grouping doesn't; a Ready row has Review. A
 // row's menu only pins it (core/menus.js taskMenu, the window's too); the Assistant does the rest. Done tasks archive
 // themselves: the Archived row at the bottom opens them.
 import clsx from 'clsx'
 import { openAccept, useAccepting } from '@client/screens/Accept.tsx'
-import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import {
   archivedIn,
   definePlugin,
@@ -27,6 +27,7 @@ import {
   splitClick,
   pinTask,
   placeOf,
+  scheduleTask,
   registry,
   setFilter,
   setGroup,
@@ -48,6 +49,7 @@ import {
   ArchivedIcon,
   BackIcon,
   CheckIcon,
+  ClockIcon,
   DownIcon,
   Empty,
   FilterBox,
@@ -57,14 +59,18 @@ import {
   Menu,
   MenuItem,
   MenuLabel,
+  MenuSeparator,
   Meta,
   MoreIcon,
   NextIcon,
   PinTaskIcon,
+  PlayIcon,
   RoundButton,
   rowClass,
   TaskDot,
   UnpinIcon,
+  XIcon,
+  field,
 } from '@client/ui.tsx'
 import { doneNewestFirst, machineName, type Automation, type Place, type Snapshot, type Task } from '@shared/types.ts'
 import { useFlip } from '@client/motion.ts'
@@ -74,7 +80,7 @@ import * as TK from '@core/tasks.js'
 import * as ND from '@core/needs.js'
 
 // the window's words for a row (core/tasks.js, core/needs.js): every second line starts with a capital and is at most
-// 40 characters, cut at a word (the whole of it on hover); an automation's next run as "9:00", "Tue 9:00", "Nov 12 9:00"
+// 40 characters, cut at a word (the whole of it in the row's label); an automation's next run as "9:00", "Tue 9:00", "Nov 12 9:00"
 const capital = TK.capital as (s: string) => string
 const fit = ND.fit as (s: string) => string
 const day = TK.day as (ms: number) => string
@@ -82,10 +88,6 @@ const REASONS = ND.REASONS as Record<string, string>
 const STATUS = TK.STATUS as Record<string, string>
 /** a task's id as its row shows it: its list's ref, without the machine ("SHEP-7"; the machine is in where it is) */
 const refOf = (id: string) => id.slice(id.lastIndexOf(':') + 1)
-
-/** the id column's width (characters): as wide as the longest id anywhere in the list, so every title lines up (the
- *  window's idWidth) */
-const IdWidth = createContext(0)
 
 /** the window's automation mark (mods/tasks/repeat.svg, lucide's repeat) */
 function RepeatIcon({ className }: { className?: string }) {
@@ -100,9 +102,8 @@ function RepeatIcon({ className }: { className?: string }) {
 }
 
 /**
- * A task, with one line under its title (taskLine). Working, its pie fills with the % done its agent reported and the minutes
- * left sit small under it. Every row shows its age (how long it has been as it is) at its end, like the rows around it;
- * waiting on you, its frozen status line stays in its chat's header.
+ * A task, with one line under its title (taskLine). Working, its pie fills with the % done its agent reported and the time
+ * left sits short under it ("2h"); Ready, Review sits at the row's end.
  */
 function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
   // the open task, or the focused pane's in split view
@@ -112,13 +113,13 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
   // task's: archived ones drop out of Pinned)
   const menu = useRowMenu()
   const busy = useAccepting(t.id) || !!t.accepting
-  // as 3.0's row (mods/tasks row()): Accept, the compact one, on a Ready row's second line; "Accepting…" while its
-  // accept runs
+  // Review (opens the Accept card) at a Ready row's end, soft as the chat header's Review: one per Ready row, so never the
+  // filled look; "Accepting…" while its accept runs
   const accept =
     t.status === 'ready' && !t.archived ? (
       <button type="button" disabled={busy} onClick={() => openAccept(t.id)}
-        className="press-dim pointer-events-auto relative z-1 h-5 shrink-0 rounded-full bg-fg px-2 text-[0.75rem] font-medium whitespace-nowrap text-bg after:absolute after:-inset-1.5 disabled:opacity-60 phone:h-7 phone:px-3 phone:text-[0.8125rem]">
-        {busy ? 'Accepting…' : 'Accept'}
+        className="press-dim pointer-events-auto relative z-1 h-6 shrink-0 rounded-full bg-bubble px-2.5 text-[0.75rem] font-medium whitespace-nowrap text-fg after:absolute after:-inset-x-1 after:-inset-y-2.5 enabled:hover:bg-sel disabled:opacity-60 phone:px-3 phone:text-[0.8125rem]">
+        {busy ? 'Accepting…' : 'Review'}
       </button>
     ) : null
   return (
@@ -131,7 +132,9 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
       ref_={refOf(t.id)}
       title={t.name}
       sub={t.sub}
-      left={t.status === 'work' && !t.archived ? t.left : undefined}
+      // Scheduled (SHEP-38): its time until it starts ("6h") in the same place, counted live, in grey
+      left={t.archived ? undefined : t.status === 'work' ? t.left : t.status === 'scheduled' && t.startsAt ? (TK.untilShort as (ms: number) => string)(t.startsAt) : undefined}
+      leftQuiet={t.status === 'scheduled'}
       dim={t.status === 'done'}
       where={where?.join(' · ')}
       action={accept}
@@ -145,75 +148,118 @@ function TaskRow({ t, ix, where }: { t: Task; ix: number; where?: string[] }) {
 }
 
 /**
- * One row, as the window's (mods/tasks line()): the glyph, the dim id in its fixed column, then the title, which owns
- * the first line. Anything else goes on a second line that starts where the title does: why it needs you or what its
- * agent does (at most 40 characters, the whole of it on hover), then at its end where it is and the button (Accept),
- * so where it is never sits under the button. A row with nothing to say under its title is one line, where it is dim
- * at its end. `meta`: a short note at the first line's end (an automation's next run). `left`: the minutes left, small
- * under the glyph. `tip`: the title's hover (an automation's error).
+ * One row, as the window's (mods/tasks line()). Three parts, each with one job:
+ * - the glyph, level with the title, and under it, level with the second line, the time left ("2h", "<1m": short, in the
+ *   working colour, centred on the glyph; wider than it, it overflows evenly, so the column and the titles never move);
+ * - the text: the title owns the first line; under it one quiet line read left to right, never pushed apart: the
+ *   task's id (dim, monospace), what it says now (why it needs you, what its agent does: at most 40 characters, the
+ *   whole of it in the row's label), then where it is after a dot, whole or not at all (it gives way first);
+ * - the end, centred on the row (in a narrow list, at the second line's end): the one thing to act on or watch:
+ *   Review or an automation's next run (`meta`).
+ * A row with nothing under its title is one line. `tip`: more for its button's label only (an automation's error).
  */
-function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, dim, meta, where, action, tip, onOpen, menu, children }: {
-  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; left?: string; dim?: boolean; meta?: string
+function Line({ flip, sel = false, kb = false, glyph, ref_, title, sub, left, leftQuiet, dim, meta, where, action, tip, onOpen, menu, children }: {
+  flip?: string; sel?: boolean; kb?: boolean; glyph: ReactNode; ref_?: string; title: string; sub?: string; left?: string; leftQuiet?: boolean; dim?: boolean; meta?: string
   where?: string; action?: ReactNode; tip?: string; onOpen?: (e: MouseEvent) => void; menu?: RowMenuState; children?: ReactNode
 }) {
-  const idCh = useContext(IdWidth)
   const said = sub ? capital(sub) : undefined
   const shown = said ? fit(said) : undefined
-  const two = !!shown || !!action
-  const place = where ? <span className="min-w-0 shrink truncate text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{where}</span> : null
-  // the id column: as wide as the longest id in the list (the second line starts under the title too)
-  const idCol = ref_ && idCh ? { width: `${idCh}ch` } : undefined
+  const two = !!(ref_ || shown || where)
+  const end = action ?? (meta ? <span className="shrink-0 text-[0.75rem] whitespace-nowrap text-fg3 tabular-nums phone:text-[0.8125rem]">{meta}</span> : null)
   return (
-    <li data-flip={flip} className={clsx(rowClass(sel, kb), 'group relative p-0! select-none [-webkit-touch-callout:none]', menu?.open && !sel && 'bg-hover')} {...(menu?.press ?? {})}>
-      {/* the whole row opens it: one button stretched under it; Accept sits over it, a button of its own */}
+    <li data-flip={flip} className={clsx(rowClass(sel, kb), 'group @container relative p-0! select-none [-webkit-touch-callout:none]', menu?.open && !sel && 'bg-hover')} {...(menu?.press ?? {})}>
+      {/* the whole row opens it: one button stretched under it; Review sits over it, a button of its own */}
       {onOpen ? (
         <button
           type="button"
           aria-current={sel || undefined}
-          aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${meta ? `, ${meta}` : ''}`}
-          title={[tip, shown !== said ? said : undefined].filter(Boolean).join(' · ') || title}
+          aria-label={`${ref_ ? `${ref_} ` : ''}${title}${said ? `, ${said}` : ''}${left ? (leftQuiet ? `, in ${left}` : `, ${left} left`) : ''}${meta ? `, ${meta}` : ''}${tip ? `, ${tip}` : ''}`}
           onClick={onOpen}
           className="absolute inset-0 cursor-pointer rounded-[inherit] outline-none keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--focus)]"
         />
       ) : null}
-      {/* what the row shows is said by its button's label: only Accept is read on its own */}
-      <div className={clsx('pointer-events-none relative flex min-h-[inherit] w-full min-w-0 gap-2.5 px-2 phone:px-3', two ? 'items-start py-1.5' : 'items-center')}>
-        <span aria-hidden className="flex w-3.5 shrink-0 flex-col items-center">
-          <span className="grid h-[18px] place-items-center phone:h-5">{glyph}</span>
-          {two && left ? <span className="mt-0.5 font-mono text-[0.6875rem]/4 font-semibold text-work-fg tabular-nums">{left}</span> : null}
-        </span>
-        <span aria-hidden={!!onOpen} className="flex min-w-0 flex-1 flex-col gap-0.5">
-          <span className="flex h-[18px] min-w-0 items-center gap-2 phone:h-5">
-            {ref_ ? <span style={idCol} className="shrink-0 font-mono text-[0.75rem] text-fg3 phone:text-[0.8125rem]">{ref_}</span> : null}
-            <span className={clsx('min-w-16 flex-auto truncate', dim ? 'text-fg2' : 'text-fg')}>{title}</span>
-            {meta ? <span className="shrink-0 pl-1 text-[0.75rem] text-fg3 tabular-nums phone:text-[0.8125rem]">{meta}</span> : null}
-            {/* one line: where it is at the end; it gives way before the title is cut */}
-            {!two && place ? <span className={clsx('flex min-w-0 shrink-[1000] justify-end', !meta && 'pl-1')}>{place}</span> : null}
+      {/* what the row shows is said by its button's label: only Review is read on its own. A grid: the glyph, the title
+          and the end on the first line (the end centred on the row); in a narrow list (a phone, a tablet's panel) the
+          end sits at the second line's end, so the title has the whole first line */}
+      <div className={clsx('pointer-events-none relative grid min-h-[inherit] w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 px-2 phone:px-3', two && 'gap-y-0.5 py-2')}>
+        <span aria-hidden className="col-start-1 row-start-1 grid h-5 w-3.5 place-items-center phone:h-6 phone:w-4">{glyph}</span>
+        {/* the time left under the glyph, as tall as the second line so it sits level with it */}
+        {two && left ? (
+          <span aria-hidden className={clsx('col-start-1 row-start-2 flex h-4 w-3.5 items-center justify-center font-mono text-[0.6875rem] font-semibold whitespace-nowrap tabular-nums @max-[24rem]:h-6 phone:h-6 phone:w-4 phone:text-[0.75rem]', leftQuiet ? 'text-fg3' : 'text-work-fg')}>{left}</span>
+        ) : null}
+        <span aria-hidden={!!onOpen} className={clsx('col-start-2 row-start-1 min-w-0 truncate text-[0.875rem]/5 phone:text-base/6', dim ? 'text-fg2' : 'text-fg', two && '@max-[24rem]:col-end-4')}>{title}</span>
+        {two ? (
+          <span aria-hidden={!!onOpen} className="col-start-2 row-start-2 flex h-4 min-w-0 @max-[24rem]:h-6 items-center gap-1.5 text-[0.75rem]/4 phone:h-6 phone:text-[0.8125rem]/5">
+            {ref_ ? <span className="shrink-0 font-mono text-[0.6875rem] text-fg3 phone:text-[0.75rem]">{ref_}</span> : null}
+            {shown ? <span className="min-w-0 shrink truncate text-fg2">{shown}</span> : null}
+            {/* where it is takes the room left after the words, whole or not at all: it drops under the line, out of
+                sight (the empty first item keeps the line its height), never a cut "shep…" */}
+            {where ? (
+              <span className="flex h-full min-w-0 flex-1 basis-0 flex-wrap content-start overflow-hidden">
+                <span className="h-full" />
+                <span className="flex h-full shrink-0 items-center gap-1.5 whitespace-nowrap text-fg3">{ref_ || shown ? <span aria-hidden>·</span> : null}{where}</span>
+              </span>
+            ) : null}
           </span>
-          {two ? (
-            <span className="flex h-5 min-w-0 items-center gap-2 phone:h-7">
-              {idCol ? <span style={idCol} className="shrink-0 font-mono text-[0.75rem] phone:text-[0.8125rem]" /> : null}
-              {shown ? <span className="min-w-0 shrink truncate text-[0.75rem] text-fg2 phone:text-[0.8125rem]">{shown}</span> : null}
-              <span className="flex min-w-0 flex-1 justify-end">{place}</span>
-              {action}
-            </span>
-          ) : null}
-        </span>
+        ) : null}
+        {end ? <span className={clsx('col-start-3 row-start-1 flex items-center', two && 'row-span-2 @max-[24rem]:row-span-1 @max-[24rem]:row-start-2')}>{end}</span> : null}
       </div>
       {children}
     </li>
   )
 }
 
-/** A task's one menu, in its row's ⋯ and its chat's, as 3.0's (core/menus.js taskMenu): Pin or Unpin */
+type MenuEntry = { id?: string; label?: string; icon?: string; heading?: string; sep?: boolean; at?: string; in?: string; typed?: boolean }
+const OTHER = MN.SCHEDULE_OTHER as { placeholder: string; label: string; button: string }
+
+/** A task's one menu, in its row's ⋯ and its chat's, as 3.0's (core/menus.js taskMenu): Pin or Unpin; a task not started
+ *  yet also Start later (SHEP-38): a few times, or one typed in herdr-task's words (Other time…), and a scheduled one
+ *  Start now and Unschedule. What herdr-task refuses (a time it doesn't know) shows under it, the menu kept open. */
 function TaskActions({ task: t, close }: { task: Task; close: () => void }) {
+  const [typing, setTyping] = useState(false)
+  const [text, setText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState(false)
+  const go = async (when: Parameters<typeof scheduleTask>[1]) => {
+    setBusy(true)
+    setError(null)
+    const r = await scheduleTask(t, when).catch((e: Error) => ({ ok: false, error: e.message }))
+    setBusy(false)
+    if (r?.ok === false) setError(r.error ?? "Couldn't schedule it.")
+    else close()
+  }
+  const items = (MN.taskMenu as (o: object) => MenuEntry[])({ pinned: !!t.pinned, status: t.archived ? null : t.status })
   return (
     <>
-      {(MN.taskMenu as (o: object) => { label: string; icon: string }[])({ pinned: !!t.pinned }).map((it) => (
-        <MenuItem key={it.label} icon={t.pinned ? <UnpinIcon className={ic} /> : <PinTaskIcon className={ic} />} onClick={() => { close(); void pinTask(t, !t.pinned).catch(() => undefined) }}>
-          {it.label}
-        </MenuItem>
-      ))}
+      {items.map((it, i) => {
+        if (it.sep) return <MenuSeparator key={`sep${i}`} />
+        if (it.heading) return <MenuLabel key={it.heading}>{t.status === 'scheduled' && t.sub ? `${it.heading} · ${capital(t.sub)}` : it.heading}</MenuLabel>
+        if (it.id === 'schedule')
+          return <MenuItem key={it.label} disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => void go(it.in ? { in: it.in } : { at: it.at })}>{it.label}</MenuItem>
+        if (it.id === 'schedule-other')
+          return typing ? (
+            <div key="other">
+            <form className="flex items-center gap-2 px-2 py-1 phone:px-3" onSubmit={(e) => { e.preventDefault(); if (text.trim()) void go({ at: text }) }}>
+              <input name="when" aria-label={OTHER.label} autoFocus placeholder={OTHER.placeholder} value={text} disabled={busy}
+                onChange={(e) => { setText(e.target.value); setError(null) }}
+                className={clsx(field, 'h-7 min-w-0 flex-1 rounded-md bg-bg px-2 text-[0.8125rem] max-sm:text-base/6 phone:h-9')} />
+              <button type="submit" disabled={busy || !text.trim()} className="press-dim h-7 shrink-0 rounded-md bg-bubble px-2.5 text-[0.75rem] font-medium text-fg enabled:hover:bg-sel disabled:opacity-40 phone:h-9 phone:px-3 phone:text-[0.8125rem]">{OTHER.button}</button>
+            </form>
+            {/* what herdr-task refused, under the field, never widening the menu */}
+            {error ? <p role="alert" className="w-0 min-w-full px-2 pb-1.5 text-[0.75rem]/4 text-need-fg phone:px-3 phone:text-[0.8125rem]/5">{error}</p> : null}
+            </div>
+          ) : (
+            <MenuItem key="other" disabled={busy} icon={<ClockIcon className={ic} />} onClick={() => setTyping(true)}>{it.label}</MenuItem>
+          )
+        if (it.id === 'start-now') return <MenuItem key="now" disabled={busy} icon={<PlayIcon className={ic} />} onClick={() => void go({ now: true })}>{it.label}</MenuItem>
+        if (it.id === 'unschedule') return <MenuItem key="off" disabled={busy} icon={<XIcon className={ic} />} onClick={() => void go({ off: true })}>{it.label}</MenuItem>
+        return (
+          <MenuItem key={it.label} icon={t.pinned ? <UnpinIcon className={ic} /> : <PinTaskIcon className={ic} />} onClick={() => { close(); void pinTask(t, !t.pinned).catch(() => undefined) }}>
+            {it.label}
+          </MenuItem>
+        )
+      })}
+      {error && !typing ? <p role="alert" className="w-0 min-w-full px-2 pt-1 pb-1.5 text-[0.75rem]/4 text-need-fg phone:px-3 phone:text-[0.8125rem]/5">{error}</p> : null}
     </>
   )
 }
@@ -239,9 +285,9 @@ function whereOf(snap: Snapshot, t: Task, names: TaskGroup['names']) {
 }
 
 /** 3.0's statuses (core/tasks.js ORDER) as the web's task statuses, and their words */
-const FILTER_STATUS: Record<string, Task['status']> = { working: 'work', merging: 'merging', ready: 'ready', queued: 'queued', todo: 'todo', done: 'done' }
-const FILTER_WORDS: Record<string, string> = { needs: 'Needs you', working: 'Working', merging: 'Merging', ready: 'Ready', queued: 'Queued', todo: 'To do', done: 'Done', automations: 'Automations' }
-const FILTER_ORDER = ['needs', 'ready', 'merging', 'working', 'queued', 'todo', 'done', 'automations']
+const FILTER_STATUS: Record<string, Task['status']> = { working: 'work', merging: 'merging', ready: 'ready', queued: 'queued', scheduled: 'scheduled', todo: 'todo', done: 'done' }
+const FILTER_WORDS: Record<string, string> = { needs: 'Needs you', working: 'Working', merging: 'Merging', ready: 'Ready', queued: 'Queued', scheduled: 'Scheduled', todo: 'To do', done: 'Done', automations: 'Automations' }
+const FILTER_ORDER = ['needs', 'ready', 'merging', 'working', 'queued', 'scheduled', 'todo', 'done', 'automations']
 /** the chips that show beside All statuses before More, as far as there is room (3.0's filterRow) */
 const PRIMARY = ['needs', 'working', 'ready']
 
@@ -357,23 +403,30 @@ function found(snap: Snapshot, t: Task, q: string) {
   return matches(q, refOf(t.id), t.name, t.sub, t.report?.msg, t.pr && `#${t.pr.number}`, t.listName, p.name, machineName(snap.machines, t.on))
 }
 
-/** what an automation's row says of where it is, as far as the grouping doesn't say it (the window's names) */
-function autoWhere(snap: Snapshot, a: Automation, names: { machine: boolean; project: boolean }) {
+/** what an automation's row says of where it is: its machine (with more than one) and space, whatever the grouping,
+ *  as the Automations group sits under no machine or space heading (core/tasks.js autoWhere) */
+function autoWhere(snap: Snapshot, a: Automation) {
   if (snap.look?.place === false) return undefined
-  const m = names.machine && a.machine && a.machine !== snap.host ? machineName(snap.machines, a.machine) || a.machine : undefined
-  return [m, names.project ? a.listName : undefined].filter(Boolean).join(' · ') || undefined
+  return (TK.autoWhere as (m: string, s?: string, multi?: boolean) => string | null)(machineName(snap.machines, a.machine || snap.host), a.listName, multiMachine(snap)) ?? undefined
+}
+
+/** an automation set off by another folder's task events (--from): by what and where ("On merges in vm-b · shepherdr") */
+function autoFrom(snap: Snapshot, a: Automation) {
+  const f = a.from
+  return f ? (TK.fromLine as (e: string[], w: string) => string)(f.events, `${machineName(snap.machines, f.machine || snap.host)} · ${f.place}`) : undefined
 }
 
 /** An automation (herdr-task auto), as the window's row (mods/tasks autoRow): its mark, its name (no id), when it runs
- *  next at the first line's end; on the second line why it won't run as planned (Didn't start, the error on the
- *  title's hover; Paused). A tap opens the task it added last. Only agents add or change automations. */
-function AutoRow({ a, where }: { a: Automation; where?: string }) {
+ *  next at the first line's end; on the second line why it won't run as planned (Didn't start, the error in its
+ *  label; Paused), else what sets it off from another folder (--from). A tap opens the task it added last. Only agents
+ *  add or change automations. */
+function AutoRow({ a, where, from }: { a: Automation; where?: string; from?: string }) {
   return (
     <Line
       glyph={<RepeatIcon className={clsx('size-3.5', a.error ? 'text-need' : 'text-fg3')} />}
       title={a.name}
       dim={!a.on}
-      sub={a.error ? "Didn't start" : !a.on ? 'Paused' : undefined}
+      sub={a.error ? "Didn't start" : !a.on ? 'Paused' : from}
       meta={a.nextAt ? day(a.nextAt) : undefined}
       where={where}
       tip={a.error}
@@ -382,18 +435,7 @@ function AutoRow({ a, where }: { a: Automation; where?: string }) {
   )
 }
 
-function TaskList(props: { placeId: string }) {
-  const snap = useSnap()!
-  // ids sit in a column as wide as the longest one anywhere here, so every title lines up (the window's idWidth)
-  const idCh = Math.max(0, ...snap.tasks.map((t) => refOf(t.id).length))
-  return (
-    <IdWidth.Provider value={idCh}>
-      <TaskListBody {...props} />
-    </IdWidth.Provider>
-  )
-}
-
-function TaskListBody(_: { placeId: string }) {
+function TaskList(_: { placeId: string }) {
   const snap = useSnap()!
   const view = useStore((s) => listView(s.ui, snap))
   const key = view.key
@@ -439,7 +481,7 @@ function TaskListBody(_: { placeId: string }) {
             <List>
               {shown.map((t, i) => <TaskRow key={t.id} t={t} ix={i} where={whereOf(snap, t, names)} />)}
               {filter === 'needs' ? asks.map((n) => <AgentNeedRow key={n.id} n={n} listKey={key} />) : null}
-              {filter === 'automations' ? autos.map((a) => <AutoRow key={`${a.machine ?? ''}:${a.listName}:${a.name}`} a={a} where={autoWhere(snap, a, names)} />) : null}
+              {filter === 'automations' ? autos.map((a) => <AutoRow key={`${a.machine ?? ''}:${a.listName}:${a.name}`} a={a} where={autoWhere(snap, a)} from={autoFrom(snap, a)} />) : null}
             </List>
           ) : <Empty className="pt-3 text-fg3">No {what} match “{q}”.</Empty>}
         </div>
@@ -469,7 +511,7 @@ function TaskListBody(_: { placeId: string }) {
       <GroupHeading label="Automations" count={autos.length} flip="group:automations" fold={q ? undefined : { shut: autoShut, toggle: () => toggleShut(key, 'automations') }} />
       {autoShut ? null : (
         <List>
-          {autos.map((a) => <AutoRow key={`${a.machine ?? ''}:${a.listName}:${a.name}`} a={a} where={autoWhere(snap, a, names)} />)}
+          {autos.map((a) => <AutoRow key={`${a.machine ?? ''}:${a.listName}:${a.name}`} a={a} where={autoWhere(snap, a)} from={autoFrom(snap, a)} />)}
         </List>
       )}
     </div>
@@ -555,10 +597,11 @@ function FoldHeading({ name, fold, flip, className, children, count }: { name: s
     <>
       {fold ? <Icon aria-hidden className={clsx(ic, '-mx-px text-fg3 group-hover/h:text-fg phone:mx-0')} /> : <span aria-hidden className={clsx(ic, '-mx-px phone:mx-0')} />}
       {children}
-      {count ? <span className="ml-auto shrink-0 text-[0.75rem] font-medium text-fg3 tabular-nums phone:text-[0.875rem]">{count}</span> : null}
+      {/* its count right by its name ("Ready 2"), not across the panel */}
+      {count ? <span className="shrink-0 text-[0.75rem] text-fg3 tabular-nums phone:text-[0.875rem]">{count}</span> : null}
     </>
   )
-  const look = 'flex min-h-9 w-full items-center gap-2 rounded-row px-2 text-left phone:min-h-11 phone:px-3'
+  const look = 'flex min-h-8 w-full items-center gap-3 rounded-row px-2 text-left phone:min-h-11 phone:px-3'
   return (
     <div data-flip={flip} data-heading={name} className={clsx('px-1.5 phone:px-2', className)}>
       {fold ? (
@@ -580,8 +623,8 @@ function FoldHeading({ name, fold, flip, className, children, count }: { name: s
 /** A group's label (Working, Done, a space): folds its tasks away, and its Show all with them */
 function GroupHeading({ label, note, count, flip, fold }: { label: string; note?: string; count: number; flip?: string; fold?: Fold }) {
   return (
-    <FoldHeading name={label} fold={fold} flip={flip} count={count} className="pt-1">
-      <span className="min-w-0 truncate text-[0.75rem] font-medium text-fg3 phone:text-[0.875rem]">
+    <FoldHeading name={label} fold={fold} flip={flip} count={count} className="pt-3">
+      <span className="min-w-0 truncate text-[0.75rem] font-medium text-fg2 phone:text-[0.875rem]">
         {label}
         {/* by space on All machines, the machine it is on */}
         {note ? <span className="font-normal opacity-75"> · {note}</span> : null}
