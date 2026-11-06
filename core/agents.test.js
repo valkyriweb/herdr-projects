@@ -119,6 +119,10 @@ test("a provider/model id typed is offered to the kinds that take one, not Claud
   const withAmp = { ...all, amp: menuFor("amp", {}) };
   for (const q of ["clawrouter/gpt-7-nova", "gpt-7-nova"])
     expect(modelSections(withAmp, "amp", null, q).find((x) => x.key === "typed").rows.some((r) => r.agent === "amp")).toBe(false);
+  // nor one saved earlier: amp keeps its default row only
+  const saved = { pinned: ["amp:"], recent: ["amp:gpt-7-nova"] };
+  for (const q of ["", "gpt-7-nova"])
+    expect(modelSections(withAmp, "amp", saved, q).flatMap((s) => s.rows).filter((r) => r.agent === "amp").map((r) => r.id)).toEqual(q ? [] : [""]);
 });
 
 test("the star pins a known kind's model, and the other kinds' default row", () => {

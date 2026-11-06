@@ -267,7 +267,7 @@ export function modelSections(menus, agent, picks, q) {
   const saved = (k) => {
     const models = menus?.[k]?.models ?? [], known = new Set(models.map((m) => m.id));
     const ids = [...new Set([...picks.pinned, ...picks.recent].filter((x) => x.startsWith(`${k}:`)).map((x) => x.slice(k.length + 1)))];
-    return [...models, ...ids.filter((id) => !known.has(id)).map((id) => ({ ...typedModel(k, id), typed: false }))];
+    return [...models, ...ids.filter((id) => !known.has(id) && takesModel(k)).map((id) => ({ ...typedModel(k, id), typed: false }))];
   };
   const capped = (key, title, k, rows) => ({ key, title, agent: k, rows: rows.slice(0, CAP), more: Math.max(0, rows.length - CAP) });
   if (!query) {
