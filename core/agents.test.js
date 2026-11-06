@@ -115,6 +115,19 @@ test("a provider/model id typed is offered to the kinds that take one, not Claud
   const all = { ...menus, pi: menuFor("pi", {}) };
   const t = modelSections(all, "pi", null, "clawrouter/gpt-7-nova").find((x) => x.key === "typed");
   expect(t.rows.map((r) => r.agent)).toEqual(["pi"]);
+  // amp takes no model: no typed row for it, whatever is typed
+  const withAmp = { ...all, amp: menuFor("amp", {}) };
+  for (const q of ["clawrouter/gpt-7-nova", "gpt-7-nova"])
+    expect(modelSections(withAmp, "amp", null, q).find((x) => x.key === "typed").rows.some((r) => r.agent === "amp")).toBe(false);
+});
+
+test("the star pins a known kind's model, and the other kinds' default row", () => {
+  expect(A.pinnable("pi", "clawrouter/gpt-6-luna")).toBe(true);
+  expect(A.pinnable("grok", "")).toBe(true);
+  expect(A.pinnable("claude", "")).toBe(false);
+  expect(A.pinnable("nope", "x")).toBe(false);
+  expect(A.pinnable("codex", "gpt 6; rm")).toBe(false);
+  expect(menuFor("grok", {}).models[0].id).toBe("");
 });
 
 test("an exact id typed needs no extra row; picks survive bad files", () => {

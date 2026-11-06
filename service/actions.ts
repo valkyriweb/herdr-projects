@@ -278,7 +278,7 @@ export async function act(hub: Hub, b: any, compat: Compat): Promise<unknown> {
     if (r.code !== 0) throw new Error((r.stderr || r.stdout).trim().split("\n").pop() || "Autopilot didn't change.");
     return { ok: true };
   }
-  if (b?.type === "model-pin" && compat.agents && ((AGa as any).AGENTS as string[]).includes(b.agent) && typeof b.model === "string" && /^[\w.\[\]\/-]{1,80}$/.test(b.model)) {
+  if (b?.type === "model-pin" && compat.agents && (AGa as any).pinnable(b?.agent, b?.model)) {
     // the model menu's star: pinned to the top of its agent's list (core/agents.js PICKS_FILE, as the window's)
     return { ok: true, picks: (compat.agents as any).pin(b.agent, b.model) };
   }

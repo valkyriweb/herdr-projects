@@ -238,6 +238,14 @@ export function modelMatches(m, q) {
   return String(q ?? "").toLowerCase().split(/[^a-z0-9.\[\]]+/).filter(Boolean).every((w) => hay.includes(w));
 }
 
+// Whether a kind is started on a model it is given (amp has no model flag: its default row only).
+const takesModel = (k) => k === "claude" || k === "codex" || Boolean(KINDS[k]?.model);
+// A model the menu's star may pin: a known kind and a model id ("" is the other kinds' default row).
+export function pinnable(agent, model) {
+  if (!AGENTS.includes(agent) || typeof model !== "string") return false;
+  return model === "" ? agent !== "claude" && agent !== "codex" : /^[\w.\[\]\/-]{1,80}$/.test(model);
+}
+
 // The model list as the picker shows it: sections of rows, at most CAP rows each (`more` counts the rest).
 // Nothing typed: the agent shown (`agent`), its pinned models, then its recent ones, then all the rest in the
 // CLI's order. Typed: every agent's matches, an agent to a section (its pinned and recent first), and, for one
@@ -285,7 +293,7 @@ export function modelSections(menus, agent, picks, q) {
   // provider/model ids (pi's --model clawrouter/…) only for the kinds other than Claude Code and Codex
   if (/^[\w.\[\]\/-]{2,80}$/.test(query)) {
     const rows = [agent, ...Object.keys(menus ?? {}).filter((x) => x !== agent)]
-      .filter((k) => menus?.[k] && !saved(k).some((m) => m.id === query) && (!query.includes("/") || (k !== "claude" && k !== "codex"))).map((k) => ({ agent: k, ...typedModel(k, query), pinned: false }));
+      .filter((k) => menus?.[k] && takesModel(k) && !saved(k).some((m) => m.id === query) && (!query.includes("/") || (k !== "claude" && k !== "codex"))).map((k) => ({ agent: k, ...typedModel(k, query), pinned: false }));
     if (rows.length) out.push({ key: "typed", title: "Use the id typed", agent, rows, more: 0 });
   }
   return out;
