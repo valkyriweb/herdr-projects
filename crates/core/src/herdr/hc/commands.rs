@@ -74,7 +74,7 @@ pub fn call(a: &[String]) -> HRes<Value> {
         ("agent", "send-keys") => {
             let p = places::get(id)?;
             let keys = &a[3..];
-            if keys.len() == 1 && ["ctrl-c", "esc"].contains(&keys[0].replace('+', "-").as_str()) { raw("hc", &args(&["interrupt", p.s("target")]))?; }
+            if keys.len() == 1 && super::keys::interrupt(&keys[0]) { raw("hc", &args(&["interrupt", p.s("target")]))?; }
             else { let mut k = args(&["keys", p.s("target")]); k.extend_from_slice(keys); raw("hc", &k)?; }
             Ok(json!({}))
         }

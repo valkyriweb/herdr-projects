@@ -1,6 +1,7 @@
 //! Opt-in herdr-core runtime: stable board places, hc terminals and Herdr app spaces.
 pub mod places;
 mod commands;
+mod keys;
 mod programs;
 use super::cli::{HRes, HerdrError, Ran};
 use crate::json::*;

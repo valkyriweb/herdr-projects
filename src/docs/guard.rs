@@ -7,6 +7,8 @@ pub const MAX_LINES: usize = 300;
 const KEYS_FILE: &str = "crates/flow/src/board/keys.rs";
 /// The text box's own editing keys (the chords every text box has) are its own table.
 const BOX_KEYS: &str = "crates/board/src/board/textbox/keys.rs";
+/// Fixed terminal control sequences belong to the transport, not the configurable board key table.
+const HC_KEYS: &str = "crates/core/src/herdr/hc/keys.rs";
 /// The one test program: every file in tests/ is a module of it.
 const TESTS_MAIN: &str = "tests/main.rs";
 /// A file made by a script (herdr's palette) is as long as what it is made from.
@@ -23,7 +25,7 @@ pub fn problems() -> Vec<String> {
     }
     // A key's chord is written in crates/flow/src/board/keys.rs and nowhere else, so that changing a key is one edit.
     let chord = crate::re!(r#""(ctrl|alt|shift)\+[a-z]"#);
-    for f in files.iter().filter(|f| (f.starts_with("src/") || f.starts_with("crates/")) && f.ends_with(".rs") && *f != KEYS_FILE && *f != BOX_KEYS) {
+    for f in files.iter().filter(|f| (f.starts_with("src/") || f.starts_with("crates/")) && f.ends_with(".rs") && *f != KEYS_FILE && *f != BOX_KEYS && *f != HC_KEYS) {
         let mut in_tests = false;
         for (n, l) in super::read(f).lines().enumerate() {
             if l.contains("#[cfg(test)]") { in_tests = true; }
