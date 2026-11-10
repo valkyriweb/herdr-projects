@@ -7,6 +7,7 @@ pub mod board;
 pub mod endings;
 pub mod fixtures;
 pub mod gh;
+pub mod hc;
 pub mod herdr;
 pub mod opener;
 pub mod panes;

@@ -12,7 +12,6 @@ use super::who::{choice_of, OFF_WORDS};
 use crate::agents::{adapter, installed, start, start_failed};
 use crate::clock::now;
 use crate::err::Res;
-use crate::herdr::cli::socket_exists;
 use crate::herdr::Herdr;
 use crate::json::*;
 use crate::store::files::marker;
@@ -24,7 +23,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::status_words::COORDINATOR_UNSENT as UNSENT;
-fn up(socket: &str) -> bool { crate::herdr::cli::fake().is_some() || socket_exists(socket) }
+fn up(co: &Co) -> bool { super::state::available(co) }
 fn mine(c: &Obj) -> bool { c.at("pump").i("pid") == std::process::id() as i64 }
 fn said_in(co: &Co, mark: &Value, text: &str) -> Option<bool> {
     let c = get(co)?;
@@ -36,7 +35,7 @@ fn look_typed(co: &Co, c: &Obj) {
     let was = mark.clone();
     let text = mark.t("text");
     let m2 = mark.clone();
-    let r = look(&Herdr::new(Some(co.socket.clone())), c.s("pane"), &mut mark, Some(&|| said_in(co, &m2, &text)));
+    let r = look(&super::state::api(co), c.s("pane"), &mut mark, Some(&|| said_in(co, &m2, &text)));
     let done = matches!(r, "took" | "unknown" | "lost");
     if done || mark != was {
         let (at, typed_at) = (c.at("typed").at("at").clone(), c.at("typed").at("typedAt").clone());
@@ -47,10 +46,10 @@ pub fn tick(co: impl Into<Co>) {
     let co = &co.into();
     let mut c = get(co);
     // Still in the space of its own from before it lived in a tab: moved over as it is, whatever it is doing.
-    if let Some(x) = &c { if x.b("workspace") && up(&co.socket) && !pumping(x) && due(&co.mark("coordinator-move"), 60000) { let _ = move_over(&Herdr::new(Some(co.socket.clone())), co, true); c = get(co); } }
-    if let Some(x) = &c { if x.b("typed") && x.b("pane") && up(&co.socket) && !(pumping(x) && !mine(x)) { look_typed(co, x); } }
+    if let Some(x) = &c { if x.b("workspace") && up(co) && !pumping(x) && due(&co.mark("coordinator-move"), 60000) { let _ = move_over(&super::state::api(co), co, true); c = get(co); } }
+    if let Some(x) = &c { if x.b("typed") && x.b("pane") && up(co) && !(pumping(x) && !mine(x)) { look_typed(co, x); } }
     let Some(c) = c else { return };
-    if (c.arr("queue").is_empty() && !c.b("want")) || (pumping(&c) && !mine(&c)) || !up(&co.socket) { return; }
+    if (c.arr("queue").is_empty() && !c.b("want")) || (pumping(&c) && !mine(&c)) || !up(co) { return; }
     if c.b("stopped") && !c.b("want") { return; } // stopped stays stopped, also with words still waiting
     if c.b("error") && !c.b("want") { return; } // a start that failed is not tried again by itself
     if due(&co.mark("coordinator"), 3000) { kick(co); }
@@ -70,8 +69,8 @@ pub fn active(co: impl Into<Co>, c: &Obj) -> Option<String> {
 }
 /// The conversation herdr's integration names for the Coordinator's pane, if any.
 fn told_session(co: &Co, c: &Obj) -> Option<String> {
-    if !c.b("pane") || !up(&co.socket) { return None; }
-    let a = Herdr::new(Some(co.socket.clone())).agent_get(c.s("pane")).ok().flatten()?;
+    if !c.b("pane") || !up(co) { return None; }
+    let a = super::state::api(co).agent_get(c.s("pane")).ok().flatten()?;
     Some(a.at("agent_session").t("value")).filter(|s| !s.is_empty())
 }
 fn ensure(api: &Herdr, co: &Co) -> Res<(Obj, bool)> {
@@ -142,7 +141,7 @@ pub fn pump(co: impl Into<Co>) {
     if more { kick(co); } // asked for while this one ran
 }
 fn run_pump(co: &Co, taken: &mut HashSet<String>) -> Res<()> {
-    let api = Herdr::new(Some(co.socket.clone()));
+    let api = super::state::api(co);
     for _ in 0..50 {
         let mut c = get(co).unwrap_or_default();
         if let Some(w) = c.o("want").cloned() {

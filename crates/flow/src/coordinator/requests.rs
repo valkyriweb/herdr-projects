@@ -8,7 +8,6 @@ use super::who::{choice, OFF_WORDS};
 use crate::board::keys::key_name;
 use crate::clock::now;
 use crate::err::Res;
-use crate::herdr::Herdr;
 use crate::json::*;
 use crate::store::marks::tilde;
 use crate::store::repos::repo_of;
@@ -39,12 +38,11 @@ pub fn where_text(co: impl Into<Co>) -> String {
 /// every message it may still have ahead of it was sent with the start key).
 pub fn tab_turn(pane: &str, socket: &str) -> bool { super::state::all(socket).iter().any(|co| tab_turn_of(pane, co)) }
 fn tab_turn_of(pane: &str, co: &Co) -> bool {
-    let socket = co.socket.as_str();
     let Some(c) = get(co) else { return false };
     if pane.is_empty() || (c.s("pane") != pane && c.s("paneWas") != pane) || !c.at("mark").b("rest") || c.at("mark").i("run") != c.i("startedAt") { return false; }
     let open: Vec<&Value> = c.arr("where").iter().filter(|x| x.b("sentAt") && !x.b("handled")).collect();
     if open.is_empty() || !open.iter().all(|x| x.b("delegate")) { return false; }
-    Herdr::new(Some(socket.to_string())).agent_get(c.s("pane")).ok().flatten().map(|a| crate::herdr::turns::same_turn(&a, c.at("mark").at("seq"))).unwrap_or(false)
+    super::state::api(co).agent_get(c.s("pane")).ok().flatten().map(|a| crate::herdr::turns::same_turn(&a, c.at("mark").at("seq"))).unwrap_or(false)
 }
 /// The Coordinator's own folder (or one inside it) is never where the human is working, nor the machine coordinator's.
 pub fn in_home(dir: &Path, socket: &str) -> bool {
@@ -57,8 +55,8 @@ pub fn kick(co: impl Into<Co>) {
     if crate::runner::inline() { crate::runner::JOBS.with(|j| j.borrow_mut().push(("coordinator".into(), key, vec![]))); return; }
     crate::housekeeping::spawn_loose(&["run", "coordinator", &key]);
 }
-fn herdr_up(socket: &str) -> Res<()> {
-    if crate::herdr::cli::fake().is_none() && !crate::herdr::cli::socket_exists(socket) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
+fn herdr_up(co: &Co) -> Res<()> {
+    if !super::state::available(co) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
     Ok(())
 }
 /// Say something to the Coordinator. It is started (or started again, in the same conversation) when it is not there.
@@ -69,7 +67,7 @@ pub fn send(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Into<C
 /// queued all the same and the answer is an error that says so (not_delivered).
 pub fn send_as(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Into<Co>, sender: Value) -> Res<Obj> {
     let co = co.into();
-    herdr_up(&co.socket)?;
+    herdr_up(&co)?;
     let root = known(&co)?;
     let ctx = context(root.as_deref().unwrap_or(cwd), delegate, about)?;
     let text = &crate::autopilot::wake::escape(text);
@@ -81,7 +79,7 @@ pub fn send_as(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Int
         true
     })?;
     // Where this process cannot run herdr, neither can the pump it would start: the message is kept, and said to wait.
-    if !crate::herdr::cli::found() { crate::fail!("{}", not_delivered(&co.name())); }
+    if !crate::herdr::hc::is_socket(Some(&super::state::api(&co).socket_path())) && !crate::herdr::cli::found() { crate::fail!("{}", not_delivered(&co.name())); }
     kick(&co);
     Ok(c)
 }
@@ -99,7 +97,7 @@ fn known(co: &Co) -> Res<Option<std::path::PathBuf>> {
 /// restart: the same conversation, the program started again. new: a fresh conversation, on the default or on `pick`.
 /// stop: close it; the next message starts it again where it left off. open: have it running, with nothing said.
 fn want(what: &str, pick: Option<Obj>, co: Co) -> Res<Obj> {
-    herdr_up(&co.socket)?;
+    herdr_up(&co)?;
     known(&co)?;
     if what != "stop" && pick.is_none() && !get(&co).map(|c| c.b("run")).unwrap_or(false) && choice().is_none() { crate::fail!("{OFF_WORDS}"); }
     let c = change(&co, |c| {
