@@ -19,9 +19,10 @@ fn changing_runtime_keeps_classic_and_hc_tasks_actionable_in_one_board() {
     assert_eq!(task(&classic).s("stage"), "stopped");
     delegate(&classic); settle(&classic);
     assert_eq!(task(&classic).at("link").s("socket"), w.socket);
+    w.script(json!({ "worker": [{ "status": "working" }, { "status": "working" }] }));
     let hc_task = w.add("New runtime"); delegate(&hc_task); let h = settle(&hc_task);
     assert_eq!(h.at("link").s("socket"), hc::SOCKET);
-    assert!(h.b("startedOnce"), "hc delegation did not start: {h:?}\n{}", core.text());
+    assert!(h.b("startedOnce") && h.at("link").b("pane"), "hc delegation did not start: {h:?}\n{}", core.text());
     runtime("classic");
     sw::actions::talk::tell(&hc_task, "Keep going on hc", false).unwrap();
     assert!(!row(&hc_task).at("live").b("away"));

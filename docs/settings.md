@@ -16,8 +16,8 @@ means, is in [the list](#the-list) below.
 ## Two kinds of setting
 
 - **Work settings**: who works, where, how it is checked, how it lands. They can be set for a task, a repo, or you.
-- **Board settings**: the board itself, the Coordinator, the Watcher (everything under `board.`, `coordinator.` and
-  `watcher.`). They are yours only. Setting one on a task or for a repo is refused, and the answer says how to set it for
+- **Board settings**: the board itself, the Coordinator, the Watcher (`agents.runtime` and everything under `board.`,
+  `coordinator.` and `watcher.`). They are yours only. Setting one on a task or for a repo is refused, and the answer says how to set it for
   yourself.
 
 One setting is neither: `repo.key`, a fact about one repo.

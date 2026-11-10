@@ -55,14 +55,14 @@ pub fn kick(co: impl Into<Co>) {
     if crate::runner::inline() { crate::runner::JOBS.with(|j| j.borrow_mut().push(("coordinator".into(), key, vec![]))); return; }
     crate::housekeeping::spawn_loose(&["run", "coordinator", &key]);
 }
-fn herdr_up(socket: &str) -> Res<()> {
-    if !super::state::available(socket) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
+fn herdr_up(co: &Co) -> Res<()> {
+    if !super::state::available(co) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
     Ok(())
 }
 /// Say something to the Coordinator. It is started (or started again, in the same conversation) when it is not there.
 pub fn send(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Into<Co>) -> Res<Obj> {
     let co = co.into();
-    herdr_up(&co.socket)?;
+    herdr_up(&co)?;
     let root = known(&co)?;
     let ctx = context(root.as_deref().unwrap_or(cwd), delegate, about)?;
     let c = change(&co, |c| {
@@ -82,7 +82,7 @@ fn known(co: &Co) -> Res<Option<std::path::PathBuf>> {
 /// restart: the same conversation, the program started again. new: a fresh conversation, on the default or on `pick`.
 /// stop: close it; the next message starts it again where it left off. open: have it running, with nothing said.
 fn want(what: &str, pick: Option<Obj>, co: Co) -> Res<Obj> {
-    herdr_up(&co.socket)?;
+    herdr_up(&co)?;
     known(&co)?;
     if what != "stop" && pick.is_none() && !get(&co).map(|c| c.b("run")).unwrap_or(false) && choice().is_none() { crate::fail!("{OFF_WORDS}"); }
     let c = change(&co, |c| {
