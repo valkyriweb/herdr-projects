@@ -38,3 +38,16 @@ jobs:
           GIT_COMMITTER_NAME: ci
           GIT_COMMITTER_EMAIL: ci@example.com
         run: npm run check plan-sandbox plan-steps detached-jobs home-folder-more finish-commit warm-start take-over-more coordinator-levels board-coordinators-inks
+
+      - name: Explicit warm-start names and results (three baseline repetitions)
+        if: always()
+        env:
+          HERDR_PROJECTS_TESTING: "1"
+          HERDR_PROJECTS_HOME: ${{ runner.temp }}/baseline-board
+        run: |
+          result=0
+          for round in 1 2 3; do
+            echo "BASELINE WARM-START ROUND $round"
+            cargo test --profile quick --test main warm_start:: -- --test-threads=1 || result=1
+          done
+          exit "$result"
