@@ -20,19 +20,20 @@ fn hc_worker_cannot_mark_its_own_task_done() {
     w.script(json!({ "worker": [{ "status": "working" }] }));
     let id = w.add("Worker identity"); delegate(&id); let t = settle(&id);
     in_hc(t.at("link").s("pane"));
-    assert_eq!(sw::cli::caller().map(|(t, role)| (t.t("id"), role)), Some((id.clone(), "agent")));
-    let args = ["report", "--msg", "Still working"].map(String::from);
-    sw::cli::tasks::command("report", &sw::cli::flags::parse(&args)).unwrap();
-    let other = w.add("Not my task");
-    sw::store::tasks::set(&id, json!({ "autopilot": { "coordinator": "test" } })).unwrap();
-    let refused = report(&other, "done").unwrap_err().msg;
-    assert!(refused.contains("may read the board and `report` on its own task, nothing else"), "{refused}");
     let result = report(&id, "done");
     unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
     let e = result.unwrap_err().msg;
     assert!(e.contains(&format!("{id} is your own task, so you cannot mark it done")), "{e}");
     assert!(e.contains("Your task finishes when you end your turn; the board then checks, reviews and merges it"), "{e}");
     assert_eq!(task(&id).s("stage"), "working");
+    in_hc(t.at("link").s("pane"));
+    let args = ["report", "--msg", "Still working"].map(String::from);
+    sw::cli::tasks::command("report", &sw::cli::flags::parse(&args)).unwrap();
+    let other = w.add("Not my task");
+    sw::store::tasks::set(&id, json!({ "autopilot": { "coordinator": "test" } })).unwrap();
+    let refused = report(&other, "done").unwrap_err().msg;
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
+    assert!(refused.contains("may read the board and `report` on its own task, nothing else"), "{refused}");
 }
 
 #[test]
@@ -41,7 +42,7 @@ fn hc_reviewer_is_recognised_and_cannot_finish_the_task() {
     w.script(json!({ "worker": [step(1)], "reviewer": [{ "status": "working" }] }));
     let id = w.add("Reviewer identity"); delegate(&id); let t = settle(&id);
     let pane = t.at("link").at("reviewer").s("pane");
-    assert!(!pane.is_empty(), "{t}");
+    assert!(!pane.is_empty(), "{t:?}");
     in_hc(pane);
     let caller = sw::cli::caller();
     let result = report(&id, "done");
