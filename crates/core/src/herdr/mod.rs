@@ -2,6 +2,7 @@
 //! command line (cli.rs, api.rs), a start tried again until its shell is at its prompt (shell_ready.rs), its socket
 //! (socket.rs), and which processes in a pane are an agent's own helpers (procs.rs).
 pub mod api;
+pub mod hc;
 pub mod cli;
 pub mod keys;
 pub mod palette;

@@ -2,6 +2,7 @@
 //! so cargo compiles and links the tests once. A new test file is a new line here (the guard fails a file left out).
 //! What the files share is declared once, at the top. Running one area alone: `npm run check board-panel`.
 mod common;
+mod hc_runtime;
 mod far;
 mod move_home;
 mod review_kit;
