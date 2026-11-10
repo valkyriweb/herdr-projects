@@ -28,6 +28,10 @@ pub fn housekeeping(socket: &str, force: Force) {
     crate::runner::outside::start_asked(); // jobs asked for from inside a plan writer's sandbox, started out here
     if force == Force::No && !due(&format!("housekeep-{}", key(socket)), 2000) { return; }
     once::once(&key(socket), force, |f| pass(socket, f));
+    // hc agents live on no herdr session's socket, and every caller passes its herdr session: that pass also gives
+    // hc-linked tasks theirs (reconcile, the second enter for a lost first prompt, queued starts), rate-limited alike.
+    let hc = crate::herdr::hc::SOCKET;
+    if socket != hc && list(ListOpts::default()).iter().any(|t| t.at("link").s("socket") == hc && !t.b("archivedAt")) { housekeeping(hc, force); }
 }
 fn pass(socket: &str, force: Force) {
     // What an older version kept of suggested tasks is written down and taken off the tasks, once (store/old_suggestions.rs).
