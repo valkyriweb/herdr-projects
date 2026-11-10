@@ -10,6 +10,7 @@ fn git(root: &str, a: &[&str]) -> HRes<String> {
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 fn worktree(a: &[String]) -> HRes<Value> {
+    super::json("hc", &args(&["ls", "--all", "--json"]))?;
     let root = flag(a, "--cwd");
     let (cwd, branch) = if at(a, 1) == "create" {
         let branch = flag(a, "--branch");
@@ -73,7 +74,7 @@ pub fn call(a: &[String]) -> HRes<Value> {
         ("agent", "send-keys") => {
             let p = places::get(id)?;
             let keys = &a[3..];
-            if keys == ["ctrl+c"] || keys == ["ctrl-c"] || keys == ["esc"] { raw("hc", &args(&["interrupt", p.s("target")]))?; }
+            if keys.len() == 1 && ["ctrl-c", "esc"].contains(&keys[0].replace('+', "-").as_str()) { raw("hc", &args(&["interrupt", p.s("target")]))?; }
             else { let mut k = args(&["keys", p.s("target")]); k.extend_from_slice(keys); raw("hc", &k)?; }
             Ok(json!({}))
         }

@@ -7,6 +7,10 @@ pub struct Core {
     pub calls: RefCell<Vec<Vec<String>>>,
     targets: RefCell<HashMap<String, String>>,
     pub app: RefCell<bool>,
+    pub spaces: RefCell<Value>,
+    pub get_override: RefCell<Option<Value>>,
+    pub kill_lag: std::cell::Cell<u32>,
+    pending_kills: RefCell<HashMap<String, u32>>,
     old_path: std::ffi::OsString,
 }
 pub struct Installed(Rc<Core>);
@@ -23,7 +27,7 @@ impl Core {
         }
         let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old_path))).unwrap();
         unsafe { std::env::set_var("PATH", path); }
-        let core = Rc::new(Self { engine: w.fake.clone(), calls: RefCell::new(vec![]), targets: RefCell::new(HashMap::new()), app: RefCell::new(true), old_path });
+        let core = Rc::new(Self { engine: w.fake.clone(), calls: RefCell::new(vec![]), targets: RefCell::new(HashMap::new()), app: RefCell::new(true), spaces: RefCell::new(json!([{ "id": "sp-project", "name": "Custom cockpit", "folder": w.root_str() }])), get_override: RefCell::new(None), kill_lag: std::cell::Cell::new(0), pending_kills: RefCell::new(HashMap::new()), old_path });
         hc::set_fake(Some(core.clone())); Installed(core)
     }
     pub fn uninstall(&self) { hc::set_fake(None); unsafe { std::env::set_var("PATH", &self.old_path); } }
@@ -37,13 +41,14 @@ impl hc::Fake for Core {
         let mut call = vec![program.into()]; call.extend_from_slice(a); self.calls.borrow_mut().push(call);
         let flag = |name: &str| a.iter().position(|s| s == name).and_then(|i| a.get(i+1)).cloned().unwrap_or_default();
         if program == "herdr-app" {
-            return if *self.app.borrow() { Self::value(json!({ "spaces": [{ "id": "sp-project", "name": "proj" }] })) }
+            return if *self.app.borrow() { Self::value(json!({ "spaces": self.spaces.borrow().clone() })) }
                 else { Ran { status: 1, stdout: String::new(), stderr: "app not running".into() } };
         }
         let target = a.get(1).map(String::as_str).unwrap_or("");
         match a.first().map(String::as_str).unwrap_or("") {
             "ls" => Self::value(json!([])),
             "run" => {
+                assert!(a.iter().any(|s| s == "--json"), "hc run defaults to text, even when piped");
                 let name = flag("--name"); let cwd = flag("--cwd");
                 let made = { let mut st = self.engine.st.borrow_mut(); FakeHerdr::new_workspace(&mut st, &cwd, Some(&name), Value::Null) };
                 let pane = made.at("root_pane").t("pane_id");
@@ -58,22 +63,32 @@ impl hc::Fake for Core {
                 Self::value(json!({ "address": name }))
             }
             "get" => {
+                if let Some(v) = self.get_override.borrow().as_ref() { return Self::value(v.clone()); }
                 let pane = self.pane(target);
+                if let Some(n) = self.pending_kills.borrow_mut().get_mut(target) {
+                    if *n == 0 { for p in self.engine.st.borrow_mut()["panes"].as_array_mut().unwrap() { if p.s("pane_id") == pane { p["agent"] = Value::Null; } } }
+                    else { *n -= 1; }
+                }
                 let r = self.answer(&args(&["agent", "get", &pane]));
                 let j: Value = serde_json::from_str(&r.stdout).unwrap_or(Value::Null);
                 let agent = j.at("result").at("agent");
-                Self::value(json!({ "address": target, "state": if agent.is_null() { "exited" } else { "live" }, "status": { "state": agent.at("agent_status"), "app": agent.at("agent") }, "status_ms": agent.at("state_change_seq"), "turn": agent.at("completion_seq") }))
+                Self::value(json!({ "address": target, "state": if agent.is_null() { "finished" } else { "live" }, "status": if agent.is_null() { Value::Null } else { json!({ "state": agent.at("agent_status"), "app": agent.at("agent") }) }, "status_ms": 1_790_000_000_000i64 + agent.i("state_change_seq"), "turn": agent.i("completion_seq") }))
             }
             "send" => self.answer(&args(&["agent", "prompt", &self.pane(target), &a[2]])),
             "keys" => { let mut k = args(&["agent", "send-keys", &self.pane(target)]); k.extend_from_slice(&a[2..]); self.answer(&k) }
             "interrupt" => self.answer(&args(&["agent", "send-keys", &self.pane(target), "ctrl+c"])),
             "kill" => {
                 let id = self.pane(target);
-                for p in self.engine.st.borrow_mut()["panes"].as_array_mut().unwrap() { if p.s("pane_id") == id { p["agent"] = Value::Null; } }
+                if self.kill_lag.get() > 0 { self.pending_kills.borrow_mut().insert(target.into(), self.kill_lag.get()); }
+                else { for p in self.engine.st.borrow_mut()["panes"].as_array_mut().unwrap() { if p.s("pane_id") == id { p["agent"] = Value::Null; } } }
                 Self::value(json!({}))
             }
             "keep" => Self::value(json!({})),
-            "rm" => { self.targets.borrow_mut().remove(target); Self::value(json!({})) }
+            "rm" => {
+                let id = self.pane(target);
+                assert!(!self.engine.st.borrow().arr("panes").iter().any(|p| p.s("pane_id") == id && p.at("agent").is_object()), "hc rm only accepts finished terminals");
+                self.pending_kills.borrow_mut().remove(target); self.targets.borrow_mut().remove(target); Self::value(json!({}))
+            }
             "read" => self.answer(&args(&["pane", "read", &self.pane(target), "--source", "visible"])),
             _ => panic!("unmapped fake hc operation {a:?}"),
         }

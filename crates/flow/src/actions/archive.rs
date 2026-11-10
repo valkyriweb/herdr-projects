@@ -2,7 +2,7 @@
 use super::talk::stop;
 use crate::err::{Error, Res};
 use crate::flow;
-use crate::herdr::{cli::current_socket, Herdr};
+use crate::herdr::Herdr;
 use crate::json::*;
 use crate::runner::runner_alive;
 use crate::store::files::{marker, with_task_lock, SLOT_STAGES};
@@ -24,7 +24,7 @@ pub fn archive(id: &str) -> Res<Task> {
         if t.at("link").b("workspace") && t.at("link").b("ownsWorkspace") { workspace = t.at("link").t("workspace"); socket = t.at("link").t("socket"); }
         Ok(Change::Write)
     })?;
-    if !workspace.is_empty() && socket == current_socket() {
+    if !workspace.is_empty() && crate::herdr::hc::local(&socket) {
         let h = Herdr::new(Some(socket));
         let _ = h.workspace_close(&workspace);
         flow::spaces::close_repo_space(&h, &folder_of(t.s("id")));

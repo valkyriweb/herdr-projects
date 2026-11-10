@@ -30,7 +30,6 @@ pub fn bin() -> String { std::env::var("HERDR_BIN_PATH").ok().filter(|s| !s.is_e
 fn config_home() -> PathBuf { std::env::var("XDG_CONFIG_HOME").ok().filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| crate::store::files::user_home().join(".config")) }
 /// The session a plain command talks to: the pane it runs in, else the default session.
 pub fn current_socket() -> String {
-    if super::hc::selected() { return super::hc::SOCKET.into(); }
     if let Ok(s) = std::env::var("HERDR_SOCKET_PATH") { if !s.is_empty() { return s; } }
     let base = config_home().join("herdr");
     match std::env::var("HERDR_SESSION") { Ok(s) if !s.is_empty() => base.join("sessions").join(s).join("herdr.sock"), _ => base.join("herdr.sock") }.display().to_string()

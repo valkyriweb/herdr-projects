@@ -12,12 +12,22 @@ pub trait Fake { fn run(&self, program: &str, args: &[String]) -> Ran; }
 thread_local! { static FAKE: RefCell<Option<Rc<dyn Fake>>> = const { RefCell::new(None) }; }
 pub fn set_fake(f: Option<Rc<dyn Fake>>) { FAKE.with(|x| *x.borrow_mut() = f); }
 pub fn selected() -> bool { crate::store::settings::lookup::setting_text("agents.runtime", None) == "hc" }
-pub fn is_socket(socket: Option<&str>) -> bool { socket.map(|s| s == SOCKET).unwrap_or_else(selected) }
+pub fn launch_socket() -> String { if selected() { SOCKET.into() } else { super::cli::current_socket() } }
+pub fn is_socket(socket: Option<&str>) -> bool { socket == Some(SOCKET) }
+/// Both runtimes live on this machine, but another classic session remains separate.
+pub fn local(socket: &str) -> bool { socket == SOCKET || socket == super::cli::current_socket() }
 pub fn error(code: &str, message: impl Into<String>) -> HerdrError { HerdrError { code: code.into(), message: message.into() } }
 pub fn raw(program: &str, args: &[String]) -> HRes<String> {
     let fake = FAKE.with(|x| x.borrow().clone());
     let r = if let Some(f) = fake { f.run(program, args) } else {
-        let bin = if program == "hc" { std::env::var("HC_BIN_PATH").unwrap_or_else(|_| "hc".into()) } else { program.into() };
+        let bin = if program == "hc" {
+            std::env::var("HC_BIN_PATH").ok().filter(|s| !s.is_empty()).map(Ok).unwrap_or_else(|| {
+                programs::executable("hc").or_else(|_| {
+                    let p = crate::store::files::user_home().join(".local/bin/hc");
+                    if p.is_file() { Ok(p.display().to_string()) } else { Err(error("hc_missing", "hc is not installed: put hc on PATH or set HC_BIN_PATH")) }
+                })
+            })?
+        } else { program.into() };
         let child = Command::new(bin).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| error("spawn_failed", format!("{program}: {e}")))?;
         super::cli::wait_with_timeout(child, 60000)?
     };

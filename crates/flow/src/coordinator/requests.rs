@@ -8,7 +8,6 @@ use super::who::{choice, OFF_WORDS};
 use crate::board::keys::key_name;
 use crate::clock::now;
 use crate::err::Res;
-use crate::herdr::Herdr;
 use crate::json::*;
 use crate::store::marks::tilde;
 use crate::store::repos::repo_of;
@@ -39,12 +38,11 @@ pub fn where_text(co: impl Into<Co>) -> String {
 /// every message it may still have ahead of it was sent with tab).
 pub fn tab_turn(pane: &str, socket: &str) -> bool { super::state::all(socket).iter().any(|co| tab_turn_of(pane, co)) }
 fn tab_turn_of(pane: &str, co: &Co) -> bool {
-    let socket = co.socket.as_str();
     let Some(c) = get(co) else { return false };
     if pane.is_empty() || (c.s("pane") != pane && c.s("paneWas") != pane) || !c.at("mark").b("rest") || c.at("mark").i("run") != c.i("startedAt") { return false; }
     let open: Vec<&Value> = c.arr("where").iter().filter(|x| x.b("sentAt") && !x.b("handled")).collect();
     if open.is_empty() || !open.iter().all(|x| x.b("delegate")) { return false; }
-    Herdr::new(Some(socket.to_string())).agent_get(c.s("pane")).ok().flatten().map(|a| *a.at("completion_seq") == *c.at("mark").at("seq")).unwrap_or(false)
+    super::state::api(co).agent_get(c.s("pane")).ok().flatten().map(|a| *a.at("completion_seq") == *c.at("mark").at("seq")).unwrap_or(false)
 }
 /// The Coordinator's own folder (or one inside it) is never where the human is working, nor the machine coordinator's.
 pub fn in_home(dir: &Path, socket: &str) -> bool {
@@ -58,7 +56,7 @@ pub fn kick(co: impl Into<Co>) {
     crate::housekeeping::spawn_loose(&["run", "coordinator", &key]);
 }
 fn herdr_up(socket: &str) -> Res<()> {
-    if crate::herdr::cli::fake().is_none() && !crate::herdr::cli::socket_exists(socket) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
+    if !super::state::available(socket) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
     Ok(())
 }
 /// Say something to the Coordinator. It is started (or started again, in the same conversation) when it is not there.

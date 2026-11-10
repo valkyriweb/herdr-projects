@@ -3,6 +3,8 @@
 //! What the files share is declared once, at the top. Running one area alone: `npm run check board-panel`.
 mod common;
 mod hc_runtime;
+mod hc_runtime_coordinator;
+mod hc_runtime_mixed;
 mod far;
 mod move_home;
 mod review_kit;

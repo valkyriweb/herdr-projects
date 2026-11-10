@@ -19,8 +19,8 @@ fn hc_turn_end_fires_the_review_and_keeps_durable_task_mapping() {
     assert_eq!(api.agent_get(pane).unwrap().unwrap().s("name"), t.at("link").s("agent"));
     assert!(core.text().contains("--label herdr.space=sp-project"));
     assert!(core.text().contains(&format!("--label herdr-projects.task={id}")));
-    assert!(core.text().contains("hc run --bg --no-parent --keep"));
-    assert!(core.text().contains("hc keys sw-proj-1 enter"));
+    assert!(core.text().contains("hc run --json --bg --no-parent --keep"));
+    assert!(!core.text().contains("hc keys sw-proj-1 enter"), "a fast completed turn must not get a second submit");
     assert!(core.text().contains("--name sw-proj-1-r"), "{}", core.text());
     assert!(core.text().contains("hc rm sw-proj-1-r"), "reviewer closes after its verdict");
     assert!(!calls(&w).iter().any(|c| c.starts_with("worktree create")), "the hc backend creates worktrees through git, not classic herdr");
@@ -47,7 +47,11 @@ fn hc_submits_a_boot_time_paste_and_stop_interrupts_the_agent() {
     sw::actions::talk::stop(&id).unwrap();
     assert_eq!(task(&id).s("stage"), "stopped");
     assert!(core.text().contains("hc interrupt sw-proj-1"));
+    assert!(core.text().contains("hc keys sw-proj-1 enter"), "a swallowed boot-time paste gets exactly its missing submit");
+    sw::clock::set(Some(sw::clock::now()));
+    core.kill_lag.set(1);
     assert!(api.pane_quit(pane, 0));
+    api.workspace_close(t.at("link").s("workspace")).unwrap();
     assert!(api.agent_get(pane).unwrap().is_none());
 }
 

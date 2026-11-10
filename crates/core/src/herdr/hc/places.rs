@@ -19,7 +19,12 @@ pub fn workspace(w: &Value) -> Value { json!({ "workspace_id": w.at("id"), "labe
 pub fn tab(p: &Value) -> Value { json!({ "tab_id": p.at("id"), "workspace_id": p.at("workspace"), "label": p.at("label") }) }
 fn app_space(root: &str) -> String {
     let name = Path::new(root).file_name().unwrap_or_default().to_string_lossy().into_owned();
-    let find = |v: &Value| v.arr("spaces").iter().find(|s| s.s("name") == name).map(|s| s.t("id"));
+    let find = |v: &Value| {
+        let same_folder = |s: &&Value| std::fs::canonicalize(s.s("folder")).ok().zip(std::fs::canonicalize(root).ok()).map(|(a,b)| a == b).unwrap_or_else(|| s.s("folder") == root);
+        v.arr("spaces").iter().find(same_folder)
+            .or_else(|| v.arr("spaces").iter().find(|s| s.s("name") == name && s.s("folder").is_empty()))
+            .map(|s| s.t("id"))
+    };
     let result = (|| -> HRes<String> {
         // Serialize only the app's lookup/create pair, not the board's agent launches.
         let _guard = crate::store::files::hold_lock("hc-app-space", 10000).map_err(|e| error("lock_failed", e.msg))?;
@@ -35,6 +40,7 @@ fn app_space(root: &str) -> String {
     })
 }
 pub fn create(root: &str, cwd: &str, label: &str, env: Vec<String>, worktree: Value) -> HRes<Value> {
+    run_json("hc", &args(&["ls", "--all", "--json"]))?;
     let id = new_id();
     let w = json!({ "id": id, "type": "workspace", "cwd": cwd, "root": root, "label": label, "space": app_space(root), "worktree": worktree });
     save(&w)?;
@@ -51,10 +57,7 @@ pub fn close(id: &str) -> HRes<Value> {
     let v = get(id)?;
     if v.s("type") == "workspace" {
         for p in all().iter().filter(|p| p.s("workspace") == id) { close(p.s("id"))?; }
-    } else if v.b("started") {
-        super::programs::kill(id)?;
-        super::raw("hc", &args(&["rm", v.s("target")]))?;
-    }
+    } else if v.b("started") { super::programs::remove(id)?; }
     forget(id)?;
     Ok(json!({}))
 }
