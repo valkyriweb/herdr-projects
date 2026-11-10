@@ -74,7 +74,8 @@ fn hc_first_status_of_a_starting_program_is_not_taken_for_the_prompt() {
     }
     let t = task(&id);
     assert_eq!(core.text().matches("hc keys sw-proj-1 enter").count(), 1, "the lost enter is pressed again, once: {}", core.text());
-    assert_eq!(t.s("stage"), "approval", "{} {}", t.s("msg"), t.at("failure"));
+    let a = agent_of(&w, t.at("link").s("pane"));
+    assert_eq!(t.s("stage"), "approval", "msg={} failure={} sent={} unconfirmed={} agent={} calls:\n{}", t.s("msg"), t.at("failure"), t.at("sent"), t.at("unconfirmed"), a, core.text());
 }
 
 #[test]
