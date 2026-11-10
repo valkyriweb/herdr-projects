@@ -3,6 +3,81 @@ use crate::common::{self, *};
 use sw::{herdr::{hc, Herdr}, json::*};
 fn world_hc() -> World { world_with(Opts { repo: true, settings: json!({ "agents.runtime": "hc", "worker.agent": "claude", "reviewer.agent": "codex" }), ..Default::default() }) }
 
+fn in_hc(pane: &str) {
+    unsafe {
+        std::env::remove_var("HERDR_PANE_ID");
+        std::env::set_var("HERDR_PROJECTS_PANE", pane);
+    }
+}
+fn report(id: &str, state: &str) -> sw::err::Res<(Value, String)> {
+    let argv = vec!["report".into(), id.into(), "--state".into(), state.into()];
+    sw::cli::tasks::command("report", &sw::cli::flags::parse(&argv))
+}
+
+#[test]
+fn hc_worker_cannot_mark_its_own_task_done() {
+    let w = world_hc(); let _core = common::hc::Core::install(&w);
+    w.script(json!({ "worker": [{ "status": "working" }] }));
+    let id = w.add("Worker identity"); delegate(&id); let t = settle(&id);
+    in_hc(t.at("link").s("pane"));
+    let result = report(&id, "done");
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
+    let e = result.unwrap_err().msg;
+    assert!(e.contains(&format!("{id} is your own task, so you cannot mark it done")), "{e}");
+    assert!(e.contains("Your task finishes when you end your turn; the board then checks, reviews and merges it"), "{e}");
+    assert_eq!(task(&id).s("stage"), "working");
+    in_hc(t.at("link").s("pane"));
+    let args = ["report", "--state", "blocked", "--msg", "Need an answer"].map(String::from);
+    sw::cli::tasks::command("report", &sw::cli::flags::parse(&args)).unwrap();
+    let other = w.add("Not my task");
+    sw::store::tasks::set(&id, json!({ "autopilot": { "coordinator": "test" } })).unwrap();
+    let refused = report(&other, "done").unwrap_err().msg;
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
+    assert!(refused.contains("may read the board and `report` on its own task, nothing else"), "{refused}");
+}
+
+#[test]
+fn hc_reviewer_is_recognised_and_cannot_finish_the_task() {
+    let w = world_hc(); let _core = common::hc::Core::install(&w);
+    w.script(json!({ "worker": [{ "status": "working" }] }));
+    let id = w.add("Reviewer identity"); delegate(&id); let t = settle(&id);
+    let api = sw::flow::task::h(&t);
+    let made = sw::flow::tabs::open_reviewer_tab(&api, &t, 1, "", t.s("worktree"), &[], None).unwrap();
+    let reviewer = json!({ "pane": made.pane, "tab": made.tab, "terminal": made.terminal, "agent": "identity-r", "kind": "codex" });
+    sw::store::tasks::update(&id, |t| { t.obj_mut("link").put("reviewer", reviewer.clone()); Ok(sw::store::tasks::Change::Write) }).unwrap();
+    api.agent_start("identity-r", "codex", reviewer.s("pane"), &[], 30000).unwrap();
+    in_hc(reviewer.s("pane"));
+    let caller = sw::cli::caller();
+    let result = report(&id, "done");
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
+    assert_eq!(caller.map(|(t, role)| (t.t("id"), role)), Some((id.clone(), "reviewer")));
+    assert!(result.unwrap_err().msg.contains("is the task you review, so you cannot mark it done"));
+}
+
+#[test]
+fn hc_task_can_still_be_finished_by_a_non_task_caller() {
+    let w = world_hc(); let _core = common::hc::Core::install(&w);
+    w.script(json!({ "worker": [{ "status": "working" }] }));
+    let id = w.add("Human identity"); delegate(&id); settle(&id);
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); std::env::remove_var("HERDR_PANE_ID"); }
+    assert!(sw::cli::caller().is_none());
+    report(&id, "done").unwrap();
+    assert_eq!(task(&id).s("stage"), "done");
+}
+
+#[test]
+fn classic_caller_identity_takes_precedence_over_hc() {
+    let w = world_hc();
+    in_hc("hc-other");
+    unsafe { std::env::set_var("HERDR_PANE_ID", "classic-pane"); }
+    assert_eq!(sw::herdr::cli::caller_place(), Some(("classic-pane".into(), w.socket.clone())));
+    unsafe { std::env::remove_var("HERDR_SOCKET_PATH"); }
+    assert!(sw::herdr::cli::caller_place().is_none(), "a classic pane without a socket must not become an hc caller");
+    unsafe { std::env::set_var("HERDR_PANE_ID", ""); std::env::set_var("HERDR_SOCKET_PATH", &w.socket); }
+    assert!(sw::herdr::cli::caller_place().is_none(), "an explicitly empty classic pane must stay a non-task caller");
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); std::env::remove_var("HERDR_PANE_ID"); std::env::set_var("HERDR_SOCKET_PATH", &w.socket); }
+}
+
 #[test]
 fn hc_turn_end_fires_the_review_and_keeps_durable_task_mapping() {
     let w = world_hc(); let core = common::hc::Core::install(&w);
@@ -20,6 +95,7 @@ fn hc_turn_end_fires_the_review_and_keeps_durable_task_mapping() {
     assert!(core.text().contains("--label herdr.space=sp-project"));
     assert!(core.text().contains(&format!("--label herdr-projects.task={id}")));
     assert!(core.text().contains("hc run --json --bg --no-parent --keep"));
+    assert!(core.text().contains(&format!("HERDR_PROJECTS_PANE={pane}")));
     assert!(!core.text().contains("hc keys sw-proj-1 enter"), "a fast completed turn must not get a second submit");
     assert!(core.text().contains("--name sw-proj-1-r"), "{}", core.text());
     assert!(core.text().contains("hc rm sw-proj-1-r"), "reviewer closes after its verdict");
