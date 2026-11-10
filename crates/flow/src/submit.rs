@@ -56,7 +56,9 @@ fn at_rest(a: &Value) -> bool { a.is_object() && !working(a) }
 /// What herdr says of an agent just before text is typed into it. `busy`: herdr saw it work when the text was typed.
 pub fn mark_of(a: Option<&Value>) -> Option<Value> {
     let a = a?;
-    Some(json!({ "at": now(), "seq": a.at("state_change_seq"), "comp": a.at("completion_seq"), "term": a.at("terminal_id"), "tries": 0, "busy": working(a) }))
+    let mut m = json!({ "at": now(), "seq": a.at("state_change_seq"), "comp": a.at("completion_seq"), "term": a.at("terminal_id"), "tries": 0, "busy": working(a) });
+    if a.b("status_unknown") { m["unread"] = json!(true); }
+    Some(m)
 }
 /// A mark taken anew once a busy agent comes to rest: only the words in its saved conversation prove that they went in.
 pub fn rest(mark: &Value, a: &Value) -> Value {
@@ -99,6 +101,9 @@ pub fn took(mark: &Value, a: Option<&Value>, said: Option<bool>) -> Option<bool>
     if mark.b("busy") { return None; }
     if mark.b("term") && a.b("terminal_id") && a.at("terminal_id") != mark.at("term") { return None; } // herdr restarted
     if said == Some(true) || working(a) { return Some(true); }
+    // hc: typed while the program had no status yet. Its first resting status is the program coming up, not the
+    // prompt: only a finished turn (or the saved conversation, above) proves it took the text.
+    if mark.b("unread") && !a.b("status_unknown") && a.at("completion_seq") == mark.at("comp") { return Some(false); }
     Some(a.at("state_change_seq") != mark.at("seq") || a.at("completion_seq") != mark.at("comp"))
 }
 /// One look at a prompt typed a while ago, for a sender that keeps the mark itself (the reviewer, the Coordinator):

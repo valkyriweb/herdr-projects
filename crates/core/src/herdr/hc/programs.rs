@@ -28,7 +28,10 @@ pub fn agent(id: &str) -> HRes<Option<Value>> {
     if t.s("state") == "finished" || state == "exited" || (t.at("status").is_null() && shell) { return Ok(None); }
     let mut a = places::pane(&p);
     a["name"] = p.at("name").clone(); a["agent"] = p.at("kind").clone();
-    a["agent_status"] = json!(if ["working", "idle", "done", "blocked"].contains(&state) { state } else { "unknown" });
+    let known = ["working", "idle", "done", "blocked"].contains(&state);
+    a["agent_status"] = json!(if known { state } else { "unknown" });
+    // A program still starting has no hc status yet. Its first status is not news about a prompt (submit::took).
+    if !known { a["status_unknown"] = json!(true); }
     a["state_change_seq"] = t.at("status_ms").clone();
     if t.i("turn") > 0 { a["completion_seq"] = json!(format!("{}:{}", t.s("address"), t.i("turn"))); }
     if t.at("foreground").b("cwd") { a["foreground_cwd"] = t.at("foreground").at("cwd").clone(); }

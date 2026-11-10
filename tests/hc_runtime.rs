@@ -56,6 +56,29 @@ fn hc_submits_a_boot_time_paste_and_stop_interrupts_the_agent() {
 }
 
 #[test]
+fn hc_first_status_of_a_starting_program_is_not_taken_for_the_prompt() {
+    // Seen on pi 1.5.1: the board typed the brief while hc had no status for the new program yet; the enter was lost,
+    // and the program's first resting status moved status_ms, which read as "it took the text". It sat with the brief
+    // in its box until someone pressed enter.
+    let w = world_hc(); let core = common::hc::Core::install(&w);
+    unsafe { std::env::set_var("HERDR_PROJECTS_READY_MS", "0"); std::env::set_var("HERDR_PROJECTS_SUBMIT_MS", "0"); }
+    core.unread.set(1);
+    w.patch(|s| s["swallow"] = json!(1));
+    w.script(json!({ "worker": [step(1)] }));
+    let id = w.add("Starting slowly"); delegate(&id);
+    settle(&id);
+    // The board's housekeeping looks again at what it typed; the first resting status must not end that look.
+    for _ in 0..10 {
+        sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes); settle(&id);
+        if task(&id).s("stage") != "working" { break; }
+    }
+    let t = task(&id);
+    assert_eq!(core.text().matches("hc keys sw-proj-1 enter").count(), 1, "the lost enter is pressed again, once: {}", core.text());
+    let a = agent_of(&w, t.at("link").s("pane"));
+    assert_eq!(t.s("stage"), "approval", "msg={} failure={} sent={} unconfirmed={} agent={} calls:\n{}", t.s("msg"), t.at("failure"), t.at("sent"), t.at("unconfirmed"), a, core.text());
+}
+
+#[test]
 fn hc_starts_without_the_app_and_classic_links_do_not_switch_runtime() {
     let w = world_hc(); let core = common::hc::Core::install(&w);
     // A missing folder cannot be canonicalized, but a trailing slash must not create a second app space.
