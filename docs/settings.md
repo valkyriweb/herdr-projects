@@ -16,8 +16,8 @@ means, is in [the list](#the-list) below.
 ## Two kinds of setting
 
 - **Work settings**: who works, where, how it is checked, how it lands. They can be set for a task, a repo, or you.
-- **Board settings**: the board itself, the Coordinator, the Watcher (everything under `board.`, `coordinator.` and
-  `watcher.`). They are yours only. Setting one on a task or for a repo is refused, and the answer says how to set it for
+- **Board settings**: the board itself, the Coordinator, the Watcher (`agents.runtime` and everything under `board.`,
+  `coordinator.` and `watcher.`). They are yours only. Setting one on a task or for a repo is refused, and the answer says how to set it for
   yourself.
 
 One setting is neither: `repo.key`, a fact about one repo.
@@ -119,6 +119,7 @@ herdr-projects delegate <id> --reviewer.agent claude --merge.by itself
 <!-- made:settings Made by `herdr-projects docs` from crates/core/src/store/settings_list.rs. Do not edit between these two lines. -->
 | Setting | Built in | Can be said by | Means |
 |---|---|---|---|
+| `agents.runtime` | `classic` | you only | where new board agents run: `classic` in herdr panes, or `hc` in herdr-core terminals shown in the Herdr app. Existing task links keep their runtime. hc requires the hc program on PATH; the app is optional ([hc runtime](hc-runtime.md)) |
 | `worker.agent` | `claude` | task, repo entry, you | the working agent's program: one of `claude`, `codex`, `pi`, `agy`, `copilot`, `cursor`, `devin`, `droid`, `grok`, `hermes`, `kilo`, `kimi`, `letta`, `mastracode`, `omp`, `opencode`, `qodercli`, `qwen`, with an optional model after a slash (`codex/gpt-6.1-sol`, `agy/gemini-3-pro`). The model travels with the program, so one program's model is never handed to another; a name the program does not take is refused with the ones it does (`herdr-projects models` lists them, [models](models.md)). A program that cannot do this role, or take a model or an effort, is refused with the reason ([agents](agents.md)) |
 | `worker.effort` | `default` | task, repo entry, you | the working agent's effort level: one its program accepts (checked against `worker.agent`), or `default` for the program's own |
 | `worker.fast` | `false` | task, repo entry, you | the working agent in its program's fast mode: a faster service tier that uses more of your allowance. Only Codex has one; for another program it does nothing, and `show` says so |

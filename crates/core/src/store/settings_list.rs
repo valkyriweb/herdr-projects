@@ -55,6 +55,7 @@ pub static SETTINGS: LazyLock<Vec<Entry>> = LazyLock::new(|| {
     use Kind::*;
     let mut s = vec![];
     // who works, who reviews, who you talk to
+    s.push(e("agents.runtime", "Agent runtime", Board, Ty::Choice, json!("classic"), "where new board agents run: `classic` in herdr panes, or `hc` in herdr-core terminals shown in the Herdr app. Existing task links keep their runtime. hc requires the hc program on PATH; the app is optional ([hc runtime](hc-runtime.md))").values(&["classic", "hc"]));
     s.extend(role("worker", "the working agent", "claude", false, Work));
     s.push(e("worker.fallback", "Agent's fallback", Work, Ty::Agents, json!("none"), "who takes over when the working agent cannot go on: a list of agents tried in order (`codex, claude/claude-opus-5-5`; a model after a slash, as in `worker.agent`), or `none`. It takes over in the same worktree, with the task, what was done so far and the open findings, when the agent's provider is down (after the board's own tries), the agent is out of allowance or logged out, or its work still fails the review or the check after `review.rounds` rounds. With the list used up the task waits for you. Nobody extra runs until then. More: [the fallback agent](fallback.md)"));
     s.extend(role("reviewer", "the reviewer", "codex", true, Work));

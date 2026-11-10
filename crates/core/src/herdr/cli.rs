@@ -35,12 +35,13 @@ pub fn current_socket() -> String {
     match std::env::var("HERDR_SESSION") { Ok(s) if !s.is_empty() => base.join("sessions").join(s).join("herdr.sock"), _ => base.join("herdr.sock") }.display().to_string()
 }
 pub fn session_name(socket: &str) -> String {
+    if socket == super::hc::SOCKET { return "hc".into(); }
     let parts: Vec<&str> = socket.split('/').collect();
     let n = parts.len();
     if n >= 3 && parts[n - 1] == "herdr.sock" && parts[n - 3] == "sessions" { parts[n - 2].to_string() } else { "default".into() }
 }
 pub fn in_herdr() -> bool { std::env::var("HERDR_ENV").as_deref() == Ok("1") }
-pub fn socket_exists(socket: &str) -> bool { use std::os::unix::fs::FileTypeExt; std::fs::metadata(socket).map(|m| m.file_type().is_socket()).unwrap_or(false) }
+pub fn socket_exists(socket: &str) -> bool { if socket == super::hc::SOCKET { return true; } use std::os::unix::fs::FileTypeExt; std::fs::metadata(socket).map(|m| m.file_type().is_socket()).unwrap_or(false) }
 
 /// Runs the program: what it gave, or why it could not be run. `timeout_ms` ends a program that takes longer.
 pub fn launch(socket: Option<&str>, args: &[String], input: &str, timeout_ms: u64) -> HRes<Ran> {
@@ -78,6 +79,7 @@ pub fn wait_with_timeout(mut child: std::process::Child, timeout_ms: u64) -> HRe
 }
 /// One command: its JSON result, or the error herdr gave.
 pub fn run(socket: Option<&str>, args: &[String], timeout_ms: u64, input: &str) -> HRes<Value> {
+    if super::hc::is_socket(socket) { return super::hc::call(args); }
     let r = launch(socket, args, input, timeout_ms)?;
     if r.status != 0 {
         let (mut code, mut message) = ("failed".to_string(), if r.stderr.trim().is_empty() { r.stdout.trim().to_string() } else { r.stderr.trim().to_string() });
@@ -101,6 +103,7 @@ pub fn run(socket: Option<&str>, args: &[String], timeout_ms: u64, input: &str) 
 }
 /// One command's raw output.
 pub fn run_raw(socket: Option<&str>, args: &[String], timeout_ms: u64, input: &str) -> HRes<String> {
+    if super::hc::is_socket(socket) { return super::hc::read(args); }
     let r = launch(socket, args, input, timeout_ms)?;
     if r.status != 0 { return Err(herr("failed", if r.stderr.trim().is_empty() { r.stdout.trim().to_string() } else { r.stderr.trim().to_string() })); }
     Ok(r.stdout)

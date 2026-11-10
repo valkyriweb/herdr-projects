@@ -82,6 +82,7 @@ impl Herdr {
     fn process_info(&self, id: &str) -> Option<Value> { self.call(args(&["pane", "process-info", "--pane", id])).ok().map(|r| r.at("process_info").clone()) }
     /// Is nothing but its shell running in the pane? Unknown counts as busy.
     pub fn pane_idle(&self, id: &str) -> bool {
+        if super::hc::is_socket(self.socket.as_deref()) { return self.agent_get(id).map(|a| a.is_none()).unwrap_or(false); }
         let Some(i) = self.process_info(id) else { return false };
         let shell = i.at("shell_pid");
         if !crate::gate::is_int(shell) { return false; }
@@ -97,6 +98,7 @@ impl Herdr {
     /// other process under the group is a command it left running. A job of the pane's shell (typed in the pane, a
     /// child of the shell and not of the agent) counts whatever runs.
     pub fn pane_childless(&self, id: &str, agent: &str) -> bool {
+        if super::hc::is_socket(self.socket.as_deref()) { return super::hc::at_rest(id); }
         let Some(i) = self.process_info(id) else { return false };
         let procs: Vec<&Value> = i.arr("foreground_processes").iter().filter(|p| crate::gate::is_int(p.at("pid"))).collect();
         let front: Vec<i64> = procs.iter().map(|p| p.i("pid")).collect();
@@ -122,6 +124,7 @@ impl Herdr {
     pub fn pane_run(&self, id: &str, command: &str) -> HRes<Value> { self.when_at_prompt(id, || self.call(args(&["pane", "run", id, command]))) }
     /// End the program in the pane's foreground, so the pane is at its shell again. True once herdr sees no agent there.
     pub fn pane_quit(&self, id: &str, wait_ms: i64) -> bool {
+        if super::hc::is_socket(self.socket.as_deref()) { return super::hc::quit(id); }
         let gone = || matches!(self.agent_get(id), Ok(None));
         let info = self.process_info(id);
         let shell = info.as_ref().map(|i| i.i("shell_pid")).unwrap_or(-1);
@@ -157,6 +160,7 @@ impl Herdr {
     /// A program herdr sees at work only through its own integration is never started without it (kinds.rs
     /// `needs_integration`): herdr would never say its turn ended. Its status unknown (an older herdr): it is started.
     pub fn integration_ready(&self, kind: &str) -> HRes<()> {
+        if super::hc::is_socket(self.socket.as_deref()) { return Ok(()); }
         let Some(k) = crate::agents::kinds::kind(kind).filter(|k| k.needs_integration) else { return Ok(()) };
         let status = run_raw(self.socket.as_deref(), &args(&["integration", "status"]), 15000, "").unwrap_or_default();
         let line = status.lines().find(|l| l.trim_start().starts_with(&format!("{}:", k.integration)) || l.trim_start().starts_with(&format!("{} (", k.integration)));

@@ -4,7 +4,6 @@ use crate::after::{self, Wait};
 use crate::clock::now;
 use crate::err::Res;
 use crate::flow;
-use crate::herdr::cli::current_socket;
 use crate::json::*;
 use crate::research::{turn_refusal, RESEARCH};
 use crate::runner::{runner_alive, spawn_runner};
@@ -77,7 +76,7 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
     let deps = match &w.after { Some(r) => Some(after::checked(Some(cur.s("id")), r)?), None => None };
     let asked: Vec<(String, Value)> = asked.into_iter().filter(|(_, v)| !(v.is_null() || *v == json!(""))).collect();
     let values = checked(&asked, &Scope::task(&cur))?;
-    let socket = current_socket();
+    let socket = if cur.at("link").b("socket") { cur.at("link").t("socket") } else { crate::herdr::hc::launch_socket() };
     let mut stale: Vec<Task> = vec![];
     let mut old: Option<(String, String)> = None; // the last round's space, when its clean-up had not closed it yet
     let t = update(cur.s("id"), |t| {
@@ -87,7 +86,7 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
         if t.s("stage") == "pick" { crate::fail!("{id} waits for you to pick one of its attempts: herdr-projects pick {id} <letter>."); }
         if is_agent_stage(t.s("stage")) || runner_alive(t) { crate::fail!("{id} already has an agent working on it."); }
         if t.b("autoMerge") { crate::fail!("{id} is waiting for an automatic merge. Reply to its agent to cancel that first."); }
-        if t.at("link").b("socket") && t.at("link").s("socket") != socket { crate::fail!("{id} lives in another herdr session. Open the board there."); }
+        if t.at("link").b("socket") && !crate::herdr::hc::local(t.at("link").s("socket")) { crate::fail!("{id} lives in another herdr session. Open the board there."); }
         if !values.is_empty() { let s = t.obj_mut("settings"); for (k, v) in &values { s.insert(k.clone(), v.clone()); } }
         if values.get("merge.by") == Some(&json!("itself")) { t.put("requireApproval", false); }
         let owns = |t: &Task| (t.at("link").b("workspace") && t.at("link").b("ownsWorkspace")).then(|| (t.at("link").t("socket"), t.at("link").t("workspace")));
