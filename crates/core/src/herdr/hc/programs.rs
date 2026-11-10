@@ -49,7 +49,8 @@ pub fn start(id: &str, name: &str, kind: &str, extra: &[String]) -> HRes<Value> 
     // One stable app tab per board place. The app creates the tab for this label; no focus changes.
     a.extend(args(&["--label", &format!("herdr.tab={id}"), "--label", &format!("where={} / {name}", Path::new(p.s("root")).file_name().unwrap_or_default().to_string_lossy())]));
     if let Some(t) = task { a.extend(args(&["--label", &format!("herdr-projects.task={}", t.s("id"))])); }
-    a.extend(args(&["--", "/usr/bin/env"])); a.extend(strings(p.at("env"))); a.push(program); a.extend_from_slice(extra);
+    a.extend(args(&["--", "/usr/bin/env"])); a.extend(strings(p.at("env")));
+    a.push(format!("HERDR_PROJECTS_PANE={id}")); a.push(program); a.extend_from_slice(extra);
     // Save the launch intent first so a board crash cannot orphan a successfully started terminal.
     p["started"] = json!(true); p["running"] = json!(true); p["kind"] = json!(kind); p["name"] = json!(name);
     places::save(&p)?;

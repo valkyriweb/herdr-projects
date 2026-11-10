@@ -41,6 +41,14 @@ pub fn current_socket() -> String {
     let base = config_home().join("herdr");
     match std::env::var("HERDR_SESSION") { Ok(s) if !s.is_empty() => base.join("sessions").join(s).join("herdr.sock"), _ => base.join("herdr.sock") }.display().to_string()
 }
+/// The board caller's place and transport, without changing classic commands' default socket.
+/// A classic pane always takes precedence; hc supplies only its board-owned place id.
+pub fn caller_place() -> Option<(String, String)> {
+    if let Some(pane) = crate::util::env_val("HERDR_PANE_ID") {
+        return Some((pane, crate::util::env_val("HERDR_SOCKET_PATH")?));
+    }
+    Some((crate::util::env_val("HERDR_PROJECTS_PANE")?, super::hc::SOCKET.into()))
+}
 pub fn session_name(socket: &str) -> String {
     if socket == super::hc::SOCKET { return "hc".into(); }
     let parts: Vec<&str> = socket.split('/').collect();

@@ -16,7 +16,7 @@ pub fn coordinator_of(pane: &str, socket: &str) -> Option<Co> {
 /// The caller's coordinator: the one whose pane runs this command.
 pub fn caller() -> Option<Co> {
     if crate::util::env_set("HERDR_PLUGIN_ID") { return None; }
-    let (pane, socket) = (crate::util::env_val("HERDR_PANE_ID")?, crate::util::env_val("HERDR_SOCKET_PATH")?);
+    let (pane, socket) = crate::herdr::cli::caller_place()?;
     coordinator_of(&pane, &socket)
 }
 /// Is it still in the turn its last typed message started?

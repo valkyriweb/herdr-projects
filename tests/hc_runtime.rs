@@ -20,6 +20,13 @@ fn hc_worker_cannot_mark_its_own_task_done() {
     w.script(json!({ "worker": [{ "status": "working" }] }));
     let id = w.add("Worker identity"); delegate(&id); let t = settle(&id);
     in_hc(t.at("link").s("pane"));
+    assert_eq!(sw::cli::caller().map(|(t, role)| (t.t("id"), role)), Some((id.clone(), "agent")));
+    let args = ["report", "--msg", "Still working"].map(String::from);
+    sw::cli::tasks::command("report", &sw::cli::flags::parse(&args)).unwrap();
+    let other = w.add("Not my task");
+    sw::store::tasks::set(&id, json!({ "autopilot": { "coordinator": "test" } })).unwrap();
+    let refused = report(&other, "done").unwrap_err().msg;
+    assert!(refused.contains("may read the board and `report` on its own task, nothing else"), "{refused}");
     let result = report(&id, "done");
     unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
     let e = result.unwrap_err().msg;
@@ -52,6 +59,17 @@ fn hc_task_can_still_be_finished_by_a_non_task_caller() {
     assert!(sw::cli::caller().is_none());
     report(&id, "done").unwrap();
     assert_eq!(task(&id).s("stage"), "done");
+}
+
+#[test]
+fn classic_caller_identity_takes_precedence_over_hc() {
+    let w = world_hc();
+    in_hc("hc-other");
+    unsafe { std::env::set_var("HERDR_PANE_ID", "classic-pane"); }
+    assert_eq!(sw::herdr::cli::caller_place(), Some(("classic-pane".into(), w.socket.clone())));
+    unsafe { std::env::remove_var("HERDR_SOCKET_PATH"); }
+    assert!(sw::herdr::cli::caller_place().is_none(), "a classic pane without a socket must not become an hc caller");
+    unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); std::env::remove_var("HERDR_PANE_ID"); std::env::set_var("HERDR_SOCKET_PATH", &w.socket); }
 }
 
 #[test]

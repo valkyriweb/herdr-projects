@@ -39,7 +39,7 @@ pub fn plugin_folder(c: &Value) -> Option<PathBuf> {
 /// (flow/pane_owner.rs). The board's own pane is the plugin's and a coordinator's pane (its saved pane, in the terminal
 /// saved with it) belongs to no task, whatever a task has on record, so neither is ever taken for a worker.
 pub fn caller() -> Option<(Obj, &'static str)> {
-    let (pane, socket) = (crate::util::env_val("HERDR_PANE_ID")?, crate::util::env_val("HERDR_SOCKET_PATH")?);
+    let (pane, socket) = crate::herdr::cli::caller_place()?;
     if crate::util::env_set("HERDR_PLUGIN_ID") { return None; }
     // an attempt of several is its own agent's task
     crate::flow::pane_owner::whose(list(crate::store::tasks::ListOpts { include_archived: true, attempts: true, ..Default::default() }), &socket, &pane)

@@ -61,7 +61,10 @@ pub fn command(cmd: &str, a: &Args) -> Res<(Value, String)> {
             if let (None, Some(co)) = (&pilot, crate::autopilot::turn::caller()) { crate::store::tasks::set(t.s("id"), json!({ "coordinator": co.settings_key() }))?; }
             // Added by the Coordinator from a message the human sent with the start key: delegated here, flag or no flag.
             let mut tab = false;
-            if !flags.b("delegate") && !crate::util::env_set("HERDR_PLUGIN_ID") { if let Some(p) = crate::util::env_val("HERDR_PANE_ID") { tab = crate::coordinator::requests::tab_turn(&p, &current_socket()); } }
+            if !flags.b("delegate") && !crate::util::env_set("HERDR_PLUGIN_ID") {
+                let place = crate::util::env_val("HERDR_PANE_ID").map(|p| (p, current_socket())).or_else(crate::herdr::cli::caller_place);
+                if let Some((p, socket)) = place { tab = crate::coordinator::requests::tab_turn(&p, &socket); }
+            }
             let after = after.filter(|d| !d.is_empty());
             if let Some(d) = &after { crate::store::tasks::set(t.s("id"), json!({ "after": d }))?; }
             let on = if flags.b("delegate") || tab || start {

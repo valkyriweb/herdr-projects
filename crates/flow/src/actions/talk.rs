@@ -25,9 +25,11 @@ pub fn reply(id: &str, text: &str, by: &str) -> Res<Said> {
 }
 /// Who runs this command: a coordinator where it runs in the Coordinator's own folder or in a coordinator's pane, else you.
 pub fn asker() -> &'static str {
-    let socket = crate::herdr::cli::current_socket();
+    let (pane, socket) = match crate::util::env_val("HERDR_PANE_ID") {
+        Some(pane) => (pane, crate::herdr::cli::current_socket()),
+        None => crate::herdr::cli::caller_place().unwrap_or_else(|| (String::new(), crate::herdr::cli::current_socket())),
+    };
     let home = crate::coordinator::state::home(&socket);
-    let pane = crate::util::env_val("HERDR_PANE_ID").unwrap_or_default();
     let in_one = !pane.is_empty() && crate::coordinator::state::all(&socket).iter().any(|co| crate::coordinator::state::get(co).map(|c| c.s("pane") == pane).unwrap_or(false));
     if in_one || std::env::current_dir().map(|d| d.starts_with(&home)).unwrap_or(false) { "coordinator" } else { crate::status_words::who::YOU }
 }
