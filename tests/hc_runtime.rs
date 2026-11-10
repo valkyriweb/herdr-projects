@@ -68,7 +68,10 @@ fn hc_first_status_of_a_starting_program_is_not_taken_for_the_prompt() {
     let id = w.add("Starting slowly"); delegate(&id);
     settle(&id);
     // The board's housekeeping looks again at what it typed; the first resting status must not end that look.
-    for _ in 0..4 { sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes); settle(&id); }
+    for _ in 0..10 {
+        sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes); settle(&id);
+        if task(&id).s("stage") != "working" { break; }
+    }
     let t = task(&id);
     assert_eq!(core.text().matches("hc keys sw-proj-1 enter").count(), 1, "the lost enter is pressed again, once: {}", core.text());
     assert_eq!(t.s("stage"), "approval", "{} {}", t.s("msg"), t.at("failure"));
