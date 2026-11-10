@@ -44,8 +44,8 @@ pub fn current_socket() -> String {
 /// The board caller's place and transport, without changing classic commands' default socket.
 /// A classic pane always takes precedence; hc supplies only its board-owned place id.
 pub fn caller_place() -> Option<(String, String)> {
-    if let Some(pane) = crate::util::env_val("HERDR_PANE_ID") {
-        return Some((pane, crate::util::env_val("HERDR_SOCKET_PATH")?));
+    if std::env::var_os("HERDR_PANE_ID").is_some() {
+        return Some((crate::util::env_val("HERDR_PANE_ID")?, crate::util::env_val("HERDR_SOCKET_PATH")?));
     }
     Some((crate::util::env_val("HERDR_PROJECTS_PANE")?, super::hc::SOCKET.into()))
 }

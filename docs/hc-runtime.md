@@ -19,6 +19,8 @@ The board records `hc://local` in the task's `link.socket`. Its `link.pane` and 
 | Close task or reviewer terminal | End the program, then `hc rm` |
 | Create or remove a worktree | Native `git worktree add/remove`, independent of classic herdr |
 
+Each agent receives `HERDR_PROJECTS_PANE=<board place id>`. Board commands use it with `hc://local` to identify workers, reviewers and Coordinators. This keeps own-task completion guards and autopilot permissions active, and lets a worker use `report` without an id. A classic `HERDR_PANE_ID` takes precedence, even when empty or missing its socket. The hc launch does not set classic `HERDR_PANE_ID` or `HERDR_SOCKET_PATH`; classic socket and popup routing stay unchanged.
+
 The existing keeper polls hc through the same reconciliation path as classic agents. hc turn ends have no classic event hook: the keeper normally polls once per second, with extra delay possible while calls or other work are in progress. The hc address and turn number form the completion identity; `status_ms` orders state readings. Unknown states are not idle. Review, checks and merge decisions remain owned by the existing finish pipeline.
 
 A project reuses an app space by its canonical folder path, regardless of its display name. Name matching is a fallback only for spaces without a folder. A missing space is created through `herdr-app do space.new`. Every terminal has its own stable `herdr.tab` label, and a `herdr-projects.task` label when it belongs to a task. A legacy split request creates another tab, never a grid. If the app cannot answer, the terminal starts without a space label and the reason is appended to `hc/runtime.log`.

@@ -70,6 +70,8 @@ fn classic_caller_identity_takes_precedence_over_hc() {
     assert_eq!(sw::herdr::cli::caller_place(), Some(("classic-pane".into(), w.socket.clone())));
     unsafe { std::env::remove_var("HERDR_SOCKET_PATH"); }
     assert!(sw::herdr::cli::caller_place().is_none(), "a classic pane without a socket must not become an hc caller");
+    unsafe { std::env::set_var("HERDR_PANE_ID", ""); std::env::set_var("HERDR_SOCKET_PATH", &w.socket); }
+    assert!(sw::herdr::cli::caller_place().is_none(), "an explicitly empty classic pane must stay a non-task caller");
     unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); std::env::remove_var("HERDR_PANE_ID"); std::env::set_var("HERDR_SOCKET_PATH", &w.socket); }
 }
 
