@@ -39,11 +39,14 @@ fn hc_worker_cannot_mark_its_own_task_done() {
 #[test]
 fn hc_reviewer_is_recognised_and_cannot_finish_the_task() {
     let w = world_hc(); let _core = common::hc::Core::install(&w);
-    w.script(json!({ "worker": [step(1)], "reviewer": [{ "status": "working" }] }));
+    w.script(json!({ "worker": [{ "status": "working" }] }));
     let id = w.add("Reviewer identity"); delegate(&id); let t = settle(&id);
-    let pane = t.at("link").at("reviewer").s("pane");
-    assert!(!pane.is_empty(), "{t:?}");
-    in_hc(pane);
+    let api = sw::flow::task::h(&t);
+    let made = sw::flow::tabs::open_reviewer_tab(&api, &t, 1, "", t.s("worktree"), &[], None).unwrap();
+    let reviewer = json!({ "pane": made.pane, "tab": made.tab, "terminal": made.terminal, "agent": "identity-r", "kind": "codex" });
+    sw::store::tasks::update(&id, |t| { t.obj_mut("link").put("reviewer", reviewer.clone()); Ok(sw::store::tasks::Change::Write) }).unwrap();
+    api.agent_start("identity-r", "codex", reviewer.s("pane"), &[], 30000).unwrap();
+    in_hc(reviewer.s("pane"));
     let caller = sw::cli::caller();
     let result = report(&id, "done");
     unsafe { std::env::remove_var("HERDR_PROJECTS_PANE"); }
