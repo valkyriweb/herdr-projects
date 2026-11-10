@@ -27,7 +27,7 @@ fn hc_worker_cannot_mark_its_own_task_done() {
     assert!(e.contains("Your task finishes when you end your turn; the board then checks, reviews and merges it"), "{e}");
     assert_eq!(task(&id).s("stage"), "working");
     in_hc(t.at("link").s("pane"));
-    let args = ["report", "--msg", "Still working"].map(String::from);
+    let args = ["report", "--state", "blocked", "--msg", "Need an answer"].map(String::from);
     sw::cli::tasks::command("report", &sw::cli::flags::parse(&args)).unwrap();
     let other = w.add("Not my task");
     sw::store::tasks::set(&id, json!({ "autopilot": { "coordinator": "test" } })).unwrap();
