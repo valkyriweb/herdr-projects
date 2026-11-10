@@ -10,6 +10,8 @@ pub struct Core {
     pub spaces: RefCell<Value>,
     pub get_override: RefCell<Option<Value>>,
     pub kill_lag: std::cell::Cell<u32>,
+    /// 1: the program has no hc status yet (still starting) until the first send, and for one look after it.
+    pub unread: std::cell::Cell<u8>,
     pending_kills: RefCell<HashMap<String, u32>>,
     old_path: std::ffi::OsString,
 }
@@ -27,7 +29,7 @@ impl Core {
         }
         let path = std::env::join_paths(std::iter::once(bin).chain(std::env::split_paths(&old_path))).unwrap();
         unsafe { std::env::set_var("PATH", path); }
-        let core = Rc::new(Self { engine: w.fake.clone(), calls: RefCell::new(vec![]), targets: RefCell::new(HashMap::new()), app: RefCell::new(true), spaces: RefCell::new(json!([{ "id": "sp-project", "name": "Custom cockpit", "folder": w.root_str() }])), get_override: RefCell::new(None), kill_lag: std::cell::Cell::new(0), pending_kills: RefCell::new(HashMap::new()), old_path });
+        let core = Rc::new(Self { engine: w.fake.clone(), calls: RefCell::new(vec![]), targets: RefCell::new(HashMap::new()), app: RefCell::new(true), spaces: RefCell::new(json!([{ "id": "sp-project", "name": "Custom cockpit", "folder": w.root_str() }])), get_override: RefCell::new(None), kill_lag: std::cell::Cell::new(0), unread: std::cell::Cell::new(0), pending_kills: RefCell::new(HashMap::new()), old_path });
         hc::set_fake(Some(core.clone())); Installed(core)
     }
     pub fn uninstall(&self) { hc::set_fake(None); unsafe { std::env::set_var("PATH", &self.old_path); } }
@@ -64,6 +66,11 @@ impl hc::Fake for Core {
             }
             "get" => {
                 if let Some(v) = self.get_override.borrow().as_ref() { return Self::value(v.clone()); }
+                match self.unread.get() {
+                    1 => return Self::value(json!({ "address": target, "state": "live", "status": null, "status_ms": 0 })),
+                    2 => { self.unread.set(0); return Self::value(json!({ "address": target, "state": "live", "status": null, "status_ms": 0 })); }
+                    _ => {}
+                }
                 let pane = self.pane(target);
                 if let Some(n) = self.pending_kills.borrow_mut().get_mut(target) {
                     if *n == 0 { for p in self.engine.st.borrow_mut()["panes"].as_array_mut().unwrap() { if p.s("pane_id") == pane { p["agent"] = Value::Null; } } }
@@ -74,7 +81,7 @@ impl hc::Fake for Core {
                 let agent = j.at("result").at("agent");
                 Self::value(json!({ "address": target, "state": if agent.is_null() { "finished" } else { "live" }, "status": if agent.is_null() { Value::Null } else { json!({ "state": agent.at("agent_status"), "app": agent.at("agent") }) }, "status_ms": 1_790_000_000_000i64 + agent.i("state_change_seq"), "turn": agent.i("completion_seq") }))
             }
-            "send" => self.answer(&args(&["agent", "prompt", &self.pane(target), &a[2]])),
+            "send" => { if self.unread.get() == 1 { self.unread.set(2); } self.answer(&args(&["agent", "prompt", &self.pane(target), &a[2]])) }
             "keys" => { let mut k = args(&["agent", "send-keys", &self.pane(target)]); k.extend_from_slice(&a[2..]); self.answer(&k) }
             "interrupt" => self.answer(&args(&["agent", "send-keys", &self.pane(target), "ctrl+c"])),
             "kill" => {
