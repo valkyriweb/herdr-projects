@@ -61,12 +61,16 @@ fn hc_first_status_of_a_starting_program_is_not_taken_for_the_prompt() {
     // and the program's first resting status moved status_ms, which read as "it took the text". It sat with the brief
     // in its box until someone pressed enter.
     let w = world_hc(); let core = common::hc::Core::install(&w);
+    unsafe { std::env::set_var("HERDR_PROJECTS_READY_MS", "0"); std::env::set_var("HERDR_PROJECTS_SUBMIT_MS", "0"); }
     core.unread.set(1);
     w.patch(|s| s["swallow"] = json!(1));
     w.script(json!({ "worker": [step(1)] }));
     let id = w.add("Starting slowly"); delegate(&id);
-    let t = settle(&id);
-    assert!(core.text().contains("hc keys sw-proj-1 enter"), "the lost enter is pressed again: {}", core.text());
+    settle(&id);
+    // The board's housekeeping looks again at what it typed; the first resting status must not end that look.
+    for _ in 0..4 { sw::housekeeping::housekeeping(&w.socket, sw::housekeeping::Force::Yes); settle(&id); }
+    let t = task(&id);
+    assert_eq!(core.text().matches("hc keys sw-proj-1 enter").count(), 1, "the lost enter is pressed again, once: {}", core.text());
     assert_eq!(t.s("stage"), "approval", "{} {}", t.s("msg"), t.at("failure"));
 }
 
