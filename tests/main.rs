@@ -1,6 +1,4 @@
-//! The one test program: every file in tests/ is a module of it, one `mod` line each in its place in the list,
-//! so cargo compiles and links the tests once. A new test file is a new line here (the guard fails a file left out).
-//! What the files share is declared once, at the top. Running one area alone: `npm run check board-panel`.
+//! The one test program: every test file registered once; shared fixtures live in common.
 mod common;
 mod hc_runtime;
 mod hc_runtime_coordinator;
@@ -9,7 +7,6 @@ mod far;
 mod move_home;
 mod review_kit;
 mod takeover_kit;
-
 mod after;
 mod after_far;
 mod after_more;
