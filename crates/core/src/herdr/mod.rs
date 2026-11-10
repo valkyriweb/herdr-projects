@@ -8,6 +8,7 @@ pub mod api;
 pub mod busy;
 pub mod cli;
 pub mod find;
+pub mod hc;
 pub mod keys;
 pub mod launched;
 pub mod palette;

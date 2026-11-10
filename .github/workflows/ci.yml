@@ -46,8 +46,66 @@ jobs:
           GIT_COMMITTER_EMAIL: ci@example.com
         run: npm run check -- --all
 
+      # Keep the generator's output available without requiring a local build.
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: generated-settings
+          path: docs/settings.md
+          if-no-files-found: error
+
+  macos-release:
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # PR artifacts must identify the real head, not GitHub's synthetic merge commit.
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --target aarch64-apple-darwin
+          rustup default stable
+
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-release-${{ hashFiles('Cargo.lock') }}
+          restore-keys: macos-release-
+
+      - name: Build the macOS aarch64 release binary
+        run: cargo build --release --locked --target aarch64-apple-darwin
+
+      - name: Package, verify architecture and smoke-test the version
+        env:
+          HERDR_PROJECTS_INLINE: "1"
+          HERDR_PROJECTS_HOME: ${{ runner.temp }}/hc-runtime-smoke
+        run: |
+          mkdir dist
+          cp target/aarch64-apple-darwin/release/herdr-projects dist/herdr-projects-macos-aarch64
+          file dist/herdr-projects-macos-aarch64 | tee /dev/stderr | grep -q 'Mach-O.*arm64'
+          dist/herdr-projects-macos-aarch64 version | tee dist/VERSION.txt
+          version=$(sed -n 's/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -1)
+          grep -q "^herdr-projects $version " dist/VERSION.txt
+          git rev-parse HEAD > dist/SOURCE_REVISION.txt
+          cd dist
+          shasum -a 256 herdr-projects-macos-aarch64 > herdr-projects-macos-aarch64.sha256
+          shasum -a 256 -c herdr-projects-macos-aarch64.sha256
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: herdr-projects-macos-aarch64
+          path: dist/*
+          if-no-files-found: error
+
   macos:
-    runs-on: macos-14
+    # macos-14 jobs are rejected by GitHub before execution; keep the sandbox gate on a supported image.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
 

@@ -14,8 +14,6 @@ use crate::agents::read_turn::Turn;
 use crate::agents::talk::{talk_of, Said};
 use crate::err::Res;
 use crate::herdr::api::read_screen;
-use crate::herdr::cli::socket_exists;
-use crate::herdr::Herdr;
 use crate::json::*;
 use crate::store::marks::due;
 use std::collections::HashMap;
@@ -46,13 +44,12 @@ fn bare(text: &str, co: &Co) -> String {
 }
 pub fn look(co: impl Into<Co>) -> Look {
     let co = co.into();
-    let socket = co.socket.as_str();
     let c = get(&co);
     let def = choice_of(&co);
     let Some(c) = c.filter(|c| c.b("run") || c.b("pane") || !c.arr("queue").is_empty() || c.b("want") || c.b("error")) else {
         return Look { state: "none".into(), run: def.clone(), def, ..Default::default() };
     };
-    let agent = if c.b("pane") && (crate::herdr::cli::fake().is_some() || socket_exists(socket)) { Herdr::new(Some(socket.into())).agent_get(c.s("pane")).ok().flatten() } else { None };
+    let agent = if c.b("pane") && super::state::available(&co) { super::state::api(&co).agent_get(c.s("pane")).ok().flatten() } else { None };
     let status = agent.as_ref().map(|a| a.t("agent_status"));
     let run = c.o("run").cloned().or_else(|| c.o("pick").cloned()).or_else(|| c.at("want").o("pick").cloned()).or_else(|| def.clone());
     let busy = pumping(&c) || c.b("want");
@@ -90,12 +87,11 @@ pub fn look(co: impl Into<Co>) -> Look {
 /// What is on its screen, for when there is no message to show (a dialog, a program without a readable conversation).
 pub fn screen(v: &Look, co: impl Into<Co>) -> String {
     let co = co.into();
-    let socket = co.socket.as_str();
     let Some(status) = &v.status else { return String::new() };
     if v.pane.is_empty() { return String::new(); }
     let now = crate::clock::now();
     if let Some((p, at, text)) = SCREENS.lock().unwrap().get(&co.key()) { if *p == v.pane && now - at < 2000 { return text.clone(); } }
-    let raw = read_screen(&Herdr::new(Some(socket.into())), &v.pane, Some(if status == "idle" || status == "done" { status } else { "working" }), 60);
+    let raw = read_screen(&super::state::api(&co), &v.pane, Some(if status == "idle" || status == "done" { status } else { "working" }), 60);
     let mut text = raw.split('\n').map(|l| l.trim_end()).collect::<Vec<_>>().join("\n");
     while text.contains("\n\n\n") { text = text.replace("\n\n\n", "\n\n"); }
     let text = text.trim().to_string();
@@ -103,7 +99,7 @@ pub fn screen(v: &Look, co: impl Into<Co>) -> String {
     text
 }
 /// Going into it: herdr moves to its real pane, as it does for any task's agent.
-pub fn focus(v: &Look, co: impl Into<Co>) -> Res<()> { let co = co.into(); Herdr::new(Some(co.socket.clone())).agent_focus(&v.pane)?; typed_there(&co); Ok(()) }
+pub fn focus(v: &Look, co: impl Into<Co>) -> Res<()> { let co = co.into(); super::state::api(&co).agent_focus(&v.pane)?; typed_there(&co); Ok(()) }
 /// "Go into the Coordinator's chat" from anywhere in herdr: no board in between. Not running: it is started with
 /// nothing said first, and this waits for it.
 pub fn go_in(co: impl Into<Co>, wait_ms: i64) -> Res<Look> {

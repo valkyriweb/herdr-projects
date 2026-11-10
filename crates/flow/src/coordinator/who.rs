@@ -51,6 +51,6 @@ pub fn same_choice(a: &Obj, b: &Obj) -> bool {
 /// Can the box talk to a Coordinator here? It needs a running herdr to live in, and its program installed.
 pub fn ready(socket: &str) -> bool {
     let Some(k) = choice() else { return false };
-    if crate::herdr::cli::fake().is_none() && !crate::herdr::cli::socket_exists(socket) { return false; }
+    if !super::state::available(socket) { return false; }
     get(socket).map(|c| c.b("run")).unwrap_or(false) || installed(k.s("kind"))
 }

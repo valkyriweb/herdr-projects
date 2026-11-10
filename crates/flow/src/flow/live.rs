@@ -27,7 +27,7 @@ pub fn read_session(socket: &str) -> Session {
 pub fn live_of(t: &Task, session: &Session, here: &str) -> Value {
     if !is_agent_task(t) { return Value::Null; }
     let sock = t.at("link").s("socket");
-    if !sock.is_empty() && !same_socket(sock, here) { return json!({ "away": session_name(sock) }); }
+    if !sock.is_empty() && !same_socket(sock, here) && sock != crate::herdr::hc::SOCKET { return json!({ "away": session_name(sock) }); }
     let Session::Up { agents, panes } = session else { return json!({ "down": true }) };
     let pane_id = t.at("link").s("pane");
     let Some(pane) = panes.get(pane_id).filter(|p| owns_pane(t, p)) else { return json!({ "gone": true }) };
@@ -105,8 +105,9 @@ fn session_for(tasks: &[Arc<Task>], socket: &str) -> Session {
 pub fn board_for(socket: &str) -> Vec<Obj> {
     let tasks = shared(ListOpts::default());
     let session = session_for(&tasks, socket);
+    let hc = session_for(&tasks, crate::herdr::hc::SOCKET);
     let mut seen = BTreeMap::new();
-    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, &session, socket, &mut seen)).collect();
+    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, if t.at("link").s("socket") == crate::herdr::hc::SOCKET { &hc } else { &session }, socket, &mut seen)).collect();
     crate::shown::queue::number(&mut rows);
     rows
 }
@@ -114,15 +115,16 @@ pub fn board(include_archived: bool) -> Vec<Obj> {
     let here = current_socket();
     let tasks = shared(ListOpts { include_archived, ..Default::default() });
     let session = session_for(&tasks, &here);
+    let hc = session_for(&tasks, crate::herdr::hc::SOCKET);
     let mut seen = BTreeMap::new();
-    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, &session, &here, &mut seen)).collect();
+    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, if t.at("link").s("socket") == crate::herdr::hc::SOCKET { &hc } else { &session }, &here, &mut seen)).collect();
     crate::shown::queue::number(&mut rows);
     rows
 }
 /// Refuse a live action with the reason the board shows.
 pub fn assert_live(t: &Task) -> Res<()> {
     if !is_agent_task(t) { crate::fail!("No agent has been on {} yet. Delegate it first.", t.s("id")); }
-    let here = current_socket();
+    let here = if t.at("link").s("socket") == crate::herdr::hc::SOCKET { crate::herdr::hc::SOCKET.into() } else { current_socket() };
     if !same_socket(t.at("link").s("socket"), &here) { crate::fail!("{} lives in herdr session {}. Open the board there.", t.s("id"), session_name(t.at("link").s("socket"))); }
     if crate::herdr::cli::fake().is_none() && (!socket_exists(&here) || !Herdr::new(Some(here)).alive()) { crate::fail!("herdr is not running."); }
     Ok(())

@@ -81,13 +81,13 @@ fn board_settings_are_yours_only_refused_on_a_task_and_for_a_repo_with_how_to_se
     let id = w.add("One");
     use sw::store::settings_list::{board, work};
     for name in board() {
-        assert!(has(name, r"^(board|coordinator|watcher|voice)\."), "{name}");
+        assert!(has(name, r"^(agents|board|coordinator|watcher|voice)\."), "{name}");
         let n = regex::escape(name);
         refused(set_value(name, &json!("x"), &Scope::task(&task(&id))), &format!(r"{n} is a board setting: it is yours only and cannot be set on a task\. Set it for yourself: herdr-projects set {n} <value>"));
         refused(set_value(name, &json!("x"), &Scope::repo("proj")), "is a board setting: it is yours only and cannot be set for a repo");
         refused(unset_value(name, &Scope::task(&task(&id))), "is a board setting");
     }
-    for name in work() { assert!(!has(name, r"^(board|coordinator|watcher)\."), "{name}"); }
+    for name in work() { assert!(!has(name, r"^(agents|board|coordinator|watcher)\."), "{name}"); }
     refused(sw::actions::start::delegate(&id, vec![("board.agents".into(), json!(9))]), r"board\.agents is a board setting"); assert_eq!(task(&id).s("stage"), "todo");
     assert_eq!(set_value("board.agents", &json!("9"), &you()).unwrap().value, json!(9)); assert_eq!(setting("board.agents", None), json!(9));
     // said by hand inside a repo's entry: reported, and not counted

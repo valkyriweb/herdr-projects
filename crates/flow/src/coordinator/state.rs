@@ -14,6 +14,17 @@ pub fn dir_of(co: impl Into<Co>) -> PathBuf {
 }
 fn file_of(co: &Co) -> PathBuf { dir_of(co).join("state.json") }
 pub fn get(co: impl Into<Co>) -> Option<Obj> { read_obj(&file_of(&co.into())) }
+/// Select a runtime only for a new coordinator. Saved places keep their runtime after a setting change.
+pub fn api(co: impl Into<Co>) -> crate::herdr::Herdr {
+    let co = co.into();
+    let saved = get(&co).unwrap_or_default();
+    let hc = saved.s("pane").starts_with("hc-") || saved.s("space").starts_with("hc-") || (!saved.b("pane") && !saved.b("space") && crate::herdr::hc::selected());
+    crate::herdr::Herdr::new(Some(if hc { crate::herdr::hc::SOCKET.into() } else { co.socket }))
+}
+pub fn available(co: impl Into<Co>) -> bool {
+    let api = api(co);
+    crate::herdr::cli::fake().is_some() || crate::herdr::cli::socket_exists(&api.socket_path())
+}
 /// A pump (the detached job that starts it and types into it) is at work for this coordinator.
 pub fn pumping(c: &Obj) -> bool { c.at("pump").is_object() && marker_alive(c.at("pump")) }
 /// The one way its state changes: under its lock. `f` returning false writes nothing.
