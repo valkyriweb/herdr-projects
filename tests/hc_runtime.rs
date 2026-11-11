@@ -34,7 +34,7 @@ fn hc_reviewer_is_recognised_and_cannot_finish_the_task() {
     w.script(json!({ "worker": [step(1)], "reviewer": [{ "status": "working" }] }));
     let id = w.add("Reviewer identity"); delegate(&id); let t = settle(&id);
     let pane = t.at("link").at("reviewer").s("pane");
-    assert!(!pane.is_empty(), "{t}");
+    assert!(!pane.is_empty(), "{t:?}");
     in_hc(pane);
     let caller = sw::cli::caller();
     let result = report(&id, "done");
