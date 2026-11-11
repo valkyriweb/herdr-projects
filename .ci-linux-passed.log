@@ -1,0 +1,233 @@
+check	Set up job	﻿2026-11-10T10:40:11.8276116Z Current runner version: '2.338.2'
+check	Set up job	2026-11-10T10:40:11.8315346Z ##[group]Runner Image Provisioner
+check	Set up job	2026-11-10T10:40:11.8316853Z Hosted Compute Agent
+check	Set up job	2026-11-10T10:40:11.8317888Z Version: 20261028.624
+check	Set up job	2026-11-10T10:40:11.8319102Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+check	Set up job	2026-11-10T10:40:11.8320475Z Build Date: 2026-10-28T21:51:42Z
+check	Set up job	2026-11-10T10:40:11.8321688Z Worker ID: {a7e61aaa-fe73-4b34-8752-cd3e3da667e9}
+check	Set up job	2026-11-10T10:40:11.8323324Z Region: eastus
+check	Set up job	2026-11-10T10:40:11.8324324Z Cloud: Azure
+check	Set up job	2026-11-10T10:40:11.8325359Z ##[endgroup]
+check	Set up job	2026-11-10T10:40:11.8327857Z ##[group]Operating System
+check	Set up job	2026-11-10T10:40:11.8328947Z Ubuntu
+check	Set up job	2026-11-10T10:40:11.8329883Z 24.04.5
+check	Set up job	2026-11-10T10:40:11.8330747Z LTS
+check	Set up job	2026-11-10T10:40:11.8331784Z ##[endgroup]
+check	Set up job	2026-11-10T10:40:11.8333040Z ##[group]Runner Image
+check	Set up job	2026-11-10T10:40:11.8334052Z Image: ubuntu-24.04
+check	Set up job	2026-11-10T10:40:11.8335173Z Version: 20261101.360.1
+check	Set up job	2026-11-10T10:40:11.8337143Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+check	Set up job	2026-11-10T10:40:11.8340233Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+check	Set up job	2026-11-10T10:40:11.8341952Z ##[endgroup]
+check	Set up job	2026-11-10T10:40:11.8344373Z ##[group]GITHUB_TOKEN Permissions
+check	Set up job	2026-11-10T10:40:11.8347346Z Contents: read
+check	Set up job	2026-11-10T10:40:11.8348400Z Metadata: read
+check	Set up job	2026-11-10T10:40:11.8349321Z Packages: read
+check	Set up job	2026-11-10T10:40:11.8350400Z ##[endgroup]
+check	Set up job	2026-11-10T10:40:11.8353782Z Secret source: Actions
+check	Set up job	2026-11-10T10:40:11.8355442Z Cache mode: write
+check	Set up job	2026-11-10T10:40:11.8356612Z Prepare workflow directory
+check	Set up job	2026-11-10T10:40:11.8870214Z Prepare all required actions
+check	Set up job	2026-11-10T10:40:11.8945178Z Getting action download info
+check	Set up job	2026-11-10T10:40:12.1207561Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+check	Set up job	2026-11-10T10:40:12.2277639Z Download action repository 'actions/setup-node@v7' (SHA:949feb2413d6458794dcd2491c4babbbce0c15c1)
+check	Set up job	2026-11-10T10:40:12.3236749Z Download action repository 'actions/cache@v6' (SHA:55cc8345863c7cc4c66a329aec7e433d2d1c52a9)
+check	Set up job	2026-11-10T10:40:12.5367905Z Complete job name: check
+check	Run actions/checkout@v7	﻿2026-11-10T10:40:12.6298119Z ##[group]Run actions/checkout@v7
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6299077Z with:
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6299580Z   repository: valkyriweb/herdr-projects
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6303634Z   token: ***
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6304113Z   ssh-strict: true
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6304577Z   ssh-user: git
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6305050Z   persist-credentials: true
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6305603Z   clean: true
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6306069Z   sparse-checkout-cone-mode: true
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6306617Z   fetch-depth: 1
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6307072Z   fetch-tags: false
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6307527Z   show-progress: true
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6307987Z   lfs: false
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6308408Z   submodules: false
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6308867Z   set-safe-directory: true
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6309393Z   allow-unsafe-pr-checkout: false
+check	Run actions/checkout@v7	2026-11-10T10:40:12.6310424Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:12.9868800Z Syncing repository: valkyriweb/herdr-projects
+check	Run actions/checkout@v7	2026-11-10T10:40:12.9871109Z ##[group]Getting Git version info
+check	Run actions/checkout@v7	2026-11-10T10:40:12.9871995Z Working directory is '/home/runner/work/herdr-projects/herdr-projects'
+check	Run actions/checkout@v7	2026-11-10T10:40:12.9873655Z [command]/usr/bin/git version
+check	Run actions/checkout@v7	2026-11-10T10:40:12.9981119Z git version 2.56.0
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0004806Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0017268Z Temporarily overriding HOME='/home/runner/work/_temp/96d5f5b8-fa45-42b3-846d-91d87dc4a3c0' before making global git config changes
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0019718Z Adding repository directory to the temporary git global config as a safe directory
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0024581Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/herdr-projects/herdr-projects
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0083309Z Deleting the contents of '/home/runner/work/herdr-projects/herdr-projects'
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0087680Z ##[group]Determining repository object format
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0089981Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0091599Z ##[group]Initializing the repository
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0095502Z [command]/usr/bin/git init /home/runner/work/herdr-projects/herdr-projects
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0241873Z hint: Using 'master' as the name for the initial branch. This default branch name
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0244022Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0245222Z hint: to use in all of your new repositories, which will suppress this warning,
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0246147Z hint: call:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0246966Z hint:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0247636Z hint: 	git config --global init.defaultBranch <name>
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0248401Z hint:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0249835Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0251475Z hint: 'development'. The just-created branch can be renamed via this command:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0252820Z hint:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0253287Z hint: 	git branch -m <name>
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0253787Z hint:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0254588Z hint: Disable this message with "git config set advice.defaultBranchName false"
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0256231Z Initialized empty Git repository in /home/runner/work/herdr-projects/herdr-projects/.git/
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0267729Z [command]/usr/bin/git remote add origin https://github.com/valkyriweb/herdr-projects
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0324254Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0325536Z ##[group]Disabling automatic garbage collection
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0327213Z [command]/usr/bin/git config --local gc.auto 0
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0365601Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0367157Z ##[group]Setting up auth
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0368018Z Removing SSH command configuration
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0370732Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0414053Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0829843Z Removing HTTP extra header
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0836134Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+check	Run actions/checkout@v7	2026-11-10T10:40:13.0874020Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1118570Z Removing includeIf entries pointing to credentials config files
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1124524Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1161975Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1404911Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1447612Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path /home/runner/work/_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1483263Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1520874Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1555459Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1586335Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1587127Z ##[group]Fetching the repository
+check	Run actions/checkout@v7	2026-11-10T10:40:13.1595599Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +5b51abf84f144ed8048a60c0060c89bd45de07a5:refs/remotes/pull/13/merge
+check	Run actions/checkout@v7	2026-11-10T10:40:13.7985759Z From https://github.com/valkyriweb/herdr-projects
+check	Run actions/checkout@v7	2026-11-10T10:40:13.7987465Z  * [new ref]         5b51abf84f144ed8048a60c0060c89bd45de07a5 -> pull/13/merge
+check	Run actions/checkout@v7	2026-11-10T10:40:13.7995234Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.7996941Z ##[group]Determining the checkout info
+check	Run actions/checkout@v7	2026-11-10T10:40:13.7998224Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8001307Z [command]/usr/bin/git sparse-checkout disable
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8058614Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8093387Z ##[group]Checking out the ref
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8097916Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/13/merge
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8904428Z Note: switching to 'refs/remotes/pull/13/merge'.
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8905810Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8906527Z You are in 'detached HEAD' state. You can look around, make experimental
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8908326Z changes and commit them, and you can discard any commits you make in this
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8910067Z state without impacting any branches by switching back to a branch.
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8911100Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8911791Z If you want to create a new branch to retain commits you create, you may
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8913672Z do so (now or later) by using -c with the switch command. Example:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8914575Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8914954Z   git switch -c <new-branch-name>
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8915604Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8916242Z Or undo this operation with:
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8917116Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8917560Z   git switch -
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8918150Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8919118Z Turn off this advice by setting config variable advice.detachedHead to false
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8920341Z 
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8922355Z HEAD is now at 5b51abf Merge 8d22284986bf49d9ab18d85e79e370ebc2bae063 into e43a98f825f336fdb73570a2c9cecbf2293c8a04
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8927020Z ##[endgroup]
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8966885Z [command]/usr/bin/git log -1 --format=%H
+check	Run actions/checkout@v7	2026-11-10T10:40:13.8995780Z 5b51abf84f144ed8048a60c0060c89bd45de07a5
+check	Install Rust	﻿2026-11-10T10:40:13.9396783Z ##[group]Run rustup toolchain install stable --profile minimal
+check	Install Rust	2026-11-10T10:40:13.9398857Z ^[[36;1mrustup toolchain install stable --profile minimal^[[0m
+check	Install Rust	2026-11-10T10:40:13.9400384Z ^[[36;1mrustup default stable^[[0m
+check	Install Rust	2026-11-10T10:40:13.9425674Z shell: /usr/bin/bash -e {0}
+check	Install Rust	2026-11-10T10:40:13.9426805Z ##[endgroup]
+check	Install Rust	2026-11-10T10:40:14.1713656Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+check	Install Rust	2026-11-10T10:40:14.2544439Z 
+check	Install Rust	2026-11-10T10:40:14.2630379Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.1 (58cf8f9c3 2026-10-13)
+check	Install Rust	2026-11-10T10:40:14.2631223Z 
+check	Install Rust	2026-11-10T10:40:14.2710593Z info: using existing install for stable-x86_64-unknown-linux-gnu
+check	Install Rust	2026-11-10T10:40:14.2720069Z info: default toolchain set to stable-x86_64-unknown-linux-gnu
+check	Install Rust	2026-11-10T10:40:14.2720540Z 
+check	Install Rust	2026-11-10T10:40:14.2805104Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.1 (58cf8f9c3 2026-10-13)
+check	Install Rust	2026-11-10T10:40:14.2805853Z 
+check	Run actions/setup-node@v7	﻿2026-11-10T10:40:14.3014722Z ##[group]Run actions/setup-node@v7
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.3015324Z with:
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.3015749Z   node-version: 22
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.3016194Z   check-latest: false
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.3019076Z   token: ***
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.3019540Z   package-manager-cache: true
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.3020031Z ##[endgroup]
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.4413375Z Found in cache @ /opt/hostedtoolcache/node/22.23.4/x64
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.5496989Z ##[group]Environment details
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.9531824Z node: v22.23.4
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.9532608Z npm: 10.9.9
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.9532986Z yarn: 1.22.22
+check	Run actions/setup-node@v7	2026-11-10T10:40:14.9533889Z ##[endgroup]
+check	Cache the build	﻿2026-11-10T10:40:15.0377399Z ##[group]Run actions/cache@v6
+check	Cache the build	2026-11-10T10:40:15.0377744Z with:
+check	Cache the build	2026-11-10T10:40:15.0377998Z   path: ~/.cargo/registry
+check	Cache the build	~/.cargo/git
+check	Cache the build	target
+check	Cache the build	
+check	Cache the build	2026-11-10T10:40:15.0378501Z   key: check-Linux-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c
+check	Cache the build	2026-11-10T10:40:15.0378981Z   restore-keys: check-Linux-
+check	Cache the build	2026-11-10T10:40:15.0379591Z   enableCrossOsArchive: false
+check	Cache the build	2026-11-10T10:40:15.0379854Z   fail-on-cache-miss: false
+check	Cache the build	2026-11-10T10:40:15.0380128Z   lookup-only: false
+check	Cache the build	2026-11-10T10:40:15.0380353Z   save-always: false
+check	Cache the build	2026-11-10T10:40:15.0380573Z ##[endgroup]
+check	Cache the build	2026-11-10T10:40:15.2432926Z Cache hit for: check-Linux-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c
+check	Cache the build	2026-11-10T10:40:16.3133695Z Received 171966464 of 206676887 (83.2%), 163.3 MBs/sec
+check	Cache the build	2026-11-10T10:40:16.4530143Z Received 206676887 of 206676887 (100.0%), 172.4 MBs/sec
+check	Cache the build	2026-11-10T10:40:16.4534648Z Cache Size: ~197 MB (206676887 B)
+check	Cache the build	2026-11-10T10:40:16.4582975Z [command]/usr/bin/tar -xf /home/runner/work/_temp/ce85686f-a404-4990-8dfb-5df22955c73a/cache.tzst -P -C /home/runner/work/herdr-projects/herdr-projects --use-compress-program unzstd
+check	Cache the build	2026-11-10T10:40:18.2387641Z Cache restored successfully
+check	Cache the build	2026-11-10T10:40:18.2590396Z Cache restored from key: check-Linux-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c
+check	The check	﻿2026-11-10T10:40:18.2939106Z ##[group]Run npm run check -- --all
+check	The check	2026-11-10T10:40:18.2939517Z ^[[36;1mnpm run check -- --all^[[0m
+check	The check	2026-11-10T10:40:18.2966356Z shell: /usr/bin/bash -e {0}
+check	The check	2026-11-10T10:40:18.2966681Z env:
+check	The check	2026-11-10T10:40:18.2966898Z   GIT_AUTHOR_NAME: ci
+check	The check	2026-11-10T10:40:18.2967160Z   GIT_AUTHOR_EMAIL: ci@example.com
+check	The check	2026-11-10T10:40:18.2967449Z   GIT_COMMITTER_NAME: ci
+check	The check	2026-11-10T10:40:18.2967728Z   GIT_COMMITTER_EMAIL: ci@example.com
+check	The check	2026-11-10T10:40:18.2968023Z ##[endgroup]
+check	The check	2026-11-10T10:40:18.4171677Z 
+check	The check	2026-11-10T10:40:18.4172692Z > herdr-projects@1.2.8 check
+check	The check	2026-11-10T10:40:18.4173443Z > sh scripts/check.sh --all
+check	The check	2026-11-10T10:40:18.4173793Z 
+check	The check	2026-11-10T10:40:43.6374674Z Nothing to write: the made pages are up to date.
+check	The check	2026-11-10T10:40:43.7844531Z Guard: every source file is within its size, says what it holds, and every made table is up to date.
+check	The check	2026-11-10T10:42:36.0465928Z Tests: 979 passed, in 9 processes in 73s.
+check	The check	2026-11-10T10:42:36.0549797Z The check passed in 138s.
+check	Post Cache the build	﻿2026-11-10T10:42:36.1336470Z Post job cleanup.
+check	Post Cache the build	2026-11-10T10:42:36.2639129Z Cache hit occurred on the primary key check-Linux-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c, not saving cache.
+check	Post Run actions/setup-node@v7	﻿2026-11-10T10:42:36.2811685Z Post job cleanup.
+check	Post Run actions/checkout@v7	﻿2026-11-10T10:42:36.4220801Z Post job cleanup.
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5145008Z [command]/usr/bin/git version
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5187999Z git version 2.56.0
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5225917Z Temporarily overriding HOME='/home/runner/work/_temp/2b87e68a-4f81-479d-ac81-c203ad78bf76' before making global git config changes
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5227538Z Adding repository directory to the temporary git global config as a safe directory
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5231783Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/herdr-projects/herdr-projects
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5268323Z Removing SSH command configuration
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5275325Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5315163Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5558485Z Removing HTTP extra header
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5564782Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5604412Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5842937Z Removing includeIf entries pointing to credentials config files
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5849510Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5878995Z includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5880269Z includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5881728Z includeif.gitdir:/github/workspace/.git.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5882802Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5889833Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5915044Z /home/runner/work/_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5926486Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-d7b8d97c\-d038\-4d7d\-b5e2\-6a1b18610a44\.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.5974877Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6001504Z /home/runner/work/_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6011214Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-d7b8d97c\-d038\-4d7d\-b5e2\-6a1b18610a44\.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6048038Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6073018Z /github/runner_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6081654Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-d7b8d97c\-d038\-4d7d\-b5e2\-6a1b18610a44\.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6120119Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6145578Z /github/runner_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6153972Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-d7b8d97c\-d038\-4d7d\-b5e2\-6a1b18610a44\.config
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6217971Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+check	Post Run actions/checkout@v7	2026-11-10T10:42:36.6489961Z Removing credentials config '/home/runner/work/_temp/git-credentials-d7b8d97c-d038-4d7d-b5e2-6a1b18610a44.config'
+check	Complete job	﻿2026-11-10T10:42:36.6668335Z Cleaning up orphan processes

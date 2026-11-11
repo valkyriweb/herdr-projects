@@ -1,0 +1,46 @@
+Refreshing run status every 30 seconds. Press Ctrl+C to quit.
+
+* lue/hc-runtime-1110 Check valkyriweb/herdr-projects#13 · 42800251780
+Triggered via push about 2 minutes ago
+
+JOBS
+X macos in 2s (ID 129775604202)
+* check (ID 129775604700)
+  ✓ Set up job
+  ✓ Run actions/checkout@v7
+  ✓ Install Rust
+  ✓ Run actions/setup-node@v7
+  ✓ Cache the build
+  * The check
+  * Post Cache the build
+  * Post Run actions/setup-node@v7
+  * Post Run actions/checkout@v7
+
+ANNOTATIONS
+X The configuration 'macos-14-arm64-us-default' is not supported
+macos: .github#1
+
+X lue/hc-runtime-1110 Check valkyriweb/herdr-projects#13 · 42800251780
+Triggered via push about 2 minutes ago
+
+JOBS
+X macos in 2s (ID 129775604202)
+X check in 2m30s (ID 129775604700)
+  ✓ Set up job
+  ✓ Run actions/checkout@v7
+  ✓ Install Rust
+  ✓ Run actions/setup-node@v7
+  ✓ Cache the build
+  X The check
+  - Post Cache the build
+  - Post Run actions/setup-node@v7
+  ✓ Post Run actions/checkout@v7
+  ✓ Complete job
+
+ANNOTATIONS
+X The configuration 'macos-14-arm64-us-default' is not supported
+macos: .github#1
+
+X Process completed with exit code 101.
+check: .github#42
+

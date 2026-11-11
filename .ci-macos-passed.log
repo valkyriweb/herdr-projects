@@ -1,0 +1,216 @@
+macos	Set up job	﻿2026-11-10T10:40:19.6903210Z Current runner version: '2.338.2'
+macos	Set up job	2026-11-10T10:40:19.6920640Z ##[group]Runner Image Provisioner
+macos	Set up job	2026-11-10T10:40:19.6921270Z Hosted Compute Agent
+macos	Set up job	2026-11-10T10:40:19.6921760Z Version: 20261103.629
+macos	Set up job	2026-11-10T10:40:19.6922260Z Commit: 15dbd9ccb5dbf34fae002b6ed1a2670f52df37bc
+macos	Set up job	2026-11-10T10:40:19.6922930Z Build Date: 2026-11-03T17:26:59Z
+macos	Set up job	2026-11-10T10:40:19.6923410Z Worker ID: {b2bd9109-9422-4f63-ba82-6f265c988e59}
+macos	Set up job	2026-11-10T10:40:19.6923870Z Region: westus
+macos	Set up job	2026-11-10T10:40:19.6924510Z Cloud: MacCloud
+macos	Set up job	2026-11-10T10:40:19.6924920Z ##[endgroup]
+macos	Set up job	2026-11-10T10:40:19.6926130Z ##[group]Operating System
+macos	Set up job	2026-11-10T10:40:19.6926640Z macOS
+macos	Set up job	2026-11-10T10:40:19.6927020Z 15.8.2
+macos	Set up job	2026-11-10T10:40:19.6927420Z 24H232
+macos	Set up job	2026-11-10T10:40:19.6927810Z ##[endgroup]
+macos	Set up job	2026-11-10T10:40:19.6928590Z ##[group]Runner Image
+macos	Set up job	2026-11-10T10:40:19.6929040Z Image: macos-15-arm64
+macos	Set up job	2026-11-10T10:40:19.6929470Z Version: 20261104.0514.1
+macos	Set up job	2026-11-10T10:40:19.6930360Z Included Software: https://github.com/actions/runner-images/blob/macos-15-arm64/20261104.0514/images/macos/macos-15-arm64-Readme.md
+macos	Set up job	2026-11-10T10:40:19.6931790Z Image Release: https://github.com/actions/runner-images/releases/tag/macos-15-arm64%2F20261104.0514
+macos	Set up job	2026-11-10T10:40:19.6932460Z ##[endgroup]
+macos	Set up job	2026-11-10T10:40:19.6933460Z ##[group]GITHUB_TOKEN Permissions
+macos	Set up job	2026-11-10T10:40:19.6935040Z Contents: read
+macos	Set up job	2026-11-10T10:40:19.6935410Z Metadata: read
+macos	Set up job	2026-11-10T10:40:19.6935810Z Packages: read
+macos	Set up job	2026-11-10T10:40:19.6936180Z ##[endgroup]
+macos	Set up job	2026-11-10T10:40:19.6937660Z Secret source: Actions
+macos	Set up job	2026-11-10T10:40:19.6938510Z Cache mode: write
+macos	Set up job	2026-11-10T10:40:19.6939010Z Prepare workflow directory
+macos	Set up job	2026-11-10T10:40:19.7167740Z Prepare all required actions
+macos	Set up job	2026-11-10T10:40:19.7202300Z Getting action download info
+macos	Set up job	2026-11-10T10:40:20.1004480Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+macos	Set up job	2026-11-10T10:40:20.3128420Z Download action repository 'actions/cache@v6' (SHA:55cc8345863c7cc4c66a329aec7e433d2d1c52a9)
+macos	Set up job	2026-11-10T10:40:20.5392400Z Complete job name: macos
+macos	Run actions/checkout@v7	﻿2026-11-10T10:40:20.6851930Z ##[group]Run actions/checkout@v7
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6856620Z with:
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6859180Z   repository: valkyriweb/herdr-projects
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6868980Z   token: ***
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6870180Z   ssh-strict: true
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6872100Z   ssh-user: git
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6873370Z   persist-credentials: true
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6874540Z   clean: true
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6876510Z   sparse-checkout-cone-mode: true
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6877400Z   fetch-depth: 1
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6878040Z   fetch-tags: false
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6878760Z   show-progress: true
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6879200Z   lfs: false
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6879600Z   submodules: false
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6880020Z   set-safe-directory: true
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6880480Z   allow-unsafe-pr-checkout: false
+macos	Run actions/checkout@v7	2026-11-10T10:40:20.6881550Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6293190Z Syncing repository: valkyriweb/herdr-projects
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6295950Z ##[group]Getting Git version info
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6296770Z Working directory is '/Users/runner/work/herdr-projects/herdr-projects'
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6297830Z [command]/opt/homebrew/bin/git version
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6906530Z git version 2.56.0
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6936900Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6973350Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/074e97c6-f4e3-4b0d-860d-e3e450c4fa02/.gitconfig'
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6996200Z Temporarily overriding HOME='/Users/runner/work/_temp/074e97c6-f4e3-4b0d-860d-e3e450c4fa02' before making global git config changes
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.6998450Z Adding repository directory to the temporary git global config as a safe directory
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7007330Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/herdr-projects/herdr-projects
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7223850Z Deleting the contents of '/Users/runner/work/herdr-projects/herdr-projects'
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7228570Z ##[group]Determining repository object format
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7233330Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7236450Z ##[group]Initializing the repository
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7240350Z [command]/opt/homebrew/bin/git init /Users/runner/work/herdr-projects/herdr-projects
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7875120Z hint: Using 'master' as the name for the initial branch. This default branch name
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7876810Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7879430Z hint: to use in all of your new repositories, which will suppress this warning,
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7880330Z hint: call:
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7881210Z hint:
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7881740Z hint: 	git config --global init.defaultBranch <name>
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7882240Z hint:
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7882700Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7883460Z hint: 'development'. The just-created branch can be renamed via this command:
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7885190Z hint:
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7894180Z hint: 	git branch -m <name>
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7896530Z hint:
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7902440Z hint: Disable this message with "git config set advice.defaultBranchName false"
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7908290Z Initialized empty Git repository in /Users/runner/work/herdr-projects/herdr-projects/.git/
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.7921460Z [command]/opt/homebrew/bin/git remote add origin https://github.com/valkyriweb/herdr-projects
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8127650Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8128760Z ##[group]Disabling automatic garbage collection
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8132340Z [command]/opt/homebrew/bin/git config --local gc.auto 0
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8277030Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8277920Z ##[group]Setting up auth
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8279050Z Removing SSH command configuration
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8292210Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+macos	Run actions/checkout@v7	2026-11-10T10:40:21.8489720Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.1475710Z Removing HTTP extra header
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.1490560Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.1706520Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.3991090Z Removing includeIf entries pointing to credentials config files
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.4001550Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.4170930Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.6913390Z [command]/opt/homebrew/bin/git config --file /Users/runner/work/_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7144710Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git.path /Users/runner/work/_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7432150Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path /Users/runner/work/_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7708220Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7839930Z [command]/opt/homebrew/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7953150Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7956920Z ##[group]Fetching the repository
+macos	Run actions/checkout@v7	2026-11-10T10:40:22.7983650Z [command]/opt/homebrew/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +5b51abf84f144ed8048a60c0060c89bd45de07a5:refs/remotes/pull/13/merge
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2053060Z From https://github.com/valkyriweb/herdr-projects
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2061050Z  * [new ref]         5b51abf84f144ed8048a60c0060c89bd45de07a5 -> pull/13/merge
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2105530Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2106560Z ##[group]Determining the checkout info
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2108110Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2108870Z [command]/opt/homebrew/bin/git sparse-checkout disable
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2248350Z [command]/opt/homebrew/bin/git config --local --unset-all extensions.worktreeConfig
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2354730Z ##[group]Checking out the ref
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.2356020Z [command]/opt/homebrew/bin/git checkout --progress --force refs/remotes/pull/13/merge
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.5652720Z HEAD is now at 5b51abf Merge 8d22284986bf49d9ab18d85e79e370ebc2bae063 into e43a98f825f336fdb73570a2c9cecbf2293c8a04
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.5670270Z ##[endgroup]
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.5878890Z [command]/opt/homebrew/bin/git log -1 --format=%H
+macos	Run actions/checkout@v7	2026-11-10T10:40:24.6068060Z 5b51abf84f144ed8048a60c0060c89bd45de07a5
+macos	Install Rust	﻿2026-11-10T10:40:24.6468070Z ##[group]Run rustup toolchain install stable --profile minimal
+macos	Install Rust	2026-11-10T10:40:24.6470410Z ^[[36;1mrustup toolchain install stable --profile minimal^[[0m
+macos	Install Rust	2026-11-10T10:40:24.6471750Z ^[[36;1mrustup default stable^[[0m
+macos	Install Rust	2026-11-10T10:40:24.6566970Z shell: /bin/bash -e {0}
+macos	Install Rust	2026-11-10T10:40:24.6567440Z ##[endgroup]
+macos	Install Rust	2026-11-10T10:40:25.1732160Z info: syncing channel updates for stable-aarch64-apple-darwin
+macos	Install Rust	2026-11-10T10:40:25.2832500Z 
+macos	Install Rust	2026-11-10T10:40:25.3055800Z   stable-aarch64-apple-darwin unchanged - rustc 1.99.1 (58cf8f9c3 2026-10-13)
+macos	Install Rust	2026-11-10T10:40:25.3056360Z 
+macos	Install Rust	2026-11-10T10:40:25.3060210Z info: self-update is disabled for this build of rustup
+macos	Install Rust	2026-11-10T10:40:25.3060700Z info: any updates to rustup will need to be fetched with your system package manager
+macos	Install Rust	2026-11-10T10:40:25.3269020Z info: using existing install for stable-aarch64-apple-darwin
+macos	Install Rust	2026-11-10T10:40:25.3293390Z info: default toolchain set to stable-aarch64-apple-darwin
+macos	Install Rust	2026-11-10T10:40:25.3293730Z 
+macos	Install Rust	2026-11-10T10:40:25.3481040Z   stable-aarch64-apple-darwin unchanged - rustc 1.99.1 (58cf8f9c3 2026-10-13)
+macos	Install Rust	2026-11-10T10:40:25.3481680Z 
+macos	Cache the build	﻿2026-11-10T10:40:25.4445560Z ##[group]Run actions/cache@v6
+macos	Cache the build	2026-11-10T10:40:25.4445920Z with:
+macos	Cache the build	2026-11-10T10:40:25.4446210Z   path: ~/.cargo/registry
+macos	Cache the build	~/.cargo/git
+macos	Cache the build	target
+macos	Cache the build	
+macos	Cache the build	2026-11-10T10:40:25.4446670Z   key: macos-macOS-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c
+macos	Cache the build	2026-11-10T10:40:25.4447030Z   restore-keys: macos-macOS-
+macos	Cache the build	2026-11-10T10:40:25.4447250Z   enableCrossOsArchive: false
+macos	Cache the build	2026-11-10T10:40:25.4447500Z   fail-on-cache-miss: false
+macos	Cache the build	2026-11-10T10:40:25.4447760Z   lookup-only: false
+macos	Cache the build	2026-11-10T10:40:25.4447940Z   save-always: false
+macos	Cache the build	2026-11-10T10:40:25.4448150Z ##[endgroup]
+macos	Cache the build	2026-11-10T10:40:25.8412480Z Cache hit for: macos-macOS-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c
+macos	Cache the build	2026-11-10T10:40:27.1863260Z Received 0 of 194762579 (0.0%), 0.0 MBs/sec
+macos	Cache the build	2026-11-10T10:40:28.1891150Z Received 62914560 of 194762579 (32.3%), 29.9 MBs/sec
+macos	Cache the build	2026-11-10T10:40:29.1895770Z Received 134217728 of 194762579 (68.9%), 42.6 MBs/sec
+macos	Cache the build	2026-11-10T10:40:30.1646080Z Received 194762579 of 194762579 (100.0%), 46.7 MBs/sec
+macos	Cache the build	2026-11-10T10:40:30.1651840Z Cache Size: ~186 MB (194762579 B)
+macos	Cache the build	2026-11-10T10:40:30.1760510Z [command]/opt/homebrew/bin/gtar -xf /Users/runner/work/_temp/e15af9f0-aed9-43c7-9f5e-f4e4bb0b36c2/cache.tzst -P -C /Users/runner/work/herdr-projects/herdr-projects --delay-directory-restore --use-compress-program unzstd
+macos	Cache the build	2026-11-10T10:40:34.0362450Z Cache restored successfully
+macos	Cache the build	2026-11-10T10:40:34.0796510Z Cache restored from key: macos-macOS-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c
+macos	The plan's read-only mount	﻿2026-11-10T10:40:34.1045540Z ##[group]Run cargo test --profile quick --locked --test main plan_sandbox -- --nocapture
+macos	The plan's read-only mount	2026-11-10T10:40:34.1062890Z ^[[36;1mcargo test --profile quick --locked --test main plan_sandbox -- --nocapture^[[0m
+macos	The plan's read-only mount	2026-11-10T10:40:34.1108110Z shell: /bin/bash -e {0}
+macos	The plan's read-only mount	2026-11-10T10:40:34.1108430Z env:
+macos	The plan's read-only mount	2026-11-10T10:40:34.1108780Z   GIT_AUTHOR_NAME: ci
+macos	The plan's read-only mount	2026-11-10T10:40:34.1109160Z   GIT_AUTHOR_EMAIL: ci@example.com
+macos	The plan's read-only mount	2026-11-10T10:40:34.1110060Z   GIT_COMMITTER_NAME: ci
+macos	The plan's read-only mount	2026-11-10T10:40:34.1110590Z   GIT_COMMITTER_EMAIL: ci@example.com
+macos	The plan's read-only mount	2026-11-10T10:40:34.1111090Z ##[endgroup]
+macos	The plan's read-only mount	2026-11-10T10:40:34.8878160Z    Compiling sw-core v1.2.8 (/Users/runner/work/herdr-projects/herdr-projects/crates/core)
+macos	The plan's read-only mount	2026-11-10T10:40:38.8024760Z    Compiling sw-flow v1.2.8 (/Users/runner/work/herdr-projects/herdr-projects/crates/flow)
+macos	The plan's read-only mount	2026-11-10T10:40:43.8018110Z    Compiling sw-board v1.2.8 (/Users/runner/work/herdr-projects/herdr-projects/crates/board)
+macos	The plan's read-only mount	2026-11-10T10:40:46.5596100Z    Compiling sw-web v1.2.8 (/Users/runner/work/herdr-projects/herdr-projects/crates/web)
+macos	The plan's read-only mount	2026-11-10T10:40:47.7667860Z    Compiling herdr-projects v1.2.8 (/Users/runner/work/herdr-projects/herdr-projects)
+macos	The plan's read-only mount	2026-11-10T10:41:23.5078980Z     Finished `quick` profile [unoptimized] target(s) in 49.23s
+macos	The plan's read-only mount	2026-11-10T10:41:23.5396320Z      Running tests/main.rs (target/quick/deps/main-c1d519a86bde7313)
+macos	The plan's read-only mount	2026-11-10T10:41:23.5519730Z 
+macos	The plan's read-only mount	2026-11-10T10:41:23.5523510Z running 4 tests
+macos	The plan's read-only mount	2026-11-10T10:41:23.8994180Z a sandbox inside ours: refused: sandbox-exec: sandbox_apply: Operation not permitted
+macos	The plan's read-only mount	2026-11-10T10:41:23.9126680Z test plan_sandbox::real_programs_a_write_into_the_guarded_folders_is_refused_and_one_elsewhere_works ... ok
+macos	The plan's read-only mount	2026-11-10T10:41:24.1012260Z test plan_sandbox::a_plan_step_on_macos_starts_its_writer_under_sandbox_exec_with_the_worktree_and_its_git_folder_guarded ... ok
+macos	The plan's read-only mount	2026-11-10T10:41:24.1495740Z test plan_sandbox::each_platform_names_its_own_tool_and_a_program_s_own_sandbox_is_off_inside_seatbelt ... ok
+macos	The plan's read-only mount	2026-11-10T10:41:24.2094760Z test plan_sandbox::the_seatbelt_profile_denies_writes_under_the_real_paths_only ... ok
+macos	The plan's read-only mount	2026-11-10T10:41:24.2096660Z 
+macos	The plan's read-only mount	2026-11-10T10:41:24.2097430Z test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 948 filtered out; finished in 0.66s
+macos	The plan's read-only mount	2026-11-10T10:41:24.2098530Z 
+macos	Post Cache the build	﻿2026-11-10T10:41:24.6765340Z Post job cleanup.
+macos	Post Cache the build	2026-11-10T10:41:24.8981430Z Cache hit occurred on the primary key macos-macOS-db353d2630fea6982ce2a5ff0e55db3a7213c9f4d98cc30b01775657271eb98c, not saving cache.
+macos	Post Run actions/checkout@v7	﻿2026-11-10T10:41:24.9188030Z Post job cleanup.
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.0809010Z [command]/opt/homebrew/bin/git version
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.0939110Z git version 2.56.0
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.0994820Z Copying '/Users/runner/.gitconfig' to '/Users/runner/work/_temp/5b3cca46-9176-4ba2-a379-598c3c3d7ebc/.gitconfig'
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.1014450Z Temporarily overriding HOME='/Users/runner/work/_temp/5b3cca46-9176-4ba2-a379-598c3c3d7ebc' before making global git config changes
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.1016240Z Adding repository directory to the temporary git global config as a safe directory
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.1019660Z [command]/opt/homebrew/bin/git config --global --add safe.directory /Users/runner/work/herdr-projects/herdr-projects
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.1119750Z Removing SSH command configuration
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.1130100Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp core\.sshCommand
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.1213310Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.3090140Z Removing HTTP extra header
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.3096080Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.3183310Z [command]/opt/homebrew/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5251580Z Removing includeIf entries pointing to credentials config files
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5259850Z [command]/opt/homebrew/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5344620Z includeif.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5346440Z includeif.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5347590Z includeif.gitdir:/github/workspace/.git.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5348420Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5355890Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5503820Z /Users/runner/work/_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5526380Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git.path \/Users\/runner\/work\/_temp\/git\-credentials\-8991715b\-5ce8\-4133\-afb6\-bb39b1fbba84\.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5627040Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5691780Z /Users/runner/work/_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5699590Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/Users/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path \/Users\/runner\/work\/_temp\/git\-credentials\-8991715b\-5ce8\-4133\-afb6\-bb39b1fbba84\.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5764990Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5829050Z /github/runner_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5837090Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-8991715b\-5ce8\-4133\-afb6\-bb39b1fbba84\.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.5948930Z [command]/opt/homebrew/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.6009800Z /github/runner_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.6021010Z [command]/opt/homebrew/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-8991715b\-5ce8\-4133\-afb6\-bb39b1fbba84\.config
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.6127100Z [command]/opt/homebrew/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+macos	Post Run actions/checkout@v7	2026-11-10T10:41:25.8068870Z Removing credentials config '/Users/runner/work/_temp/git-credentials-8991715b-5ce8-4133-afb6-bb39b1fbba84.config'
+macos	Complete job	﻿2026-11-10T10:41:25.8209800Z Cleaning up orphan processes
