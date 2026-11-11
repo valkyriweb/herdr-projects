@@ -1,0 +1,75 @@
+
++ . /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/scripts/warm-start.sh
+++ ws_old=200001010000
++ ws_seed
++ ws_clean=
++ '[' -z '' ']'
++ '[' '!' -e target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ printf %s /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ cksum
+++ cut '-d ' -f1
++ ws_root=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
+++ git rev-parse HEAD
++ ws_clean=8ff1c06e3b046e765960ccb6646fddd9c39f0079
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current
++ ws_name=
++ return 0
++ mkdir -p target/quick
++ printf 'built in new'
++ ws_keep
++ '[' -z '' ']'
++ '[' -n 8ff1c06e3b046e765960ccb6646fddd9c39f0079 ']'
++ '[' -d target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ printf %s /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ cksum
+++ cut '-d ' -f1
++ ws_root=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169
+++ git rev-parse HEAD
++ '[' 8ff1c06e3b046e765960ccb6646fddd9c39f0079 = 8ff1c06e3b046e765960ccb6646fddd9c39f0079 ']'
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
++ ws_main=
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/remotes/origin/HEAD
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/heads/main
++ ws_main=1
++ break
++ '[' -n 1 ']'
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current
++ ws_name=
++ ws_name=
++ '[' -n '' ']'
++ ws_new=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760
++ rm -rf /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760
++ mkdir -p /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760/target
++ ws_copy target/quick /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760/target/quick
++ cp -pR --reflink=auto target/quick /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760/target/quick
++ rm -rf /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760/target/quick
++ cp -cpR target/quick /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760/target/quick
++ return 0
++ echo 8ff1c06e3b046e765960ccb6646fddd9c39f0079
++ pwd
++ ws_rustc
++ rustc -vV
++ tr -d '\r'
++ mv /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/new.84760 /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760
++ echo seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760
++ mv /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current.84760 /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current
++ '[' -z '' ']'
++ ws_tidy
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current
++ ws_name=seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760
++ for s in '"$ws_root"/seed-*'
++ '[' -d /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760 ']'
++ '[' seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760 '!=' seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760 ']'
++ continue
++ find /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169 -maxdepth 1 -name 'new.*' -mmin +60 -exec rm -rf '{}' +

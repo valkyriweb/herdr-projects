@@ -1,0 +1,283 @@
+diff --git a/crates/core/src/herdr/api.rs b/crates/core/src/herdr/api.rs
+index 5c3c399e..a772219b 100644
+--- a/crates/core/src/herdr/api.rs
++++ b/crates/core/src/herdr/api.rs
+@@ -83,13 +83,19 @@ impl Herdr {
+     pub fn shell_pid(&self, id: &str) -> Option<i64> { self.process_info(id).and_then(|i| i.at("shell_pid").as_i64()).filter(|p| *p > 1) }
+     pub(crate) fn process_info(&self, id: &str) -> Option<Value> { self.call(args(&["pane", "process-info", "--pane", id])).ok().map(|r| r.at("process_info").clone()) }
+     /// Is nothing but its shell running in the pane? Unknown counts as busy (what runs instead: busy.rs).
+-    pub fn pane_idle(&self, id: &str) -> bool { super::busy::beside_shell(self, id, false).is_empty() }
++    pub fn pane_idle(&self, id: &str) -> bool {
++        if super::hc::is_socket(self.socket.as_deref()) { return self.agent_get(id).map(|a| a.is_none()).unwrap_or(false); }
++        super::busy::beside_shell(self, id, false).is_empty()
++    }
+     /// Does nothing run in the pane but the program `agent` in its foreground (and the shell that started it)? Unknown:
+     /// no. Beside the program, its process group may hold only its helpers: one wired to the group itself on its input
+     /// and output (an MCP server, procs.rs), or the agent's own program under a wrapper (`codex` installed with npm). A
+     /// command is at work, in the program's group (on the terminal, a file or `/dev/null`) or in a group of its own
+     /// (what, in words: busy.rs).
+-    pub fn pane_childless(&self, id: &str, agent: &str) -> bool { super::busy::beside_agent(self, id, agent, false).is_empty() }
++    pub fn pane_childless(&self, id: &str, agent: &str) -> bool {
++        if super::hc::is_socket(self.socket.as_deref()) { return super::hc::at_rest(id); }
++        super::busy::beside_agent(self, id, agent, false).is_empty()
++    }
+     /// A pane, with whatever runs in it, into a new tab of another space. Never focused.
+     pub fn pane_move(&self, id: &str, workspace: &str, label: &str) -> HRes<Value> {
+         let mut a = args(&["pane", "move", id, "--new-tab", "--workspace", workspace]);
+@@ -102,6 +108,7 @@ impl Herdr {
+     pub fn pane_run(&self, id: &str, command: &str) -> HRes<Value> { self.when_at_prompt(id, || self.call(args(&["pane", "run", id, command]))) }
+     /// End the program in the pane's foreground, so the pane is at its shell again. True once herdr sees no agent there.
+     pub fn pane_quit(&self, id: &str, wait_ms: i64) -> bool {
++        if super::hc::is_socket(self.socket.as_deref()) { return super::hc::quit(id); }
+         let gone = || matches!(self.agent_get(id), Ok(None));
+         let info = self.process_info(id);
+         let shell = info.as_ref().map(|i| i.i("shell_pid")).unwrap_or(-1);
+@@ -137,6 +144,7 @@ impl Herdr {
+     /// A program herdr sees at work only through its own integration is never started without it (kinds.rs
+     /// `needs_integration`): herdr would never say its turn ended. Its status unknown (an older herdr): it is started.
+     pub fn integration_ready(&self, kind: &str) -> HRes<()> {
++        if super::hc::is_socket(self.socket.as_deref()) { return Ok(()); }
+         let Some(k) = crate::agents::kinds::kind(kind).filter(|k| k.needs_integration) else { return Ok(()) };
+         let status = run_raw(self.socket.as_deref(), &args(&["integration", "status"]), 15000, "").unwrap_or_default();
+         let line = status.lines().find(|l| l.trim_start().starts_with(&format!("{}:", k.integration)) || l.trim_start().starts_with(&format!("{} (", k.integration)));
+diff --git a/crates/core/src/herdr/cli.rs b/crates/core/src/herdr/cli.rs
+index b4ea8a44..dad868bb 100644
+--- a/crates/core/src/herdr/cli.rs
++++ b/crates/core/src/herdr/cli.rs
+@@ -42,12 +42,13 @@ pub fn current_socket() -> String {
+     match std::env::var("HERDR_SESSION") { Ok(s) if !s.is_empty() => base.join("sessions").join(s).join("herdr.sock"), _ => base.join("herdr.sock") }.display().to_string()
+ }
+ pub fn session_name(socket: &str) -> String {
++    if socket == super::hc::SOCKET { return "hc".into(); }
+     let parts: Vec<&str> = socket.split('/').collect();
+     let n = parts.len();
+     if n >= 3 && parts[n - 1] == "herdr.sock" && parts[n - 3] == "sessions" { parts[n - 2].to_string() } else { "default".into() }
+ }
+ pub fn in_herdr() -> bool { std::env::var("HERDR_ENV").as_deref() == Ok("1") }
+-pub fn socket_exists(socket: &str) -> bool { use std::os::unix::fs::FileTypeExt; std::fs::metadata(socket).map(|m| m.file_type().is_socket()).unwrap_or(false) }
++pub fn socket_exists(socket: &str) -> bool { if socket == super::hc::SOCKET { return true; } use std::os::unix::fs::FileTypeExt; std::fs::metadata(socket).map(|m| m.file_type().is_socket()).unwrap_or(false) }
+ /// Whether two paths name the same herdr socket: alike as text, or once links are followed (a config folder reached
+ /// through a symlink spells the same session's socket another way). A socket not there yet is followed as far as its
+ /// folder. Asked for every task on every pass: what a path resolves to is kept for a minute.
+@@ -99,6 +100,7 @@ pub fn wait_with_timeout(mut child: std::process::Child, timeout_ms: u64) -> HRe
+ }
+ /// One command: its JSON result, or the error herdr gave.
+ pub fn run(socket: Option<&str>, args: &[String], timeout_ms: u64, input: &str) -> HRes<Value> {
++    if super::hc::is_socket(socket) { return super::hc::call(args); }
+     let r = launch(socket, args, input, timeout_ms)?;
+     if r.status != 0 {
+         let (mut code, mut message) = ("failed".to_string(), if r.stderr.trim().is_empty() { r.stdout.trim().to_string() } else { r.stderr.trim().to_string() });
+@@ -122,6 +124,7 @@ pub fn run(socket: Option<&str>, args: &[String], timeout_ms: u64, input: &str)
+ }
+ /// One command's raw output.
+ pub fn run_raw(socket: Option<&str>, args: &[String], timeout_ms: u64, input: &str) -> HRes<String> {
++    if super::hc::is_socket(socket) { return super::hc::read(args); }
+     let r = launch(socket, args, input, timeout_ms)?;
+     if r.status != 0 { return Err(herr("failed", if r.stderr.trim().is_empty() { r.stdout.trim().to_string() } else { r.stderr.trim().to_string() })); }
+     Ok(r.stdout)
+diff --git a/crates/core/src/herdr/mod.rs b/crates/core/src/herdr/mod.rs
+index b413ed16..ce6f5ff0 100644
+--- a/crates/core/src/herdr/mod.rs
++++ b/crates/core/src/herdr/mod.rs
+@@ -8,6 +8,7 @@ pub mod api;
+ pub mod busy;
+ pub mod cli;
+ pub mod find;
++pub mod hc;
+ pub mod keys;
+ pub mod launched;
+ pub mod palette;
+diff --git a/crates/core/src/store/settings_list.rs b/crates/core/src/store/settings_list.rs
+index f7e065b2..38a7692f 100644
+--- a/crates/core/src/store/settings_list.rs
++++ b/crates/core/src/store/settings_list.rs
+@@ -57,6 +57,7 @@ pub static SETTINGS: LazyLock<Vec<Entry>> = LazyLock::new(|| {
+     use Kind::*;
+     let mut s = vec![];
+     // who works, who reviews, who you talk to
++    s.push(e("agents.runtime", "Agent runtime", Board, Ty::Choice, json!("classic"), "where new board agents run: `classic` in herdr panes, or `hc` in herdr-core terminals shown in the Herdr app. Existing task links keep their runtime. hc requires the hc program on PATH; the app is optional ([hc runtime](hc-runtime.md))").values(&["classic", "hc"]));
+     s.extend(role("worker", "the working agent", "claude", Work));
+     s.push(e("worker.fallback", "Agent's fallback", Work, Ty::Agents, json!("none"), "who takes over when the working agent cannot go on: a list of agents tried in order (`codex, claude/claude-opus-5-5`; a model after a slash, as in `worker.agent`), or `none`. It takes over in the same worktree, with the task, what was done so far and the open findings, when the agent's provider is down (after the board's own tries), the agent is out of allowance or logged out, or its work still fails the review or the check after `review.rounds` rounds. With the list used up the task waits for you. Nobody extra runs until then. More: [the fallback agent](fallback.md)"));
+     s.extend(role("reviewer", "the reviewer", "codex", Work));
+diff --git a/crates/flow/src/actions/archive.rs b/crates/flow/src/actions/archive.rs
+index f97f7542..4e7809f1 100644
+--- a/crates/flow/src/actions/archive.rs
++++ b/crates/flow/src/actions/archive.rs
+@@ -3,7 +3,7 @@ use super::talk::stop_as;
+ use crate::leftovers::ends::Ended;
+ use crate::err::{Error, Res};
+ use crate::flow;
+-use crate::herdr::{cli::{current_socket, same_socket}, Herdr};
++use crate::herdr::Herdr;
+ use crate::json::*;
+ use crate::runner::runner_alive;
+ use crate::store::files::{marker, with_task_lock, SLOT_STAGES};
+@@ -28,7 +28,7 @@ pub fn archive(id: &str) -> Res<Task> {
+     })?;
+     let before = crate::land::cleanup_ends::before_archive(&t); // sorted while its panes are there (cleanup_ends.rs)
+     let mut closed = false;
+-    if !workspace.is_empty() && same_socket(&socket, &current_socket()) {
++    if !workspace.is_empty() && crate::herdr::hc::local(&socket) {
+         let h = Herdr::new(Some(socket));
+         closed = h.workspace_close(&workspace).is_ok();
+         flow::spaces::close_repo_space(&h, &folder_of(t.s("id")));
+diff --git a/crates/flow/src/actions/start.rs b/crates/flow/src/actions/start.rs
+index bb9dc3d3..776c57a2 100644
+--- a/crates/flow/src/actions/start.rs
++++ b/crates/flow/src/actions/start.rs
+@@ -4,7 +4,7 @@ use crate::after::{self, Wait};
+ use crate::clock::now;
+ use crate::err::Res;
+ use crate::flow;
+-use crate::herdr::cli::{current_socket, same_socket};
++use crate::herdr::cli::same_socket;
+ use crate::json::*;
+ use crate::research::{turn_refusal, RESEARCH};
+ use crate::runner::{runner_alive, spawn_runner};
+@@ -81,7 +81,7 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
+     let deps = match &w.after { Some(r) => Some(after::checked(Some(cur.s("id")), r)?), None => None };
+     let asked: Vec<(String, Value)> = asked.into_iter().filter(|(_, v)| !(v.is_null() || *v == json!(""))).collect();
+     let values = checked(&asked, &Scope::task(&cur))?;
+-    let socket = current_socket();
++    let socket = if cur.at("link").b("socket") { cur.at("link").t("socket") } else { crate::herdr::hc::launch_socket() };
+     let mut stale: Vec<Task> = vec![];
+     let mut old: Option<(String, String)> = None; // the last round's space, when its clean-up had not closed it yet
+     let t = update(cur.s("id"), |t| {
+@@ -91,7 +91,7 @@ pub fn delegate_with(id: &str, asked: Vec<(String, Value)>, w: Wait) -> Res<Task
+         if t.s("stage") == "pick" { crate::fail!("{id} waits for you to pick one of its attempts: herdr-projects pick {id} <letter>."); }
+         if is_agent_stage(t.s("stage")) || runner_alive(t) { crate::fail!("{id} already has an agent working on it."); }
+         if t.b("autoMerge") { crate::fail!("{id} is waiting for an automatic merge. Reply to its agent to cancel that first."); }
+-        if t.at("link").b("socket") && !same_socket(t.at("link").s("socket"), &socket) { crate::fail!("{id} lives in another herdr session. Open the board there."); }
++        if t.at("link").b("socket") && !crate::herdr::hc::local(t.at("link").s("socket")) { crate::fail!("{id} lives in another herdr session. Open the board there."); }
+         if !values.is_empty() { let s = t.obj_mut("settings"); for (k, v) in &values { s.insert(k.clone(), v.clone()); } }
+         // Delegated again while it asked you (docs/gate.md): the new round asks again, once. A review alone is no reason.
+         if t.b("mergeIntent") || t.s("stage") == "approval" { t.put("requireApproval", true); }
+diff --git a/crates/flow/src/coordinator/requests.rs b/crates/flow/src/coordinator/requests.rs
+index 829b1e0c..b9a4793d 100644
+--- a/crates/flow/src/coordinator/requests.rs
++++ b/crates/flow/src/coordinator/requests.rs
+@@ -8,7 +8,6 @@ use super::who::{choice, OFF_WORDS};
+ use crate::board::keys::key_name;
+ use crate::clock::now;
+ use crate::err::Res;
+-use crate::herdr::Herdr;
+ use crate::json::*;
+ use crate::store::marks::tilde;
+ use crate::store::repos::repo_of;
+@@ -39,12 +38,11 @@ pub fn where_text(co: impl Into<Co>) -> String {
+ /// every message it may still have ahead of it was sent with the start key).
+ pub fn tab_turn(pane: &str, socket: &str) -> bool { super::state::all(socket).iter().any(|co| tab_turn_of(pane, co)) }
+ fn tab_turn_of(pane: &str, co: &Co) -> bool {
+-    let socket = co.socket.as_str();
+     let Some(c) = get(co) else { return false };
+     if pane.is_empty() || (c.s("pane") != pane && c.s("paneWas") != pane) || !c.at("mark").b("rest") || c.at("mark").i("run") != c.i("startedAt") { return false; }
+     let open: Vec<&Value> = c.arr("where").iter().filter(|x| x.b("sentAt") && !x.b("handled")).collect();
+     if open.is_empty() || !open.iter().all(|x| x.b("delegate")) { return false; }
+-    Herdr::new(Some(socket.to_string())).agent_get(c.s("pane")).ok().flatten().map(|a| crate::herdr::turns::same_turn(&a, c.at("mark").at("seq"))).unwrap_or(false)
++    super::state::api(co).agent_get(c.s("pane")).ok().flatten().map(|a| crate::herdr::turns::same_turn(&a, c.at("mark").at("seq"))).unwrap_or(false)
+ }
+ /// The Coordinator's own folder (or one inside it) is never where the human is working, nor the machine coordinator's.
+ pub fn in_home(dir: &Path, socket: &str) -> bool {
+@@ -57,8 +55,8 @@ pub fn kick(co: impl Into<Co>) {
+     if crate::runner::inline() { crate::runner::JOBS.with(|j| j.borrow_mut().push(("coordinator".into(), key, vec![]))); return; }
+     crate::housekeeping::spawn_loose(&["run", "coordinator", &key]);
+ }
+-fn herdr_up(socket: &str) -> Res<()> {
+-    if crate::herdr::cli::fake().is_none() && !crate::herdr::cli::socket_exists(socket) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
++fn herdr_up(co: &Co) -> Res<()> {
++    if !super::state::available(co) { crate::fail!("herdr is not running: the Coordinator lives in herdr."); }
+     Ok(())
+ }
+ /// Say something to the Coordinator. It is started (or started again, in the same conversation) when it is not there.
+@@ -69,7 +67,7 @@ pub fn send(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Into<C
+ /// queued all the same and the answer is an error that says so (not_delivered).
+ pub fn send_as(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Into<Co>, sender: Value) -> Res<Obj> {
+     let co = co.into();
+-    herdr_up(&co.socket)?;
++    herdr_up(&co)?;
+     let root = known(&co)?;
+     let ctx = context(root.as_deref().unwrap_or(cwd), delegate, about)?;
+     let text = &crate::autopilot::wake::escape(text);
+@@ -81,7 +79,7 @@ pub fn send_as(cwd: &Path, text: &str, delegate: bool, about: &str, co: impl Int
+         true
+     })?;
+     // Where this process cannot run herdr, neither can the pump it would start: the message is kept, and said to wait.
+-    if !crate::herdr::cli::found() { crate::fail!("{}", not_delivered(&co.name())); }
++    if !crate::herdr::hc::is_socket(Some(&super::state::api(&co).socket_path())) && !crate::herdr::cli::found() { crate::fail!("{}", not_delivered(&co.name())); }
+     kick(&co);
+     Ok(c)
+ }
+@@ -99,7 +97,7 @@ fn known(co: &Co) -> Res<Option<std::path::PathBuf>> {
+ /// restart: the same conversation, the program started again. new: a fresh conversation, on the default or on `pick`.
+ /// stop: close it; the next message starts it again where it left off. open: have it running, with nothing said.
+ fn want(what: &str, pick: Option<Obj>, co: Co) -> Res<Obj> {
+-    herdr_up(&co.socket)?;
++    herdr_up(&co)?;
+     known(&co)?;
+     if what != "stop" && pick.is_none() && !get(&co).map(|c| c.b("run")).unwrap_or(false) && choice().is_none() { crate::fail!("{OFF_WORDS}"); }
+     let c = change(&co, |c| {
+diff --git a/crates/flow/src/flow/live.rs b/crates/flow/src/flow/live.rs
+index b1eee16f..f5e8a3c2 100644
+--- a/crates/flow/src/flow/live.rs
++++ b/crates/flow/src/flow/live.rs
+@@ -27,7 +27,7 @@ pub fn read_session(socket: &str) -> Session {
+ pub fn live_of(t: &Task, session: &Session, here: &str) -> Value {
+     if !is_agent_task(t) { return Value::Null; }
+     let sock = t.at("link").s("socket");
+-    if !sock.is_empty() && !same_socket(sock, here) { return json!({ "away": session_name(sock) }); }
++    if !sock.is_empty() && !same_socket(sock, here) && sock != crate::herdr::hc::SOCKET { return json!({ "away": session_name(sock) }); }
+     let Session::Up { agents, panes } = session else { return json!({ "down": true }) };
+     let pane_id = t.at("link").s("pane");
+     let Some(pane) = panes.get(pane_id).filter(|p| owns_pane(t, p)) else { return json!({ "gone": true }) };
+@@ -105,8 +105,9 @@ fn session_for(tasks: &[Arc<Task>], socket: &str) -> Session {
+ pub fn board_for(socket: &str) -> Vec<Obj> {
+     let tasks = shared(ListOpts::default());
+     let session = session_for(&tasks, socket);
++    let hc = session_for(&tasks, crate::herdr::hc::SOCKET);
+     let mut seen = BTreeMap::new();
+-    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, &session, socket, &mut seen)).collect();
++    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, if t.at("link").s("socket") == crate::herdr::hc::SOCKET { &hc } else { &session }, socket, &mut seen)).collect();
+     crate::shown::queue::number(&mut rows);
+     rows
+ }
+@@ -114,15 +115,16 @@ pub fn board(include_archived: bool) -> Vec<Obj> {
+     let here = current_socket();
+     let tasks = shared(ListOpts { include_archived, ..Default::default() });
+     let session = session_for(&tasks, &here);
++    let hc = session_for(&tasks, crate::herdr::hc::SOCKET);
+     let mut seen = BTreeMap::new();
+-    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, &session, &here, &mut seen)).collect();
++    let mut rows: Vec<Obj> = tasks.iter().map(|t| shown(t, if t.at("link").s("socket") == crate::herdr::hc::SOCKET { &hc } else { &session }, &here, &mut seen)).collect();
+     crate::shown::queue::number(&mut rows);
+     rows
+ }
+ /// Refuse a live action with the reason the board shows.
+ pub fn assert_live(t: &Task) -> Res<()> {
+     if !is_agent_task(t) { crate::fail!("No agent has been on {} yet. Delegate it first.", t.s("id")); }
+-    let here = current_socket();
++    let here = if t.at("link").s("socket") == crate::herdr::hc::SOCKET { crate::herdr::hc::SOCKET.into() } else { current_socket() };
+     if !same_socket(t.at("link").s("socket"), &here) { crate::fail!("{} lives in herdr session {}. Open the board there.", t.s("id"), session_name(t.at("link").s("socket"))); }
+     if crate::herdr::cli::fake().is_none() && (!socket_exists(&here) || !Herdr::new(Some(here)).alive()) { crate::fail!("herdr is not running."); }
+     Ok(())
+diff --git a/crates/flow/src/land/cleanup.rs b/crates/flow/src/land/cleanup.rs
+index f493244a..8c0c877c 100644
+--- a/crates/flow/src/land/cleanup.rs
++++ b/crates/flow/src/land/cleanup.rs
+@@ -9,7 +9,7 @@ use crate::agents::installed::read_turn_of;
+ use crate::clock::now;
+ use crate::flow;
+ use crate::herdr::api::read_screen;
+-use crate::herdr::cli::{args, current_socket, same_socket, socket_exists};
++use crate::herdr::cli::{args, socket_exists};
+ use crate::herdr::Herdr;
+ use crate::json::*;
+ use super::in_use::{self, InUse, Why};
+@@ -38,7 +38,7 @@ pub fn cleanup_with(t: &Task, o: Opts) -> Cleanup {
+     let link = t.at("link");
+     let sock = link.t("socket");
+     // After a task ended its own herdr session is asked, whichever session this runs in. A delete acts in this one only.
+-    let api = if !sock.is_empty() && (o.still.is_some() || same_socket(&sock, &current_socket())) && socket_exists(&sock) { Some(Herdr::new(Some(sock.clone()))) } else { None };
++    let api = if !sock.is_empty() && (o.still.is_some() || crate::herdr::hc::local(&sock)) && socket_exists(&sock) { Some(Herdr::new(Some(sock.clone()))) } else { None };
+     let (mut ws, mut unknown) = (None::<Value>, false); // a space herdr did not answer for is not "closed already"
+     if let (Some(api), true) = (&api, link.b("workspace")) {
+         match api.call(args(&["workspace", "get", link.s("workspace")])) { Ok(r) => ws = Some(r.at("workspace").clone()).filter(|w| w.is_object()), Err(e) => unknown = !e.code.contains("not_found") }

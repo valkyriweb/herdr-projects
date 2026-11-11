@@ -1,0 +1,132 @@
+Started from the warm build of d7f7312: only what changed since is built again.
+
++ . /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/scripts/warm-start.sh
+++ ws_old=200001010000
++ ws_seed
++ ws_clean=
++ '[' -z '' ']'
++ '[' '!' -e target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ cksum
+++ printf %s /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ cut '-d ' -f1
++ ws_root=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
+++ git rev-parse HEAD
++ ws_clean=5989c1ab92c03fa85eff41b808a89524fa8bc3df
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current
++ ws_name=seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495
++ '[' -n seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495 ']'
++ '[' -d /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/target/quick ']'
++ ws_src=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/rustc
+++ ws_rustc
+++ rustc -vV
+++ tr -d '\r'
++ '[' 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' = 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' ']'
+++ du -sk /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/target/quick
+++ cut -f1
++ '[' 4 -lt 2097152 ']'
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/commit
++ ws_from=d7f7312a80d40b7d9225e67b5cc20f95e9f70557
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/folder
++ ws_was=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/new
+++ ws_changed d7f7312a80d40b7d9225e67b5cc20f95e9f70557
++ ws_list=src/a.rs
++ mkdir -p target
++ rm -rf target/quick.warm.80700
++ ws_copy /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/target/quick target/quick.warm.80700
++ cp -pR --reflink=auto /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/target/quick target/quick.warm.80700
++ rm -rf target/quick.warm.80700
++ cp -cpR /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/target/quick target/quick.warm.80700
++ return 0
++ mv target/quick.warm.80700 target/quick
++ for d in 'target/quick/deps/*.d' 'target/quick/build/*/*.d'
++ grep '^# env-dep:' 'target/quick/deps/*.d'
++ grep -F /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/new
++ grep -vF /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/new/target/
++ grep -q .
++ continue
++ for d in 'target/quick/deps/*.d' 'target/quick/build/*/*.d'
++ grep '^# env-dep:' 'target/quick/build/*/*.d'
++ grep -F /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/new
++ grep -vF /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/new/target/
++ grep -q .
++ continue
++ '[' src/a.rs '!=' - ']'
++ git ls-files -z
++ xargs -0 touch -h -t 200001010000
++ printf '%s\n' src/a.rs
++ IFS=
++ read -r f
++ '[' -z src/a.rs ']'
++ touch -h -- src/a.rs
++ IFS=
++ read -r f
++ echo 'Started from the warm build of d7f7312: only what changed since is built again.'
++ mkdir -p target/quick
++ printf 'built in old'
++ ws_keep
++ '[' -z '' ']'
++ '[' -n 5989c1ab92c03fa85eff41b808a89524fa8bc3df ']'
++ '[' -d target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ printf %s /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ cksum
+++ cut '-d ' -f1
++ ws_root=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158
+++ git rev-parse HEAD
++ '[' 5989c1ab92c03fa85eff41b808a89524fa8bc3df = 5989c1ab92c03fa85eff41b808a89524fa8bc3df ']'
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
++ ws_main=
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/remotes/origin/HEAD
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/heads/main
++ ws_main=1
++ break
++ '[' -n 1 ']'
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current
++ ws_name=seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495
++ '[' -n seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495 ']'
++ '[' -d /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495 ']'
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/rustc
+++ ws_rustc
+++ rustc -vV
+++ tr -d '\r'
++ '[' 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' = 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' ']'
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495/commit
++ ws_had=d7f7312a80d40b7d9225e67b5cc20f95e9f70557
++ '[' d7f7312a80d40b7d9225e67b5cc20f95e9f70557 '!=' 5989c1ab92c03fa85eff41b808a89524fa8bc3df ']'
++ git merge-base --is-ancestor HEAD d7f7312a80d40b7d9225e67b5cc20f95e9f70557
++ return 0

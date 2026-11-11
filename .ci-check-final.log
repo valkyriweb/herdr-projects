@@ -1,0 +1,285 @@
+﻿2026-11-10T11:08:31.7845165Z Current runner version: '2.338.2'
+2026-11-10T11:08:31.7877808Z ##[group]Runner Image Provisioner
+2026-11-10T11:08:31.7879015Z Hosted Compute Agent
+2026-11-10T11:08:31.7879678Z Version: 20261028.624
+2026-11-10T11:08:31.7880266Z Commit: 54898b74c23fde5556c9b3c3a2290865feef0dfe
+2026-11-10T11:08:31.7880918Z Build Date: 2026-10-28T21:51:42Z
+2026-11-10T11:08:31.7881582Z Worker ID: {786c1867-c99a-43ff-a775-953915f0b559}
+2026-11-10T11:08:31.7882218Z Region: eastus3
+2026-11-10T11:08:31.7882749Z Cloud: Azure
+2026-11-10T11:08:31.7883241Z ##[endgroup]
+2026-11-10T11:08:31.7884860Z ##[group]Operating System
+2026-11-10T11:08:31.7885506Z Ubuntu
+2026-11-10T11:08:31.7886060Z 24.04.5
+2026-11-10T11:08:31.7886540Z LTS
+2026-11-10T11:08:31.7887018Z ##[endgroup]
+2026-11-10T11:08:31.7887518Z ##[group]Runner Image
+2026-11-10T11:08:31.7888104Z Image: ubuntu-24.04
+2026-11-10T11:08:31.7888874Z Version: 20261101.360.1
+2026-11-10T11:08:31.7890214Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261101.360/images/ubuntu/Ubuntu2404-Readme.md
+2026-11-10T11:08:31.7891612Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261101.360
+2026-11-10T11:08:31.7892535Z ##[endgroup]
+2026-11-10T11:08:31.7893701Z ##[group]GITHUB_TOKEN Permissions
+2026-11-10T11:08:31.7896224Z Contents: read
+2026-11-10T11:08:31.7896771Z Metadata: read
+2026-11-10T11:08:31.7897268Z Packages: read
+2026-11-10T11:08:31.7897894Z ##[endgroup]
+2026-11-10T11:08:31.7900990Z Secret source: Actions
+2026-11-10T11:08:31.7901991Z Cache mode: write
+2026-11-10T11:08:31.7902701Z Prepare workflow directory
+2026-11-10T11:08:31.8375691Z Prepare all required actions
+2026-11-10T11:08:31.8458647Z Getting action download info
+2026-11-10T11:08:32.0779941Z Download action repository 'actions/checkout@v7' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-11-10T11:08:32.1977307Z Download action repository 'actions/setup-node@v7' (SHA:949feb2413d6458794dcd2491c4babbbce0c15c1)
+2026-11-10T11:08:32.2662656Z Download action repository 'actions/cache@v6' (SHA:55cc8345863c7cc4c66a329aec7e433d2d1c52a9)
+2026-11-10T11:08:32.3686300Z Download action repository 'actions/upload-artifact@v7' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-11-10T11:08:32.5479039Z Complete job name: check
+2026-11-10T11:08:32.6465793Z ##[group]Run actions/checkout@v7
+2026-11-10T11:08:32.6466621Z with:
+2026-11-10T11:08:32.6467055Z   repository: valkyriweb/herdr-projects
+2026-11-10T11:08:32.6470780Z   token: ***
+2026-11-10T11:08:32.6471171Z   ssh-strict: true
+2026-11-10T11:08:32.6471571Z   ssh-user: git
+2026-11-10T11:08:32.6471972Z   persist-credentials: true
+2026-11-10T11:08:32.6472414Z   clean: true
+2026-11-10T11:08:32.6472815Z   sparse-checkout-cone-mode: true
+2026-11-10T11:08:32.6473290Z   fetch-depth: 1
+2026-11-10T11:08:32.6473671Z   fetch-tags: false
+2026-11-10T11:08:32.6474067Z   show-progress: true
+2026-11-10T11:08:32.6474468Z   lfs: false
+2026-11-10T11:08:32.6474828Z   submodules: false
+2026-11-10T11:08:32.6475238Z   set-safe-directory: true
+2026-11-10T11:08:32.6475694Z   allow-unsafe-pr-checkout: false
+2026-11-10T11:08:32.6476494Z ##[endgroup]
+2026-11-10T11:08:32.9766926Z Syncing repository: valkyriweb/herdr-projects
+2026-11-10T11:08:32.9769184Z ##[group]Getting Git version info
+2026-11-10T11:08:32.9770028Z Working directory is '/home/runner/work/herdr-projects/herdr-projects'
+2026-11-10T11:08:32.9771043Z [command]/usr/bin/git version
+2026-11-10T11:08:32.9870757Z git version 2.56.0
+2026-11-10T11:08:32.9892734Z ##[endgroup]
+2026-11-10T11:08:32.9907949Z Temporarily overriding HOME='/home/runner/work/_temp/aad2ed52-164d-4320-94ab-8f16b94d5250' before making global git config changes
+2026-11-10T11:08:32.9910538Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-10T11:08:32.9915571Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/herdr-projects/herdr-projects
+2026-11-10T11:08:32.9971219Z Deleting the contents of '/home/runner/work/herdr-projects/herdr-projects'
+2026-11-10T11:08:32.9975453Z ##[group]Determining repository object format
+2026-11-10T11:08:32.9977487Z ##[endgroup]
+2026-11-10T11:08:32.9978890Z ##[group]Initializing the repository
+2026-11-10T11:08:32.9983792Z [command]/usr/bin/git init /home/runner/work/herdr-projects/herdr-projects
+2026-11-10T11:08:33.0102531Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-11-10T11:08:33.0103525Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-11-10T11:08:33.0104385Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-11-10T11:08:33.0105078Z hint: call:
+2026-11-10T11:08:33.0105438Z hint:
+2026-11-10T11:08:33.0105909Z hint: 	git config --global init.defaultBranch <name>
+2026-11-10T11:08:33.0106466Z hint:
+2026-11-10T11:08:33.0106977Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-11-10T11:08:33.0107810Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-11-10T11:08:33.0108691Z hint:
+2026-11-10T11:08:33.0109360Z hint: 	git branch -m <name>
+2026-11-10T11:08:33.0109969Z hint:
+2026-11-10T11:08:33.0110532Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-11-10T11:08:33.0116940Z Initialized empty Git repository in /home/runner/work/herdr-projects/herdr-projects/.git/
+2026-11-10T11:08:33.0129456Z [command]/usr/bin/git remote add origin https://github.com/valkyriweb/herdr-projects
+2026-11-10T11:08:33.0180752Z ##[endgroup]
+2026-11-10T11:08:33.0181520Z ##[group]Disabling automatic garbage collection
+2026-11-10T11:08:33.0184421Z [command]/usr/bin/git config --local gc.auto 0
+2026-11-10T11:08:33.0219682Z ##[endgroup]
+2026-11-10T11:08:33.0220758Z ##[group]Setting up auth
+2026-11-10T11:08:33.0221279Z Removing SSH command configuration
+2026-11-10T11:08:33.0226234Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-10T11:08:33.0264093Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-10T11:08:33.0667248Z Removing HTTP extra header
+2026-11-10T11:08:33.0674093Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-10T11:08:33.0717739Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-10T11:08:33.0947498Z Removing includeIf entries pointing to credentials config files
+2026-11-10T11:08:33.0954407Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-10T11:08:33.0993446Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-10T11:08:33.1223915Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-11-10T11:08:33.1263644Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path /home/runner/work/_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:08:33.1299015Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:08:33.1338755Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:08:33.1374450Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:08:33.1406258Z ##[endgroup]
+2026-11-10T11:08:33.1407525Z ##[group]Fetching the repository
+2026-11-10T11:08:33.1415571Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +60019fb75885ceb1ff0693bb0e9bb1e29db5285f:refs/remotes/pull/14/merge
+2026-11-10T11:08:33.9116440Z From https://github.com/valkyriweb/herdr-projects
+2026-11-10T11:08:33.9121026Z  * [new ref]         60019fb75885ceb1ff0693bb0e9bb1e29db5285f -> pull/14/merge
+2026-11-10T11:08:33.9126222Z ##[endgroup]
+2026-11-10T11:08:33.9127693Z ##[group]Determining the checkout info
+2026-11-10T11:08:33.9131718Z ##[endgroup]
+2026-11-10T11:08:33.9133029Z [command]/usr/bin/git sparse-checkout disable
+2026-11-10T11:08:33.9192202Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-11-10T11:08:33.9226739Z ##[group]Checking out the ref
+2026-11-10T11:08:33.9229550Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/14/merge
+2026-11-10T11:08:34.0058126Z Note: switching to 'refs/remotes/pull/14/merge'.
+2026-11-10T11:08:34.0060412Z 
+2026-11-10T11:08:34.0062645Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-11-10T11:08:34.0065825Z changes and commit them, and you can discard any commits you make in this
+2026-11-10T11:08:34.0069360Z state without impacting any branches by switching back to a branch.
+2026-11-10T11:08:34.0071264Z 
+2026-11-10T11:08:34.0072444Z If you want to create a new branch to retain commits you create, you may
+2026-11-10T11:08:34.0075283Z do so (now or later) by using -c with the switch command. Example:
+2026-11-10T11:08:34.0076867Z 
+2026-11-10T11:08:34.0077483Z   git switch -c <new-branch-name>
+2026-11-10T11:08:34.0078708Z 
+2026-11-10T11:08:34.0079382Z Or undo this operation with:
+2026-11-10T11:08:34.0080462Z 
+2026-11-10T11:08:34.0081101Z   git switch -
+2026-11-10T11:08:34.0081960Z 
+2026-11-10T11:08:34.0083373Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-11-10T11:08:34.0085114Z 
+2026-11-10T11:08:34.0086572Z HEAD is now at 60019fb Merge e6b6288ea68ca7298ebaab8c587394fc2315895d into 4a351c7b8a012baed16987de0ef0ca776c01d009
+2026-11-10T11:08:34.0092178Z ##[endgroup]
+2026-11-10T11:08:34.0121773Z [command]/usr/bin/git log -1 --format=%H
+2026-11-10T11:08:34.0149326Z 60019fb75885ceb1ff0693bb0e9bb1e29db5285f
+2026-11-10T11:08:34.0457996Z ##[group]Run rustup toolchain install stable --profile minimal
+2026-11-10T11:08:34.0460267Z [36;1mrustup toolchain install stable --profile minimal[0m
+2026-11-10T11:08:34.0461745Z [36;1mrustup default stable[0m
+2026-11-10T11:08:34.0481400Z shell: /usr/bin/bash -e {0}
+2026-11-10T11:08:34.0482597Z ##[endgroup]
+2026-11-10T11:08:34.3315759Z info: syncing channel updates for stable-x86_64-unknown-linux-gnu
+2026-11-10T11:08:34.4585762Z 
+2026-11-10T11:08:34.4666614Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.1 (58cf8f9c3 2026-10-13)
+2026-11-10T11:08:34.4667708Z 
+2026-11-10T11:08:34.4743102Z info: using existing install for stable-x86_64-unknown-linux-gnu
+2026-11-10T11:08:34.4753496Z info: default toolchain set to stable-x86_64-unknown-linux-gnu
+2026-11-10T11:08:34.4754113Z 
+2026-11-10T11:08:34.4832150Z   stable-x86_64-unknown-linux-gnu unchanged - rustc 1.99.1 (58cf8f9c3 2026-10-13)
+2026-11-10T11:08:34.4832639Z 
+2026-11-10T11:08:34.5041126Z ##[group]Run actions/setup-node@v7
+2026-11-10T11:08:34.5041696Z with:
+2026-11-10T11:08:34.5042113Z   node-version: 22
+2026-11-10T11:08:34.5042541Z   check-latest: false
+2026-11-10T11:08:34.5045457Z   token: ***
+2026-11-10T11:08:34.5045926Z   package-manager-cache: true
+2026-11-10T11:08:34.5046427Z ##[endgroup]
+2026-11-10T11:08:34.6490106Z Found in cache @ /opt/hostedtoolcache/node/22.23.4/x64
+2026-11-10T11:08:34.7565348Z ##[group]Environment details
+2026-11-10T11:08:35.1614983Z node: v22.23.4
+2026-11-10T11:08:35.1615549Z npm: 10.9.9
+2026-11-10T11:08:35.1615823Z yarn: 1.22.22
+2026-11-10T11:08:35.1616756Z ##[endgroup]
+2026-11-10T11:08:35.2469031Z ##[group]Run actions/cache@v6
+2026-11-10T11:08:35.2469337Z with:
+2026-11-10T11:08:35.2469591Z   path: ~/.cargo/registry
+~/.cargo/git
+target
+
+2026-11-10T11:08:35.2470051Z   key: check-Linux-f5f28867e1953d608501744573ac0a87fe37858351e8c89a3d6423b6901c25d3
+2026-11-10T11:08:35.2470740Z   restore-keys: check-Linux-
+2026-11-10T11:08:35.2471001Z   enableCrossOsArchive: false
+2026-11-10T11:08:35.2471247Z   fail-on-cache-miss: false
+2026-11-10T11:08:35.2471511Z   lookup-only: false
+2026-11-10T11:08:35.2471744Z   save-always: false
+2026-11-10T11:08:35.2471953Z ##[endgroup]
+2026-11-10T11:08:35.4930156Z Cache hit for: check-Linux-f5f28867e1953d608501744573ac0a87fe37858351e8c89a3d6423b6901c25d3
+2026-11-10T11:08:36.5946534Z Received 192937984 of 263085501 (73.3%), 184.0 MBs/sec
+2026-11-10T11:08:36.8876990Z Received 263085501 of 263085501 (100.0%), 194.0 MBs/sec
+2026-11-10T11:08:36.8880234Z Cache Size: ~251 MB (263085501 B)
+2026-11-10T11:08:36.8926640Z [command]/usr/bin/tar -xf /home/runner/work/_temp/7b81c57b-7074-4e52-af09-19aed9f12d1f/cache.tzst -P -C /home/runner/work/herdr-projects/herdr-projects --use-compress-program unzstd
+2026-11-10T11:08:38.5690538Z Cache restored successfully
+2026-11-10T11:08:38.5908713Z Cache restored from key: check-Linux-f5f28867e1953d608501744573ac0a87fe37858351e8c89a3d6423b6901c25d3
+2026-11-10T11:08:38.6235419Z ##[group]Run npm run check -- --all
+2026-11-10T11:08:38.6235779Z [36;1mnpm run check -- --all[0m
+2026-11-10T11:08:38.6254946Z shell: /usr/bin/bash -e {0}
+2026-11-10T11:08:38.6255229Z env:
+2026-11-10T11:08:38.6255438Z   GIT_AUTHOR_NAME: ci
+2026-11-10T11:08:38.6255685Z   GIT_AUTHOR_EMAIL: ci@example.com
+2026-11-10T11:08:38.6255953Z   GIT_COMMITTER_NAME: ci
+2026-11-10T11:08:38.6256212Z   GIT_COMMITTER_EMAIL: ci@example.com
+2026-11-10T11:08:38.6256469Z ##[endgroup]
+2026-11-10T11:08:38.7363643Z 
+2026-11-10T11:08:38.7364529Z > herdr-projects@1.2.27 check
+2026-11-10T11:08:38.7365228Z > sh scripts/check.sh --all
+2026-11-10T11:08:38.7365535Z 
+2026-11-10T11:08:58.9754711Z Nothing to write: the made pages are up to date.
+2026-11-10T11:08:59.1001561Z Guard: every source file is within its size, says what it holds, and every made table is up to date.
+2026-11-10T11:09:13.9650722Z warning: unused variable: `top`
+2026-11-10T11:09:13.9651214Z   --> tests/coordinator.rs:35:16
+2026-11-10T11:09:13.9651641Z    |
+2026-11-10T11:09:13.9652448Z 35 |     let (host, top) = (regex::escape(&sw::shown::words::clean(&sw::remote::check::hostname())), regex::escape(&crate::board_chat::to...
+2026-11-10T11:09:13.9653287Z    |                ^^^ help: if this is intentional, prefix it with an underscore: `_top`
+2026-11-10T11:09:13.9653754Z    |
+2026-11-10T11:09:13.9654166Z    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+2026-11-10T11:09:13.9654518Z 
+2026-11-10T11:09:13.9754919Z warning: unused variable: `top`
+2026-11-10T11:09:13.9755575Z   --> tests/coordinator_chat.rs:32:9
+2026-11-10T11:09:13.9756250Z    |
+2026-11-10T11:09:13.9756984Z 32 |     let top = regex::escape(&crate::board_chat::top_name());
+2026-11-10T11:09:13.9757731Z    |         ^^^ help: if this is intentional, prefix it with an underscore: `_top`
+2026-11-10T11:09:13.9758094Z 
+2026-11-10T11:09:13.9900701Z warning: unused variable: `top`
+2026-11-10T11:09:13.9901548Z   --> tests/coordinator_chat_more.rs:37:9
+2026-11-10T11:09:13.9902526Z    |
+2026-11-10T11:09:13.9903194Z 37 |     let top = regex::escape(&crate::board_chat::top_name());
+2026-11-10T11:09:13.9903819Z    |         ^^^ help: if this is intentional, prefix it with an underscore: `_top`
+2026-11-10T11:09:13.9904166Z 
+2026-11-10T11:09:17.8747735Z warning: call to `.clone()` on a reference in this situation does nothing
+2026-11-10T11:09:17.8748324Z    --> tests/board_list/pinned.rs:230:54
+2026-11-10T11:09:17.8749096Z     |
+2026-11-10T11:09:17.8749519Z 230 |     let items = s.at("list").at("shows").arr("items").clone();
+2026-11-10T11:09:17.8750077Z     |                                                      ^^^^^^^^ help: remove this redundant call
+2026-11-10T11:09:17.8750498Z     |
+2026-11-10T11:09:17.8751412Z     = note: the type `[serde_json::Value]` does not implement `Clone`, so calling `clone` on `&[serde_json::Value]` copies the reference, which does not do anything and can be removed
+2026-11-10T11:09:17.8752653Z     = note: `#[warn(noop_method_call)]` on by default
+2026-11-10T11:09:17.8752928Z 
+2026-11-10T11:10:28.7492998Z Tests: 1268 passed, in 29 processes in 60s.
+2026-11-10T11:10:28.7587700Z The check passed in 110s.
+2026-11-10T11:10:28.7811100Z ##[group]Run actions/upload-artifact@v7
+2026-11-10T11:10:28.7811403Z with:
+2026-11-10T11:10:28.7811619Z   name: generated-settings
+2026-11-10T11:10:28.7811866Z   path: docs/settings.md
+2026-11-10T11:10:28.7812105Z   if-no-files-found: error
+2026-11-10T11:10:28.7812337Z   compression-level: 6
+2026-11-10T11:10:28.7812553Z   overwrite: false
+2026-11-10T11:10:28.7812767Z   include-hidden-files: false
+2026-11-10T11:10:28.7813006Z   archive: true
+2026-11-10T11:10:28.7813203Z ##[endgroup]
+2026-11-10T11:10:28.9299243Z With the provided path, there will be 1 file uploaded
+2026-11-10T11:10:28.9305385Z Artifact name is valid!
+2026-11-10T11:10:28.9306015Z Root directory input is valid!
+2026-11-10T11:10:29.1795682Z Uploading artifact: generated-settings.zip
+2026-11-10T11:10:29.1833956Z Beginning upload of artifact content to blob storage
+2026-11-10T11:10:29.3183892Z Uploaded bytes 13548
+2026-11-10T11:10:29.3479038Z Finished uploading artifact content to blob storage!
+2026-11-10T11:10:29.3479908Z SHA256 digest of uploaded artifact is 8e055e3aad81c948d1fbed7d9f29130250b4b84f570d51c72fb2b73ac3db5c07
+2026-11-10T11:10:29.3480829Z Finalizing artifact upload
+2026-11-10T11:10:29.7639513Z Artifact generated-settings successfully finalized. Artifact ID 13758571186
+2026-11-10T11:10:29.7641105Z Artifact generated-settings has been successfully uploaded! Final size is 13548 bytes. Artifact ID is 13758571186
+2026-11-10T11:10:29.7644254Z Artifact download URL: https://github.com/valkyriweb/herdr-projects/actions/runs/42805000556/artifacts/13758571186
+2026-11-10T11:10:29.8382704Z Post job cleanup.
+2026-11-10T11:10:29.9642022Z Cache hit occurred on the primary key check-Linux-f5f28867e1953d608501744573ac0a87fe37858351e8c89a3d6423b6901c25d3, not saving cache.
+2026-11-10T11:10:29.9761275Z Post job cleanup.
+2026-11-10T11:10:30.1158818Z Post job cleanup.
+2026-11-10T11:10:30.2156275Z [command]/usr/bin/git version
+2026-11-10T11:10:30.2199925Z git version 2.56.0
+2026-11-10T11:10:30.2237086Z Temporarily overriding HOME='/home/runner/work/_temp/7b6c45fa-7a8c-4fc0-ba73-af3ab5ad4790' before making global git config changes
+2026-11-10T11:10:30.2238852Z Adding repository directory to the temporary git global config as a safe directory
+2026-11-10T11:10:30.2243625Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/herdr-projects/herdr-projects
+2026-11-10T11:10:30.2280257Z Removing SSH command configuration
+2026-11-10T11:10:30.2288657Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-11-10T11:10:30.2331745Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-11-10T11:10:30.2559045Z Removing HTTP extra header
+2026-11-10T11:10:30.2566736Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-11-10T11:10:30.2611316Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-11-10T11:10:30.2832376Z Removing includeIf entries pointing to credentials config files
+2026-11-10T11:10:30.2843418Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-11-10T11:10:30.2873282Z includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path
+2026-11-10T11:10:30.2874594Z includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path
+2026-11-10T11:10:30.2875420Z includeif.gitdir:/github/workspace/.git.path
+2026-11-10T11:10:30.2876033Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-10T11:10:30.2885267Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path
+2026-11-10T11:10:30.2910004Z /home/runner/work/_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:10:30.2919608Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-97852949\-2a5d\-4a48\-a98c\-39b44696797a\.config
+2026-11-10T11:10:30.2957829Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path
+2026-11-10T11:10:30.2984506Z /home/runner/work/_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:10:30.2994422Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/herdr-projects/herdr-projects/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-97852949\-2a5d\-4a48\-a98c\-39b44696797a\.config
+2026-11-10T11:10:30.3032886Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-11-10T11:10:30.3058082Z /github/runner_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:10:30.3066131Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-97852949\-2a5d\-4a48\-a98c\-39b44696797a\.config
+2026-11-10T11:10:30.3102611Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-11-10T11:10:30.3130852Z /github/runner_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config
+2026-11-10T11:10:30.3139546Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-97852949\-2a5d\-4a48\-a98c\-39b44696797a\.config
+2026-11-10T11:10:30.3176513Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-11-10T11:10:30.3383441Z Removing credentials config '/home/runner/work/_temp/git-credentials-97852949-2a5d-4a48-a98c-39b44696797a.config'
+2026-11-10T11:10:30.3527127Z Cleaning up orphan processes

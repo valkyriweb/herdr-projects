@@ -1,0 +1,45 @@
+diff --git a/crates/core/src/herdr/hc/mod.rs b/crates/core/src/herdr/hc/mod.rs
+index 23c44102..3192fb18 100644
+--- a/crates/core/src/herdr/hc/mod.rs
++++ b/crates/core/src/herdr/hc/mod.rs
+@@ -16,7 +16,7 @@ pub fn selected() -> bool { crate::store::settings::lookup::setting_text("agents
+ pub fn launch_socket() -> String { if selected() { SOCKET.into() } else { super::cli::current_socket() } }
+ pub fn is_socket(socket: Option<&str>) -> bool { socket == Some(SOCKET) }
+ /// Both runtimes live on this machine, but another classic session remains separate.
+-pub fn local(socket: &str) -> bool { socket == SOCKET || socket == super::cli::current_socket() }
++pub fn local(socket: &str) -> bool { socket == SOCKET || super::cli::same_socket(socket, &super::cli::current_socket()) }
+ pub fn error(code: &str, message: impl Into<String>) -> HerdrError { HerdrError { code: code.into(), message: message.into() } }
+ pub fn raw(program: &str, args: &[String]) -> HRes<String> {
+     let fake = FAKE.with(|x| x.borrow().clone());
+diff --git a/crates/core/src/herdr/hc/places.rs b/crates/core/src/herdr/hc/places.rs
+index fdcd7d1d..24e50ca4 100644
+--- a/crates/core/src/herdr/hc/places.rs
++++ b/crates/core/src/herdr/hc/places.rs
+@@ -20,7 +20,7 @@ pub fn tab(p: &Value) -> Value { json!({ "tab_id": p.at("id"), "workspace_id": p
+ fn app_space(root: &str) -> String {
+     let name = Path::new(root).file_name().unwrap_or_default().to_string_lossy().into_owned();
+     let find = |v: &Value| {
+-        let same_folder = |s: &&Value| std::fs::canonicalize(s.s("folder")).ok().zip(std::fs::canonicalize(root).ok()).map(|(a,b)| a == b).unwrap_or_else(|| s.s("folder") == root);
++        let same_folder = |s: &&Value| std::fs::canonicalize(s.s("folder")).ok().zip(std::fs::canonicalize(root).ok()).map(|(a,b)| a == b).unwrap_or_else(|| Path::new(s.s("folder")) == Path::new(root));
+         v.arr("spaces").iter().find(same_folder)
+             .or_else(|| v.arr("spaces").iter().find(|s| s.s("name") == name && s.s("folder").is_empty()))
+             .map(|s| s.t("id"))
+diff --git a/tests/hc_runtime.rs b/tests/hc_runtime.rs
+index 395fe0f8..057ca255 100644
+--- a/tests/hc_runtime.rs
++++ b/tests/hc_runtime.rs
+@@ -58,6 +58,14 @@ fn hc_submits_a_boot_time_paste_and_stop_interrupts_the_agent() {
+ #[test]
+ fn hc_starts_without_the_app_and_classic_links_do_not_switch_runtime() {
+     let w = world_hc(); let core = common::hc::Core::install(&w);
++    // A missing folder cannot be canonicalized, but a trailing slash must not create a second app space.
++    let missing = w.root.join("missing-project").display().to_string();
++    *core.spaces.borrow_mut() = json!([{ "id": "sp-trailing", "name": "Custom name", "folder": format!("{missing}/") }]);
++    let opened = sw::herdr::hc::places::create(&missing, &missing, "Scratch", vec![], Value::Null).unwrap();
++    let ws = opened.at("workspace").s("workspace_id");
++    assert_eq!(sw::herdr::hc::places::get(ws).unwrap().s("space"), "sp-trailing");
++    assert!(!core.text().contains("space.new"));
++    sw::herdr::hc::places::close(ws).unwrap();
+     *core.app.borrow_mut() = false;
+     w.script(json!({ "worker": [{ "status": "working" }] }));
+     let id = w.add("No app"); delegate(&id); let t = settle(&id);

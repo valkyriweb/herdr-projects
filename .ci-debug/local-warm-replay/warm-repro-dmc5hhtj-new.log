@@ -1,0 +1,75 @@
+
++ . /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/scripts/warm-start.sh
+++ ws_old=200001010000
++ ws_seed
++ ws_clean=
++ '[' -z '' ']'
++ '[' '!' -e target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ printf %s /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ cut '-d ' -f1
+++ cksum
++ ws_root=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
+++ git rev-parse HEAD
++ ws_clean=d7f7312a80d40b7d9225e67b5cc20f95e9f70557
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current
++ ws_name=
++ return 0
++ mkdir -p target/quick
++ printf 'built in new'
++ ws_keep
++ '[' -z '' ']'
++ '[' -n d7f7312a80d40b7d9225e67b5cc20f95e9f70557 ']'
++ '[' -d target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ printf %s /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/repo/.git
+++ cksum
+++ cut '-d ' -f1
++ ws_root=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158
+++ git rev-parse HEAD
++ '[' d7f7312a80d40b7d9225e67b5cc20f95e9f70557 = d7f7312a80d40b7d9225e67b5cc20f95e9f70557 ']'
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
++ ws_main=
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/remotes/origin/HEAD
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/heads/main
++ ws_main=1
++ break
++ '[' -n 1 ']'
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current
++ ws_name=
++ ws_name=
++ '[' -n '' ']'
++ ws_new=/Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495
++ rm -rf /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495
++ mkdir -p /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495/target
++ ws_copy target/quick /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495/target/quick
++ cp -pR --reflink=auto target/quick /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495/target/quick
++ rm -rf /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495/target/quick
++ cp -cpR target/quick /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495/target/quick
++ return 0
++ echo d7f7312a80d40b7d9225e67b5cc20f95e9f70557
++ pwd
++ ws_rustc
++ rustc -vV
++ tr -d '\r'
++ mv /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/new.80495 /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495
++ echo seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495
++ mv /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current.80495 /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current
++ '[' -z '' ']'
++ ws_tidy
+++ cat /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/current
++ ws_name=seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495
++ for s in '"$ws_root"/seed-*'
++ '[' -d /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158/seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495 ']'
++ '[' seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495 '!=' seed-d7f7312a80d40b7d9225e67b5cc20f95e9f70557-80495 ']'
++ continue
++ find /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/warm-repro-dmc5hhtj/cache/herdr-projects/warm/477014158 -maxdepth 1 -name 'new.*' -mmin +60 -exec rm -rf '{}' +

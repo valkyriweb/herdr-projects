@@ -1,0 +1,1 @@
+herdr-projects 1.2.27 (/Users/runner/work/herdr-projects/herdr-projects/dist/herdr-projects-macos-aarch64)

@@ -1,0 +1,132 @@
+Started from the warm build of 8ff1c06: only what changed since is built again.
+
++ . /Users/luke/.herdr/worktrees/herdr-projects/lue-hc-runtime-1227/scripts/warm-start.sh
+++ ws_old=200001010000
++ ws_seed
++ ws_clean=
++ '[' -z '' ']'
++ '[' '!' -e target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ printf %s /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ cksum
+++ cut '-d ' -f1
++ ws_root=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
+++ git rev-parse HEAD
++ ws_clean=22d49943fef7053d06f1a4da8f14b38a4a920d66
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current
++ ws_name=seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760
++ '[' -n seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760 ']'
++ '[' -d /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/target/quick ']'
++ ws_src=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/rustc
+++ ws_rustc
+++ rustc -vV
+++ tr -d '\r'
++ '[' 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' = 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' ']'
+++ du -sk /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/target/quick
+++ cut -f1
++ '[' 4 -lt 2097152 ']'
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/commit
++ ws_from=8ff1c06e3b046e765960ccb6646fddd9c39f0079
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/folder
++ ws_was=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/new
+++ ws_changed 8ff1c06e3b046e765960ccb6646fddd9c39f0079
++ ws_list=src/a.rs
++ mkdir -p target
++ rm -rf target/quick.warm.85007
++ ws_copy /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/target/quick target/quick.warm.85007
++ cp -pR --reflink=auto /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/target/quick target/quick.warm.85007
++ rm -rf target/quick.warm.85007
++ cp -cpR /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/target/quick target/quick.warm.85007
++ return 0
++ mv target/quick.warm.85007 target/quick
++ for d in 'target/quick/deps/*.d' 'target/quick/build/*/*.d'
++ grep '^# env-dep:' 'target/quick/deps/*.d'
++ grep -F /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/new
++ grep -vF /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/new/target/
++ grep -q .
++ continue
++ for d in 'target/quick/deps/*.d' 'target/quick/build/*/*.d'
++ grep '^# env-dep:' 'target/quick/build/*/*.d'
++ grep -F /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/new
++ grep -vF /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/new/target/
++ grep -q .
++ continue
++ '[' src/a.rs '!=' - ']'
++ git ls-files -z
++ xargs -0 touch -h -t 200001010000
++ printf '%s\n' src/a.rs
++ IFS=
++ read -r f
++ '[' -z src/a.rs ']'
++ touch -h -- src/a.rs
++ IFS=
++ read -r f
++ echo 'Started from the warm build of 8ff1c06: only what changed since is built again.'
++ mkdir -p target/quick
++ printf 'built in old'
++ ws_keep
++ '[' -z '' ']'
++ '[' -n 22d49943fef7053d06f1a4da8f14b38a4a920d66 ']'
++ '[' -d target/quick ']'
++ ws_dir
+++ git rev-parse --path-format=absolute --git-common-dir
++ ws_git=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ printf %s /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/repo/.git
+++ cksum
+++ cut '-d ' -f1
++ ws_root=/private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169
+++ git rev-parse HEAD
++ '[' 22d49943fef7053d06f1a4da8f14b38a4a920d66 = 22d49943fef7053d06f1a4da8f14b38a4a920d66 ']'
+++ git status --porcelain --untracked-files=no
++ '[' -z '' ']'
++ ws_main=
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/remotes/origin/HEAD
++ for b in refs/remotes/origin/HEAD refs/heads/main refs/heads/master
++ git merge-base --is-ancestor HEAD refs/heads/main
++ ws_main=1
++ break
++ '[' -n 1 ']'
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/current
++ ws_name=seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760
++ '[' -n seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760 ']'
++ '[' -d /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760 ']'
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/rustc
+++ ws_rustc
+++ rustc -vV
+++ tr -d '\r'
++ '[' 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' = 'rustc 1.99.1 (58cf8f9c3 2026-10-13)
+binary: rustc
+commit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67
+commit-date: 2026-10-13
+host: aarch64-apple-darwin
+release: 1.99.1
+LLVM version: 23.1.1' ']'
+++ cat /private/var/folders/l3/n9p4jk8j6qb453hmbr_pj_dr0000gn/T/sw-warm-repro-gvpr4t5w/cache/herdr-projects/warm/159298169/seed-8ff1c06e3b046e765960ccb6646fddd9c39f0079-84760/commit
++ ws_had=8ff1c06e3b046e765960ccb6646fddd9c39f0079
++ '[' 8ff1c06e3b046e765960ccb6646fddd9c39f0079 '!=' 22d49943fef7053d06f1a4da8f14b38a4a920d66 ']'
++ git merge-base --is-ancestor HEAD 8ff1c06e3b046e765960ccb6646fddd9c39f0079
++ return 0
