@@ -11,9 +11,9 @@ name: Check
 on:
   # no paths-ignore here: a docs-only pull request must report a check too, or it could never merge
   pull_request:
-    branches: [main]
+    branches: [main, shep/v3.1.1]
   push:
-    branches: [main]
+    branches: [main, shep/v3.1.1]
     paths-ignore:
       - '**/*.md'
       - 'docs/**'

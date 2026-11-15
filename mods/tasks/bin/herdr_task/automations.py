@@ -745,6 +745,13 @@ def cmd_track(args):
     """Background: records an agent's session while it runs."""
     seen = None
     shell_since = None
+    with Store(locate(args.folder)) as s:
+        agent = next((a.copy() for a in s.find(args.id)["agents"] if a["address"] == args.address), None)
+    if agent is None:
+        return
+    since = agent.get("at")
+    if isinstance(since, (int, float)) and since > 1e11:
+        since /= 1000
 
     def ended(at):
         with Store(locate(args.folder)) as s:
@@ -764,7 +771,9 @@ def cmd_track(args):
         else:
             shell_since = None
             pid = (k.get("foreground") or {}).get("pid")
-            sid, log = session_of(pid) if pid else (None, None)
+            # By-cwd kinds (Pi) must not scan every descendant's open files with lsof.
+            sid, log = session_of(pid, agent.get("agent"),
+                                  (k.get("foreground") or {}).get("cwd") or k.get("cwd"), since) if pid else (None, None)
             if sid and (sid, log) != seen:
                 with Store(locate(args.folder)) as s:
                     t = s.find(args.id)
