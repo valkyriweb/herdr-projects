@@ -57,6 +57,30 @@ test("several questions: one card with a part for each, answered all at once in 
   expect(out.updatedInput.answers).toEqual({ "Which color?": "Red", "Which sizes?": "S, M" });
 });
 
+// GitHub #573: a card closed without an answer, as Esc in Claude's prompt; Claude hears it was declined and goes on.
+test("Dismiss closes a question, a permission or a plan without an answer, and says so", () => {
+  put("t40.100.1", { tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Rerun CI?", header: "CI", options: [{ label: "Yes" }, { label: "No" }] }] } });
+  put("t41.100.1", { tool_name: "Bash", tool_input: { command: "rm -rf build" } });
+  put("t42.100.1", { tool_name: "ExitPlanMode", tool_input: { plan: "1. Do it" } });
+  const asks = new Asks();
+  asks.start();
+  const said: Record<string, string> = {};
+  for (const id of ["t40.100.1", "t41.100.1", "t42.100.1"]) {
+    asks.answer(id, { dismiss: true });
+    const d = JSON.parse(readFileSync(join(dir, "ans", `${id}.json`), "utf8")).hookSpecificOutput.decision;
+    expect(d.behavior).toBe("deny");
+    expect(d.updatedInput).toBeUndefined();
+    expect(d.interrupt).toBeUndefined();
+    said[id] = d.message;
+    expect(readFileSync(join(dir, "end", id), "utf8")).toBe("Dismissed on the web\n");
+  }
+  expect(said["t40.100.1"]).toMatch(/dismissed.*carry on/i);
+  expect(said["t41.100.1"]).toMatch(/dismissed.*don't do it/i);
+  expect(said["t42.100.1"]).toMatch(/dismissed.*plan isn't approved/i);
+  for (const t of ["t40", "t41", "t42"]) expect(asks.of(t).length).toBe(0);
+  expect(asks.endsOf("t41").at(-1)?.how).toBe("Dismissed on the web");
+});
+
 // The web served from another machine than the agent's: its asks wait in its own machine's data/chat-asks, read and
 // answered through herdr-core's link (machine.exec there; here a sh on a second throwaway home).
 test("another machine's ask: a card here, answered there", async () => {
@@ -124,4 +148,19 @@ test("an agent asking with a card needs you once: its card, not a second need fo
   const snap = c.snapshot({ host: "mini", user: "me", machines: [], spaces: [], sections: [], rows: [row, { ...row, worker: "t22", ref: "SHEP-18", id: 18 }] });
   // SHEP-17's card is its one need; SHEP-18 waits with no card
   expect(snap.needs.map((n: any) => [n.chat, n.id === "attention"])).toEqual([["m3:SHEP-18/worker", true], ["m3:SHEP-17/worker", false]]);
+});
+
+// SHEP-139: an option's preview shows on the card, and the answer carries it back (with the person's note) as Claude's
+// own prompt does: updatedInput.annotations[question] = { preview, notes }.
+test("a question's previews show on the card and go back with the pick and its note", async () => {
+  put("t50.100.1", { tool_name: "AskUserQuestion", tool_input: { questions: [{ question: "Which layout?", header: "Layout",
+    options: [{ label: "Grid", description: "Cards", preview: "+--+--+\n|a |b |\n+--+--+" }, { label: "List", preview: "- a\n- b" }] }] } });
+  const asks = new Asks();
+  asks.start();
+  const q = new Compat().question(asks.of("t50")[0], "x/worker");
+  expect(q.choices.map((c: any) => c.preview)).toEqual(["+--+--+\n|a |b |\n+--+--+", "- a\n- b"]);
+  await asks.answer("t50.100.1", { choice: 1, note: "  keep it short " });
+  const d = JSON.parse(readFileSync(join(dir, "ans", "t50.100.1.json"), "utf8")).hookSpecificOutput.decision;
+  expect(d.updatedInput.answers).toEqual({ "Which layout?": "List" });
+  expect(d.updatedInput.annotations).toEqual({ "Which layout?": { preview: "- a\n- b", notes: "keep it short" } });
 });

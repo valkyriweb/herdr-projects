@@ -148,8 +148,9 @@ function NewSpaceDialog() {
       goPlace(opening)
       return
     }
-    const giveUp = setTimeout(close, 10_000)
-    return () => clearTimeout(giveUp)
+    // not there yet: say so (never a silent close), and keep waiting; Cancel closes
+    const slow = setTimeout(() => setError(W.notShown(remote)), 8_000)
+    return () => clearTimeout(slow)
   }, [opening, snap])
 
   const now = knownOf(field)
@@ -251,7 +252,8 @@ function NewSpaceDialog() {
         <Who name={W.title} kind={remote && !choosing ? W.on(remote) : undefined} />
         <SheetClose onClose={close} />
       </div>
-      <div className="flex min-h-0 flex-col px-4 pt-3.5 pb-4" onPointerDown={(e) => listOpen && !(e.target as HTMLElement).closest('[data-folders]') && e.target !== input.current && shut()}>
+      {/* Keep buttons in place through pointerup: hiding suggestions on press moves Create out from under the click. */}
+      <div className="flex min-h-0 flex-col px-4 pt-3.5 pb-4" onPointerDown={(e) => listOpen && !(e.target as HTMLElement).closest('[data-folders], button') && e.target !== input.current && shut()}>
         {choosing ? <MachineChoice id={`${listId}-machine`} machines={on} value={machine} onChange={switchTo} label={label} /> : null}
         <label htmlFor={`${listId}-path`} className={label}>
           {W.label}
@@ -340,7 +342,7 @@ function NewSpaceDialog() {
           ) : null}
         </div>
         <div className="mt-4 flex items-center justify-end gap-2 phone:flex-wrap phone:*:justify-center">
-          <p role={error ? 'alert' : undefined} className="min-w-0 flex-1 truncate text-[0.75rem] text-need-fg phone:basis-full phone:whitespace-normal phone:text-[0.875rem]">{error}</p>
+          <p role={error ? 'alert' : undefined} className="min-w-0 flex-1 text-[0.75rem] text-need-fg [overflow-wrap:anywhere] phone:basis-full phone:text-[0.875rem]">{error}</p>
           <Ghost className="h-[34px] text-sm! phone:h-11 phone:flex-1 phone:text-base!" onClick={close}>
             {W.cancel}
           </Ghost>

@@ -1,6 +1,7 @@
 """herdr-artifact (SHEP-19): recipes are the default, a custom panel needs --custom and is never a proof, each version
 says its kind, the window's picture of a custom one is kept for the web, and convert keeps an artifact's maker. Runs in
 a throwaway store; herdr-app's check is skipped (not found), and nothing is installed."""
+import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
 import importlib.machinery
 import importlib.util
 import json
@@ -178,5 +179,77 @@ class Artifacts(unittest.TestCase):
         ])
 
 
+class WhoPublishes(unittest.TestCase):
+    """SHEP-60: a task's agent (and its helpers) publish in its task's name, read from the terminal's herdr.task
+    label with `hc get` (`hc ls --json` lists no labels), else from HERDR_BROWSER_TASK."""
+
+    def setUp(self):
+        self.home = tempfile.mkdtemp(prefix="shepherdr-artifact-home-")
+        os.makedirs(os.path.join(self.home, ".herdr", "tasks"))
+        with open(os.path.join(self.home, ".herdr", "tasks", "dev-shop.json"), "w") as f:
+            json.dump({"prefix": "SHOP", "tasks": []}, f)
+        self.p = mock.patch.object(A, "HOME", self.home)
+        self.p.start()
+        # Shepherdr's paths there: that home's old ones (not moved)
+        self.q = mock.patch.object(A, "SHEP", lambda rel: os.path.join(self.home, rel))
+        self.q.start()
+
+    def tearDown(self):
+        self.p.stop()
+        self.q.stop()
+        shutil.rmtree(self.home, ignore_errors=True)
+
+    def hc(self, labels, code=0):
+        out = json.dumps({"address": "t5", "labels": labels})
+        return mock.patch.object(A, "run", return_value=types.SimpleNamespace(returncode=code, stdout=out, stderr=""))
+
+    def test_its_label_names_its_task(self):
+        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5"}, clear=False), self.hc({"herdr.task": "dev-shop#4"}) as run:
+            os.environ.pop("HERDR_BROWSER_TASK", None)
+            self.assertEqual(A.me(), {"terminal": "t5", "task": "SHOP-4"})
+            self.assertEqual(run.call_args[0][0], ["hc", "get", "t5", "--json"])
+
+    def test_no_label_then_its_task_env(self):
+        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5", "HERDR_BROWSER_TASK": "dev-shop#7"}), self.hc({}):
+            self.assertEqual(A.me()["task"], "SHOP-7")
+
+    def test_a_list_without_a_prefix_and_no_task(self):
+        self.assertEqual(A.task_ref("other#3"), "#3")
+        self.assertIsNone(A.task_ref(None))
+        self.assertIsNone(A.task_ref("nonsense"))
+        with mock.patch.dict(os.environ, {"HC_TERMINAL_ID": "t5"}), self.hc({}, code=1):
+            os.environ.pop("HERDR_BROWSER_TASK", None)
+            self.assertEqual(A.me(), {"terminal": "t5", "task": None})
+
+
+class ReadOnlySandbox(unittest.TestCase):
+    """#841: in a read-only sandbox (a Codex reviewer's) show and list still read; a change is refused clearly."""
+
+    setUp, tearDown, ns, publish = Artifacts.setUp, Artifacts.tearDown, Artifacts.ns, Artifacts.publish
+
+    def test_reads_without_a_writable_lock(self):
+        import builtins
+        import errno
+        d = os.path.join(self.dir, "r")
+        os.makedirs(d)
+        with open(os.path.join(d, "recipe.json"), "w") as f:
+            json.dump({"recipe": 1, "title": "T", "blocks": [{"type": "text", "md": "hi"}]}, f)
+        self.publish(d, title="T")
+        real = builtins.open
+
+        def ro(path, mode="r", *a, **k):
+            if any(c in mode for c in "wax+"):
+                raise OSError(errno.EROFS, "Read-only file system", path)
+            return real(path, mode, *a, **k)
+        loc = A.locate(self.folder)
+        with mock.patch.object(A, "open", ro, create=True), mock.patch.object(A.os, "makedirs", side_effect=OSError(errno.EROFS, "ro")):
+            with A.Store(loc, write=False) as st:
+                self.assertEqual(len(st.data["artifacts"]), 1)
+            with self.assertRaises(A.Fail) as e:
+                with A.Store(loc):
+                    pass
+            self.assertIn("read-only", str(e.exception))
+
 if __name__ == "__main__":
     unittest.main()
+

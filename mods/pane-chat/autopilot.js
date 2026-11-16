@@ -1,6 +1,6 @@
 // Autopilot in an Assistant's header (DECISIONS.md, "Shepherdr gaps being closed": a plain on/off
 // switch on the left, right after the agent name and folder). herdr-task keeps it (`herdr-task
-// autopilot ...`, its scheduler wakes the Assistant) in ~/.herdr/tasks/.autopilot.json; this reads
+// autopilot ...`, its scheduler wakes the Assistant) in ~/.local/share/shepherdr/tasks/.autopilot.json; this reads
 // that file and asks herdr-task to change it. Another machine's space ("vm/sp1") the same, from
 // that machine's file: herdr-task here hands its switch to herdr-task there, whose scheduler wakes
 // it (its Assistant runs there).
@@ -8,7 +8,7 @@
 // The switch: "Autopilot", and when on its next wake dim after it. No menu: the heartbeat, the
 // schedule and the events, Everywhere's or this space's own, live in Shepherdr settings › Autopilot
 // (core/autopilot.js pilotFor: this space's switch, its own or Everywhere's rest, from
-// ~/.herdr/shepherdr.json). It always turns on when clicked; while its heartbeat is still empty a
+// ~/.config/shepherdr/settings.json). It always turns on when clicked; while its heartbeat is still empty a
 // "Write a heartbeat" link after it opens that page, on this space. The switch, its words and Run
 // now are one group (apGroup) on a quiet pill as tall as Chat | Terminal, as the web app's header.
 
@@ -17,10 +17,12 @@ import { h_flex } from "gpui-base";
 import { link, TEXT, H, RADIUS, openSettings, toast, plainError } from "./ui.js";
 import { theme, home, appHome, exec, readTextFile, notify, shared, setShared } from "herdr";
 import { terminals } from "./live.js";
-import { pilotFor, headerDetail } from "./core/autopilot.js";
+import { pilotFor, headerDetail, flipped } from "./core/autopilot.js";
+import { SH } from "./core/paths.js";
+import { dirs } from "./dirs.js";
 
-const FILE = () => `${home()}/.herdr/tasks/.autopilot.json`;
-const SETTINGS = () => `${home()}/.herdr/shepherdr.json`;
+const FILE = () => `${dirs().tasks}/.autopilot.json`;
+const SETTINGS = () => dirs().settings;
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 // A narrow header shows the switch and Run now's ▶ only.
 export const COMPACT_BELOW = 480;
@@ -41,7 +43,7 @@ export function apSpace(address, lazy) {
 // Another machine's space: (its machine, its id there); null for this computer's.
 const remoteOf = (space) => (space.includes("/") ? { machine: space.slice(0, space.indexOf("/")), id: space.slice(space.indexOf("/") + 1) } : null);
 // Its machine's file, read there each third poll (about every 12 s): herdr-core asks it over the link.
-const READ = 'cat "$HOME/.herdr/tasks/.autopilot.json" 2>/dev/null || true';
+const READ = SH + 'cat "$SHEP_TASKS/.autopilot.json" 2>/dev/null || true';
 async function fileOf(view, space) {
   const r = remoteOf(space);
   if (!r) return JSON.parse((await readTextFile(FILE())) ?? "{}");
@@ -109,30 +111,29 @@ function knob(t, on, pane) {
       .bg(on ? t.accent_foreground : t.muted).transition("left", 120));
 }
 
-// The group: on a pill as tall as Chat | Terminal (ui.js segmented: H.sm, raised), the switch, then
-// "Autopilot" and while on what it waits for dim after it, then Run now (apRunNow) at its end.
-// Compact: the switch and Run now's ▶ only.
+// The group: on a pill as tall as Chat | Terminal (ui.js segmented: H.sm, raised). While on, what it waits for and Run now
+// (apRunNow) come first, on the switch's LEFT, then the switch and "Autopilot" (SHEP-81): the pill grows
+// leftwards and the switch never moves, on or off. Compact: Run now's ▶ and the switch only.
 export function apGroup(view, t, space, pane, compact) {
   const run = apRunNow(view, t, space, pane, compact);
-  return h_flex().id(`ap-group-${pane}`).flex_none().h(H.sm).p(2).pl(6).gap(7).items_center()
-    .when(!run && !compact, (el) => el.pr(10))
-    .when(!run && compact, (el) => el.pr(6))
+  const a = view.ap;
+  const words = !compact && a?.on ? detail(a) : "";
+  return h_flex().id(`ap-group-${pane}`).flex_none().h(H.sm).p(2).gap(7).items_center()
+    .pr(compact ? 6 : 10).pl(words ? 10 : run ? 2 : 6)
     .rounded(RADIUS.control).bg(t.raised).text_size(TEXT.label)
-    .child(apChip(view, t, space, pane, compact))
-    .when(Boolean(run), (el) => el.child(run));
+    .when(Boolean(words), (el) => el.child(div().flex_none().whitespace_nowrap().text_color(t.dim)
+      .when(Boolean(a?.inflight), (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 }))
+      .child(words)))
+    .when(Boolean(run), (el) => el.child(run))
+    .child(apChip(view, t, space, pane, compact));
 }
 
 function apChip(view, t, space, pane, compact) {
-  const a = view.ap;
-  const on = Boolean(a?.on);
+  const on = Boolean(view.ap?.on);
   return h_flex().id(`ap-${pane}`).flex_none().gap(7).items_center().cursor_pointer()
     .on_click((_e, cx) => { cx.stop_propagation(); apToggle(view, space, cx); })
     .child(knob(t, on, pane))
-    .when(!compact, (el) => el
-      .child(div().flex_none().font_medium().text_color(on ? t.foreground : t.muted).child("Autopilot"))
-      .when(on, (el) => el.child(div().flex_none().whitespace_nowrap().text_color(t.dim)
-        .when(Boolean(a?.inflight), (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 }))
-        .child(detail(a)))));
+    .when(!compact, (el) => el.child(div().flex_none().font_medium().text_color(on ? t.foreground : t.muted).child("Autopilot")));
 }
 
 // herdr-task autopilot <args> --space <space>: its JSON, or throws with its words.
@@ -147,7 +148,7 @@ async function ap(args, space) {
 // Settings › Autopilot on this space: its own, and what it inherits from Everywhere.
 const openAutopilot = (space) => openSettings({ space, section: "autopilot" });
 
-// Run now (herdr-task autopilot run-now): the group's end while it's on; queued until the Assistant is idle, which
+// Run now (herdr-task autopilot run-now): the group's start while it's on; queued until the Assistant is idle, which
 // the switch's words then say ("Queued", "Waking"). Dim and still while one is already queued or running. Like a
 // segment: hovered, it lifts as a picked one does. Compact: its ▶ alone.
 function apRunNow(view, t, space, pane, compact) {
@@ -177,7 +178,7 @@ function apRun(view, space, cx) {
   });
 }
 
-// "Write a heartbeat": after the switch while it's on and its heartbeat is still empty.
+// "Write a heartbeat": before the group while it's on and its heartbeat is still empty.
 export function apHeartbeatLink(view, space, pane) {
   return view.ap?.on && view.apBlank === true ? link(`ap-beat-${pane}`, "Write a heartbeat", () => openAutopilot(space)) : null;
 }
@@ -188,8 +189,8 @@ function apToggle(view, space, cx) {
   if (!was || view.apBusy) return;
   const on = !was.on;
   view.apBusy = true;
-  // It flips at once; herdr-task's answer then says the rest.
-  view.ap = on ? { ...was, on } : { ...was, on, next_run: null, pending: null, inflight: null };
+  // It flips at once ("Waking" when on: it wakes at once); herdr-task's answer then says the rest.
+  view.ap = flipped(was, on);
   cx.notify();
   cx.spawn(async (cx) => {
     try {

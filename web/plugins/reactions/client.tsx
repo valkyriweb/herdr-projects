@@ -7,6 +7,7 @@
 // typed message, its pill faded until it goes in.
 import clsx from 'clsx'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type RefObject } from 'react'
+import { copyText } from '@client/copy.ts'
 import { act, definePlugin, setUI, useStore, useUI } from '@client/kernel.ts'
 import { AWAY, buzz, moveTo, project, settleMs, SPRING, useMotion } from '@client/motion.ts'
 import { useDialogFocus } from '@client/focus.ts'
@@ -22,7 +23,9 @@ export const RewindIcon = (p: { className?: string }) => (
 )
 import type { Message } from '@shared/types.ts'
 import { canReply, startReply } from '@plugins/chat/reply.ts'
+import { forkChat } from '@plugins/chat/fork.ts'
 import { frequent, loadEmoji, quickRow, remember, search, setTone, tone, TONES, withTone, type Emoji, type Group } from './emoji.ts'
+import { setDown } from './leave.ts'
 
 const WHO = { them: 'Agent', me: 'You', both: 'You and agent' }
 
@@ -328,7 +331,7 @@ function Lifted({ msg, chat }: { msg: Message; chat: string }) {
   }, [msg.id])
 
   /** set the message back down, then do what was picked */
-  const leave = (then: () => void = close) => {
+  const leave = (then?: () => void) => {
     if (leaving.current) return
     leaving.current = true
     const ms = still() ? 120 : 200
@@ -336,7 +339,7 @@ function Lifted({ msg, chat }: { msg: Message; chat: string }) {
     shade.current?.animate([{ opacity: 1 }, { opacity: 0 }], opt)
     if (!still()) lift.current?.animate([{ transform: 'none' }, { transform: `translateY(${moved.current}px)` }], opt)
     for (const el of [bar.current, menu.current]) el?.animate([{ opacity: 1 }, { opacity: 0, transform: still() ? 'none' : 'scale(.85)' }], opt)
-    setTimeout(then, ms)
+    setTimeout(setDown(close, then), ms)
   }
   useEscape(() => leave())
   const pick = (e: string) => {
@@ -379,9 +382,9 @@ function Lifted({ msg, chat }: { msg: Message; chat: string }) {
             <>
               <MenuItem
                 icon={<CopyIcon className={ic} />}
-                onClick={() => {
+                onClick={(e) => {
                   // in the tap itself: Safari copies only then
-                  navigator.clipboard?.writeText(text).catch(() => {})
+                  void copyText(text, e.currentTarget)
                   leave()
                 }}
               >
@@ -390,7 +393,7 @@ function Lifted({ msg, chat }: { msg: Message; chat: string }) {
               {/* Shepherdr 3: an agent's message forks the conversation into a new tab; yours rewinds it there (the CLI's own) */}
               {/* as the window's: Rewind on yours but a /command, Fork on the agent's */}
               {msg.card || (msg.who !== 'agent' && msg.text?.trimStart().startsWith('/')) ? null : msg.who === 'agent' ? (
-                <MenuItem icon={<ForkIcon className={ic} />} onClick={() => leave(() => void act({ type: 'fork', chat } as never).catch((e) => alert(e.message)))}>
+                <MenuItem icon={<ForkIcon className={ic} />} onClick={() => leave(() => void forkChat(chat).catch((e) => alert(e.message)))}>
                   Fork
                 </MenuItem>
               ) : (

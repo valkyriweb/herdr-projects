@@ -5,6 +5,7 @@
 // with a Machine choice (a machine's + only preselects it); with one, the choice isn't shown.
 // Plain JS (no herdr or node imports): bin/sync-shared copies it into mods/newspace/core/.
 
+import { isWorktreePath } from "./paths.js";
 export const WORDS = {
   title: "New space",
   on: (machine) => `on ${machine}`,
@@ -25,6 +26,8 @@ export const WORDS = {
   cantList: (dir, machine) => `Couldn't list ${dir}${machine ? ` on ${machine}` : ""}.`,
   cantMake: (dir) => `Couldn't make ${dir}.`,
   cantRepo: (why) => `Couldn't make it a git repo: ${why || "git failed"}`,
+  // made, but not in the list yet (another machine's spaces still on their way): said, never closed silently
+  notShown: (machine) => `Made it${machine ? ` on ${machine}` : ""}, but it hasn't shown up yet. It opens here once it does.`,
 };
 
 // The suggestions shown at most.
@@ -90,7 +93,7 @@ export function suggestions(all, text, home) {
 // no scratch and no task worktree, at most 40 asked.
 export function recentCandidates(list) {
   const at = new Map();
-  for (const { cwd, at: t } of list) if (cwd && !cwd.includes("/.herdr/worktrees/")) at.set(cwd, Math.max(at.get(cwd) ?? 0, t ?? 0));
+  for (const { cwd, at: t } of list) if (cwd && !isWorktreePath(cwd)) at.set(cwd, Math.max(at.get(cwd) ?? 0, t ?? 0));
   return [...at.entries()].sort((a, b) => b[1] - a[1]).map(([p]) => p).slice(0, 40);
 }
 
@@ -98,7 +101,7 @@ export function recentCandidates(list) {
 export function recentFrom(stdout) {
   const out = [];
   for (const p of String(stdout ?? "").split("\n").map((l) => l.trim()).filter(Boolean)) {
-    if (!out.includes(p) && !p.includes("/.herdr/worktrees/")) out.push(p);
+    if (!out.includes(p) && !isWorktreePath(p)) out.push(p);
     if (out.length >= 8) break;
   }
   return out;

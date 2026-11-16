@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LOG, Conversation, records, pilotLine, sendsOf } from "./chat-log.js";
@@ -239,4 +239,47 @@ test("a task worker's reaction lands on the person's message in its task chat", 
   const you = c.items.filter((x) => x.kind === "user");
   expect(you.map((x) => x.text)).toEqual([brief.message.content, "Can you also make it blue?"]);
   expect(c.reactions.get(you[1].id)).toEqual([{ emoji: "👀", by: "agent" }]);
+});
+
+// SHEP-69 (#589): an Assistant's first message is its role template (with example <herdr-news> lines in a fence)
+// and the person's words: no news comes out of it, and the examples stay in its words.
+test("a template's example news lines are words, real news lines are news (#589)", async () => {
+  const tpl = readFileSync(join(import.meta.dir, "..", "templates", "assistant.md"), "utf8").split(/^---[ \t]*$/m).slice(2).join("---").trim();
+  const first = { ...person, uuid: "f1", message: { role: "user", content: `${tpl}\n\nDecisions: B1 = <yours>.` } };
+  const news = { ...person, uuid: "n1", message: { role: "user", content: '<herdr-news task="SHOP-2" event="ready">SHOP-2 is ready: Fix login</herdr-news>' } };
+  const github = { ...person, uuid: "g1", message: { role: "user", content: "<herdr-github pr=\"7\">Check failed:\n```\nerror <here>\n```\n</herdr-github>\nAnd look at `<herdr-news>` too" } };
+  const c = await read([first, reply("m1", [text("On it.")]), news, github]);
+  expect(c.items.map((x) => x.kind)).toEqual(["user", "agent", "news", "user"]);
+  expect(c.items[0].text.endsWith("Decisions: B1 = <yours>.")).toBe(true);
+  expect(c.items[0].text).toContain('<herdr-news task="HAT-4" event="ready">');
+  expect(c.items[2]).toMatchObject({ ref: "SHOP-2", event: "ready" });
+  // a real tag holding code is still Herdr's: hidden whole, the words around it shown
+  expect(c.items[3].text).toBe("And look at `<herdr-news>` too");
+});
+
+// Suggested next message: an <hc suggest="…"/> line last on a reply rides on that reply's item, never shows, and only the
+// newest words' suggestion counts (an earlier one never leaks onto a later reply).
+test("a reply's suggest line rides on the reply, never shows, and a later reply without one has none", async () => {
+  const c = await read([
+    person,
+    reply("m1", [text('Merge it now?\n<hc suggest="yes, merge it"/>')]),
+    reply("m2", [text("Merged.")]),
+  ]);
+  expect(said(c)).toEqual(["Merge it now?", "Merged."]);
+  expect(c.items.filter((x) => x.kind === "agent").map((x) => x.suggest)).toEqual(["yes, merge it", undefined]);
+});
+
+test("a suggest line in an earlier block doesn't carry onto a later block's words", async () => {
+  const c = await read([person, reply("m1", [text('Done?\n<hc suggest="yes"/>'), { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } }]), reply("m2", [text("More to do.")])]);
+  const agents = c.items.filter((x) => x.kind === "agent");
+  expect(agents.map((x) => x.text)).toEqual(["Done?", "More to do."]);
+  expect(agents[1].suggest).toBeUndefined();
+});
+
+test("an empty suggest line counts as none, and a suggest line inside a code block is just words", async () => {
+  const c = await read([person, reply("m1", [text('Ok.\n<hc suggest=""/>')]), reply("m2", [text("Code:\n```\n<hc suggest=\"x\"/>\n```")])]);
+  const agents = c.items.filter((x) => x.kind === "agent");
+  expect(agents[0].suggest).toBeUndefined();
+  expect(agents[1].suggest).toBeUndefined();
+  expect(agents[1].text).toContain('<hc suggest="x"/>');
 });

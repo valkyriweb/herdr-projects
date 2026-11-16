@@ -3,6 +3,7 @@
 The process-loop fixture replaces external core/store boundaries; real session discovery
 reads temporary log files, including a new session between ticks.
 """
+import home_guard
 import contextlib
 import os
 import sys

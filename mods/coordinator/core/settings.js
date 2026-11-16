@@ -1,9 +1,9 @@
-// Shepherdr settings' rows as data: each row's key in ~/.herdr/shepherdr.json, its words and its choices, and every
+// Shepherdr settings' rows as data: each row's key in ~/.config/shepherdr/settings.json, its words and its choices, and every
 // title, line and button word the window's Settings say (mods/shepherdr-settings), so the window, the service and the
 // web app's Settings say the same. herdr-task reads the file (herdr_task/settings.py: settings_for); its defaults are
 // DEFAULTS there and here.
 // Shared core: the source is core/settings.js; bin/sync-shared copies it into the mods in lib/COPIES.
-import { AGENTS, NAMES, levelName, current, rowFor, menuFor, permDefault as permOf } from "./agents.js";
+import { AGENTS, NAMES, levelName, current, rowFor, menuFor, permAcross, permDefault as permOf } from "./agents.js";
 import { SERVE } from "./host.js";
 
 // ---- the frame -------------------------------------------------------------------------------------------------
@@ -92,9 +92,14 @@ export const otherCli = (worker, menus = null) =>
 // some of your messages with an emoji; off, none does. Kept as agents.reactions; SHEP-42 kept it as assistant.reactions
 // (upgradeReactions moves it).
 export const REACTIONS = { title: "Reactions", about: "Agents react to some of your messages with an emoji, as a person would." };
+// Suggested next message (SHEP-186): an agent ends its reply with what you would likely say next, shown greyed out in the
+// box: Enter sends it, Tab fills it in, typing replaces it. Off: no agent suggests, and none is shown.
+export const SUGGESTIONS = { title: "Suggested next message", about: "Your agents suggest what you'd likely say next, greyed out in the box: Enter sends it, Tab fills it in." };
 // A settings file's layers (everywhere, machines, spaces) with SHEP-42's assistant.reactions moved to agents.reactions
-// (a layer that has both keeps agents'). Changes cfg in place and returns it; true when anything moved.
+// (a layer that has both keeps agents'), and Everywhere's star_prompt dropped (the one-time GitHub star card, SHEP-79,
+// is gone: SHEP-225). Changes cfg in place and returns it.
 export function upgradeReactions(cfg) {
+  if (cfg?.everywhere && typeof cfg.everywhere === "object") delete cfg.everywhere.star_prompt;
   const layers = [cfg?.everywhere, ...Object.values(cfg?.machines ?? {}), ...Object.values(cfg?.spaces ?? {})];
   for (const l of layers) {
     const old = l && typeof l === "object" ? l.assistant : null;
@@ -105,8 +110,25 @@ export function upgradeReactions(cfg) {
   }
   return cfg;
 }
+// Feedback offers (herdr-task's feedback.py, SHEP-78): an agent that hits a problem in Shepherdr itself offers once to
+// file it as a GitHub issue, filed only on your yes. Kept as agents.feedback (on unless turned off) and, Everywhere's
+// only, agents.feedback_repo (the repo it files to; empty: upstream Shepherdr's).
+export const FEEDBACK = {
+  title: "Feedback offers",
+  about: "When Shepherdr itself misbehaves, agents offer once to file it as a GitHub issue, only with your yes.",
+  repoTitle: "Feedback repo",
+  repoAbout: "Where feedback issues go, as owner/name. Empty: Shepherdr's own repo.",
+  repo: "eliasstravik/shepherdr",
+  bad: "Write it as owner/name, like eliasstravik/shepherdr.",
+};
+// owner/name from what was typed (owner/name or a github.com link), "" for empty, null when it isn't one.
+export function feedbackRepo(v) {
+  const s = String(v ?? "").trim().replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//, "").replace(/\/+$/, "").replace(/\.git$/, "");
+  if (!s) return "";
+  return /^[A-Za-z0-9-]+\/[A-Za-z0-9._-]+$/.test(s) ? s : null;
+}
 export const BACKUP = { title: "Backup agent", about: "The other CLI takes over a task once when its agent can't go on." };
-// The machines where the other CLI can't take over (herdr-task's check, ~/.herdr/cli-check.json's machines: this
+// The machines where the other CLI can't take over (herdr-task's check, ~/.local/state/shepherdr/cli-check.json's machines: this
 // computer is ""), in one line. m: the scope's machine ("local" or its name), null for Everywhere (every machine).
 export function backupProblem(checks, m, cli) {
   const here = Object.entries(checks ?? {}).filter(([k]) => m === null || k === (m === LOCAL ? "" : m));
@@ -142,7 +164,7 @@ export function roleSel(role, own, choices, worker) {
   return { sel: choices?.defaults ? { ...choices.defaults } : null, unset: true };
 }
 // A model picked in the menu: the effort and speed stay where it has them; another agent brings its own permission
-// modes (full access staying full access).
+// modes, the nearest to the one chosen (agents.js permAcross).
 export function chooseModel(menus, permDefault, sel, agent, id) {
   const m = menus?.[agent]?.models?.find((x) => x.id === id);
   if (!m) return sel;
@@ -150,10 +172,8 @@ export function chooseModel(menus, permDefault, sel, agent, id) {
   if (next.effort && !m.efforts.includes(next.effort)) next.effort = null;
   if (!m.fast) next.fast = false;
   if (agent !== sel.agent) {
-    // a kind with no full-access mode (pi, amp, cursor) gets its default instead
-    const full = sel.perm === "bypassPermissions" || sel.perm === "full";
-    const fullId = agent === "claude" ? "bypassPermissions" : "full";
-    next.perm = full && menus[agent]?.perms?.some((p) => p.id === fullId) ? fullId : permDefault?.[agent] ?? null;
+    // full access carries to a kind that has one; a kind with none (pi, amp, cursor) gets its default instead
+    next.perm = permAcross(sel.perm, agent, permDefault);
     next.fast = false;
   }
   return next;
@@ -189,6 +209,23 @@ export const BASE = {
 };
 // A branch name git could have (before asking git whether it is there).
 export const branchShape = (b) => !/^-|[\s~^:?*[\\]|\.\.|@\{/.test(b);
+// Branch names (tasks.branch, #570): a folder's new task branches, Everywhere's or a space's own; herdr-task fills
+// it in (settings.py BRANCH_PATTERN, branch_pattern_problem). A task's own --branch wins.
+export const BRANCH = {
+  title: "Branch names",
+  about: "New tasks' branches. {n} is its number, {key} its id (SHEP-4), {slug} its title.",
+  pattern: "task/{n}-{slug}",
+};
+// Why a Branch names pattern can't be used, or "" (herdr-task's branch_pattern_problem says the same).
+export function branchPattern(pattern) {
+  const p = String(pattern ?? "").trim();
+  if (!p) return "";
+  if (!p.includes("{n}") && !p.includes("{key}")) return "Put {n} or {key} in it, so each task's branch is its own.";
+  if (/\{(?!(?:n|key|slug)\})[^}]*\}/.test(p)) return "Only {n}, {key} and {slug} can be filled in.";
+  const sample = p.replaceAll("{n}", "4").replaceAll("{key}", "ABC-4").replaceAll("{slug}", "fix-login");
+  if (/^[-/]|[/.]$|\.lock$|[\s~^:?*[\\]|\.\.|@\{|\/\/|\/\./.test(sample)) return "That isn't a name git allows for a branch.";
+  return "";
+}
 
 // ---- Notify ----------------------------------------------------------------------------------------------------
 export const NOTIFY_ABOUT = "What reaches you from a space's Assistant. Tasks always alert.";
@@ -248,8 +285,8 @@ export const MACHINES = {
 export const OLD_NAMES = { coordinator: "Assistant", worker: "Workers", reviewer: "Reviewer", backup: "Backup agent",
   automations: "Run automations", merge: "Merge", review_rounds: "Review", must_fix: "Must fix", proof: "Proof",
   max_running: "Tasks at once", archive_after: "Archive Done after", worktrees: "Worktrees",
-  start_notes: "When a task starts", finish_notes: "When a task finishes", base: "Base branch", agents: "Reactions" };
-// Home Assistant's line: on or off, and what herdr-task's home round last found there (~/.herdr/tasks/.home.json).
+  start_notes: "When a task starts", finish_notes: "When a task finishes", base: "Base branch", branch: "Branch names", agents: "Reactions" };
+// Home Assistant's line: on or off, and what herdr-task's home round last found there (~/.local/share/shepherdr/tasks/.home.json).
 export function homeAbout(on, st) {
   return !on ? "Off: nobody watches its disk, load and processes."
     : st?.assistant ? "Its home space's Assistant watches its disk, load and processes."
@@ -279,6 +316,14 @@ export const SWITCHES = [
     key: "coordinator.auto" },
 ];
 export const ADDONS = "Add-ons";
+// Usage insights' Delete, under its switch (the window's and the web's Settings > Window): every machine's log.
+export const INSIGHTS = {
+  title: "Delete usage data",
+  about: "Deletes the usage log on this computer and on your other machines. It starts again from now while the add-on is on.",
+  button: "Delete",
+  done: "Deleted.",
+  missed: (names) => `Deleted here. Not reached: ${names}. Try again when they're online.`,
+};
 // An add-on's line: its about, and what stops a flip (stop: the titles in the way).
 export function addonAbout(about, now, stop) {
   if (!stop.length) return about;
@@ -288,7 +333,7 @@ export function addonAbout(about, now, stop) {
 }
 
 // ---- Web -------------------------------------------------------------------------------------------------------
-export const WEB = { title: "Shepherdr on the web", link: "Link", copy: "Copy", phone: "Open it on your phone" };
+export const WEB = { title: "Shepherdr on the web", link: "Link", copy: "Copy", copied: "Copied", phone: "Open it on your phone" };
 // The Web page's state line: off (the Web add-on), not read yet, no service, or what the service last said (web.json).
 // Served from another machine (Serve from, core/host.js): says which; a move under way says that first.
 export const webState = (off, loaded, w) => (off ? "Off. Turn it on under Window › Add-ons." : !loaded ? "Reading…"
@@ -304,7 +349,7 @@ export const ARCHIVE = [[0, "Off"], [1, "1 day"], [3, "3 days"], [7, "1 week"], 
 export const ONOFF = [[true, "On"], [false, "Off"]];
 
 export const DEFAULTS = { tasks: { merge: "ask", review_rounds: 0, must_fix: "major", max_running: 10, worktrees: true, archive_after: 7, proof: true }, automations: { enabled: true },
-  agents: { reactions: true } };
+  agents: { reactions: true, suggestions: true, feedback: true, feedback_repo: "" } };
 
 // [section, field, label, choices | { min, max }]
 export const TASK_ROWS = [

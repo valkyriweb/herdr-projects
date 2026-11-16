@@ -6,10 +6,15 @@
 // file is whatever rollout-*.jsonl its process (or a child) holds. Both are exact: no
 // guessing by folder or time, so two agents in one folder never get mixed up.
 
-// Prints the log's path on the agent's machine, or nothing. Args: kind, pid.
+// Prints the log's path on the agent's machine, or nothing. Args: kind, pid. The processes under pid come
+// from one read of /proc, else one ps (macOS) (GitHub #1013: a pgrep per process read every process each
+// time).
+import { codexQuestions } from "./asks.js";
+
 export const FIND = `
 kind="$1"; pid="$2"
-kids() { for k in $(pgrep -P "$1" 2>/dev/null); do echo "$k"; kids "$k"; done; }
+procs() { if [ -r /proc/self/stat ]; then cat /proc/[0-9]*/stat 2>/dev/null | awk '{ p = $1; sub(/.*\\) /, ""); print p, $2 }'; else ps -axo pid=,ppid= 2>/dev/null; fi; }
+kids() { procs | sort -n | awk -v r="$1" 'function walk(p,  c, m, j) { m = split(k[p], c, " "); for (j = 1; j <= m; j++) if (!(c[j] in s)) { s[c[j]] = 1; print c[j]; walk(c[j]) } } { k[$2] = k[$2] " " $1 } END { s[r] = 1; walk(r) }'; }
 for p in "$pid" $(kids "$pid"); do
   if [ "$kind" = claude ]; then
     j="$HOME/.claude/sessions/$p.json"
@@ -90,10 +95,12 @@ BEGIN { pos = base; first = base; msgs = 0 }
   keep = 0
   if (index(head, "\"isSidechain\":false")) {
     if (index(line, "\"type\":\"user\",\"message\"") || index(line, "\"type\":\"assistant\",\"uuid\"") || (index(line, "\"type\":\"attachment\",\"uuid\"") && index(line, "\"queued_command\""))) keep = 1
+    # what a /fast run in place said (SHEP-181: the chat shows it runs on Fast at once)
+    if (index(head, "\"subtype\":\"local_command\"") && index(line, "local-command-stdout")) keep = 1
   } else if (index(head, "\"type\":\"response_item\"")) {
     if (index(head, "\"type\":\"message\"") || index(head, "_call\"")) keep = 1
   } else if (index(head, "\"type\":\"event_msg\"")) {
-    if (index(head, "\"task_complete\"") || index(head, "\"turn_aborted\"") || index(head, "\"token_count\"")) keep = 1
+    if (index(head, "\"task_complete\"") || index(head, "\"turn_aborted\"") || index(head, "\"token_count\"") || index(head, "\"thread_settings_applied\"")) keep = 1
   } else if (index(head, "\"type\":\"turn_context\"")) {
     keep = 1
   }
@@ -170,6 +177,8 @@ const CODEX_INJECTED = /^\s*(# AGENTS\.md instructions|<(environment_context|use
 //   the agent   <hc react="👀" to="first words of the person's message"/>   on a line of its own
 //               <hc no-reply/>   a reply that is only this shows nothing (<no-reply> too); on an Autopilot
 //               wake <hc no-reply why="Waiting on your Accept of TG-2"/> puts its why on the wake's line
+//   the agent   <hc suggest="yes, merge it"/>   last on its reply: the person's likely next message, shown as ghost
+//               text in the box (suggest on the agent item; only the newest reply's counts, none when it has none)
 // Task news Herdr sends an Assistant (herdr-task's news_pass) is one <herdr-news> tag per line:
 // each is a news item of its own ({ kind: "news", ref, event, text }), shown as a slim line in
 // an Assistant's chat (mods/chat newsLines()); the tags themselves never show.
@@ -235,10 +244,24 @@ function replyOf(t) {
   return null;
 }
 
+// Where a message has code, fenced (```) or inline (`…`): [[start, end]]. Herdr's own tags never start inside code: a
+// role template's or brief's examples there (assistant.md's <herdr-news> lines) are words, not tags (#589). A real
+// tag may hold code (a failed check's log): only where it starts counts.
+function codeRanges(t) {
+  return [...String(t).matchAll(/```[\s\S]*?(?:```|$)|`[^`\n]*`/g)].map((m) => [m.index, m.index + m[0].length]);
+}
+const inCode = (ranges, at) => ranges.some(([a, b]) => at >= a && at < b);
+// t.replace(re, by) for the matches that start outside code.
+const replaceOutsideCode = (t, re, by) => {
+  const code = codeRanges(t);
+  return t.replace(re, (m, ...rest) => (inCode(code, rest.find((x) => typeof x === "number")) ? m : by));
+};
+
 // Task news in a message: [{ ref, event, text }], one per <herdr-news task=… event=…> tag.
 const unattr = (v) => String(v ?? "").replace(/&quot;/g, '"').replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&");
 function newsOf(t) {
-  return [...String(t).matchAll(/<herdr-news\b([^>]*)>([\s\S]*?)<\/herdr-news\s*>/g)].map(([, a, text]) => ({
+  const s = String(t), code = codeRanges(s);
+  return [...s.matchAll(/<herdr-news\b([^>]*)>([\s\S]*?)<\/herdr-news\s*>/g)].filter((m) => !inCode(code, m.index)).map(([, a, text]) => ({
     ref: unattr(/\btask="([^"]*)"/.exec(a)?.[1]), event: unattr(/\bevent="([^"]*)"/.exec(a)?.[1]), text: text.trim() })).filter((n) => n.ref && n.event);
 }
 
@@ -305,12 +328,12 @@ function cleanWords(t) {
     if (from) return { text: peer[2].replace(/&lt;\/herdr-assistant/g, "</herdr-assistant").trim(), from,
       assistant: { machine: at("machine"), space: at("space"), reply: at("can-reply") === "yes" } };
   }
-  t = t
-    // Task mentions (#4) come with a tag line each for the agent; the chat shows the "#4".
-    .replace(/<hc task="[^"]*"[^>]*>[\s\S]*?<\/hc>\n?/g, "")
-    // Herdr's own tags for the agent (<herdr-news>, <herdr-github>, ...), wherever they are in a
-    // message: never shown, the words typed around them are.
-    .replace(/<(herdr-[\w-]+)\b[^>]*>[\s\S]*?<\/\1\s*>\n?/g, "").replace(/<herdr-[\w-]+\b[^>]*\/>\n?/g, "").trim();
+  // Task mentions (#4) come with a tag line each for the agent; the chat shows the "#4".
+  t = replaceOutsideCode(t, /<hc task="[^"]*"[^>]*>[\s\S]*?<\/hc>\n?/g, "");
+  // Herdr's own tags for the agent (<herdr-news>, <herdr-github>, ...), wherever they are in a
+  // message: never shown, the words typed around them are. Not in code: a template's examples stay.
+  t = replaceOutsideCode(t, /<(herdr-[\w-]+)\b[^>]*>[\s\S]*?<\/\1\s*>\n?/g, "");
+  t = replaceOutsideCode(t, /<herdr-[\w-]+\b[^>]*\/>\n?/g, "").trim();
   if (!t) return null;
   // Herdr's own wrapper (other attributes may follow from=, e.g. reach="…").
   const hc = /^<hc\b([^>]*)>([\s\S]*?)<\/hc>$/.exec(t);
@@ -549,7 +572,7 @@ function codexStep(name, args) {
 
 // The conversation in one log, built from LOG's records ({ off, kind, data }) in file order.
 // Items (ids come from byte offsets, so they stay the same when earlier pages are added):
-//   { kind: "user", id, text, from?, at, images, paths? }   { kind: "agent", id, text, at }
+//   { kind: "user", id, text, from?, at, images, paths? }   { kind: "agent", id, text, at, suggest? }
 //   (images: how many were sent; paths: where the ones Claude Code read from files came from;
 //   replyTo: the start of the message it answers)
 //   { kind: "mark", id }  (a message of only reactions: ends the turn, shows nothing)
@@ -560,12 +583,29 @@ function codexStep(name, args) {
 //   { kind: "pilot", id, at, reason, steps, said, quiet }  (an Autopilot wake, its quiet line: pilotLine())
 //   { kind: "tools", id, steps: [{ id, kind, line, out? }] }  (calls in a row, between texts;
 //                                             out: where the call's result line is)
-//   { kind: "ask", id, text, closed? }  (the agent's own question tool; closed once its dialog
+//   { kind: "ask", id, text, questions?, closed? }  (the agent's own question tool, Codex's with its questions; closed once its dialog
 //                                          is gone: "answered" | "dismissed")   { kind: "error", id, text }
 // `doing` is what it does right now (the last call not answered yet), for the status line.
 // `meta` is what the agent runs on, from its newest lines: { model, effort, speed, used, window }
 // (used: tokens in its context window now; window: that window's size when the log says it;
 // at: when the model was last named).
+// What a Claude Code /model, /effort or /fast said it switched to (its <local-command-stdout>), as log meta: the model as
+// the id its turns name ("Set model to `Opus 5.5 (1M context)`" → claude-opus-5-5, alias claude-opus-5-5[1m]: the
+// row, 1M or not), the level, the speed; or null.
+export function claudeSwitch(text) {
+  const t = String(text ?? "").replace(/<\/?local-command-stdout>/g, "");
+  let m = /^Set model to `?([A-Z][a-z]+) (\d+)(?:\.(\d+))?(?: \(([^)]*)\))?`?/.exec(t);
+  if (m) {
+    const model = `claude-${m[1].toLowerCase()}-${m[2]}${m[3] ? `-${m[3]}` : ""}`;
+    return { model, alias: /1M/i.test(m[4] ?? "") ? `${model}[1m]` : model };
+  }
+  m = /^(?:Set effort level to|Effort level set to) (\w+)/.exec(t);
+  if (m) return { effort: m[1] };
+  m = /^Fast mode (ON|OFF)\b/.exec(t);
+  if (m) return { speed: m[1] === "ON" ? "fast" : "standard" };
+  return null;
+}
+
 export class Conversation {
   constructor(kind) {
     this.kind = kind;
@@ -579,6 +619,8 @@ export class Conversation {
     this.meta = {};
     // Reactions by message id: [{ emoji, by: "you" | "agent" }].
     this.reactions = new Map();
+    // The suggested next message the agent's words so far ended with (agentText), until the reply takes it.
+    this.suggestion = null;
     // Calls that only wait, while open (`waiting`: the newest open call is one); and the jobs
     // the agent left running in the background, until their end is logged: { id (its call),
     // task (Claude Code's task id, once its result says), kind: "shell" | "monitor", label, cmd,
@@ -770,10 +812,25 @@ export class Conversation {
     this.reactions.set(target.id, list);
   }
 
+  // The suggested next message a reply ends with: { suggest } for its item, else nothing. Taken once.
+  takeSuggest() {
+    const s = this.suggestion;
+    this.suggestion = null;
+    return s ? { suggest: s } : {};
+  }
+
   // What the agent wrote, without its reaction and no-reply lines (those act instead).
   agentText(text) {
     const out = [];
+    // the newest words decide: a suggestion belongs to the reply it ends, never to an earlier block's words
+    this.suggestion = null;
+    let fenced = false;
     for (const line of String(text).split("\n")) {
+      // The suggestion line: kept for the reply (takeSuggest), never shown. An empty one counts as none; in a code
+      // block it is just words.
+      if (line.trim().startsWith("```")) fenced = !fenced;
+      const sug = !fenced ? tagOf(line) : null;
+      if (sug && "suggest" in sug) { this.suggestion = unattr(sug.suggest).trim() || null; continue; }
       // A react tag also counts at the start of a paragraph, its words after it on the same line;
       // one that still doesn't read (a broken tag) never shows as text either, only what follows it.
       const t = /^\s*<hc\s/.test(line) ? tagAt(line) : null;
@@ -834,6 +891,12 @@ export class Conversation {
 
   claude(l, off) {
     if (l.isSidechain) return;
+    // a /model, /effort or /fast run in place (SHEP-181): what it runs on from now, before its next turn says so
+    const local = l.type === "user" && typeof l.message?.content === "string" ? l.message.content : l.type === "system" && l.subtype === "local_command" && typeof l.content === "string" ? l.content : null;
+    if (local?.startsWith("<local-command-stdout>")) {
+      const meta = claudeSwitch(local);
+      if (meta) this.meta = { ...this.meta, ...meta, at: time(l.timestamp) };
+    }
     if (l.type === "queue-operation") { this.queueOp(l, off); return; }
     if (l.type === "user" && l.origin?.kind === "task-notification") {
       // A helper or a background job finished (Claude Code tells the agent so): it's done.
@@ -886,9 +949,13 @@ export class Conversation {
         if (said) {
           // One reply can be written over several lines with the same id.
           const prev = this.replies.get(id);
-          if (prev && this.items[this.items.length - 1] === prev) prev.text += "\n\n" + said;
-          else {
-            const item = { kind: "agent", id: `a${off}`, text: said, at: time(l.timestamp) };
+          if (prev && this.items[this.items.length - 1] === prev) {
+            prev.text += "\n\n" + said;
+            // the newest words' suggestion, if they end with one
+            delete prev.suggest;
+            Object.assign(prev, this.takeSuggest());
+          } else {
+            const item = { kind: "agent", id: `a${off}`, text: said, at: time(l.timestamp), ...this.takeSuggest() };
             this.replies.set(id, item);
             if (this.replies.size > 20) this.replies.delete(this.replies.keys().next().value);
             this.push(item);
@@ -933,7 +1000,7 @@ export class Conversation {
         if (u) this.user(`u${off}`, { ...u, at: time(l.timestamp) });
       } else if (p.type === "message" && p.role === "assistant") {
         const words = this.agentText((Array.isArray(p.content) ? p.content : []).filter((it) => it?.type === "output_text" && it.text?.trim()).map((it) => it.text.trim()).join("\n\n"));
-        if (words) this.push({ kind: "agent", id: `a${off}`, text: words, at: time(l.timestamp) });
+        if (words) this.push({ kind: "agent", id: `a${off}`, text: words, at: time(l.timestamp), ...this.takeSuggest() });
       } else if ((p.type === "function_call" || p.type === "custom_tool_call" || p.type === "local_shell_call") && p.name !== "wait" && p.name !== "sleep") {
         const cid = String(p.call_id ?? p.id ?? `c${off}`);
         // Codex's own questions (Plan mode): answered in its terminal, shown here as asked.
@@ -941,7 +1008,9 @@ export class Conversation {
           let a = p.arguments;
           try { a = typeof a === "string" ? JSON.parse(a) : a; } catch {}
           const text = (Array.isArray(a?.questions) ? a.questions : []).map((q) => [q?.question, ...(Array.isArray(q?.options) ? q.options.map((o) => `- ${o?.label ?? o}`) : [])].filter(Boolean).join("\n")).join("\n\n");
-          if (text) this.asked(cid, { kind: "ask", id: `q${off}`, text });
+          // its questions as they were asked, for the card that answers them on its screen (core/asks.js codexSteps)
+          const questions = codexQuestions(a);
+          if (text) this.asked(cid, { kind: "ask", id: `q${off}`, text, ...(questions.length ? { questions } : {}) });
           this.open.set(cid, "Asking you something");
           this.doing = "Asking you something";
           return;
@@ -953,6 +1022,11 @@ export class Conversation {
         if (ARTIFACT.test(JSON.stringify(p.arguments ?? p.input ?? p.action ?? ""))) this.push({ kind: "artifact", id: `art${off}`, at: time(l.timestamp) });
         this.sent(codexCommand(p.arguments ?? p.input ?? p.action), off, time(l.timestamp));
       }
+    } else if (p.type === "thread_settings_applied" && p.thread_settings) {
+      // its settings as applied: at start, and on a /model or /fast in place (SHEP-181)
+      const t = p.thread_settings;
+      this.meta = { ...this.meta, model: t.model ?? this.meta.model, effort: t.reasoning_effort ?? this.meta.effort,
+        ...(t.service_tier !== undefined ? { speed: ["fast", "priority"].includes(t.service_tier) ? "fast" : "standard" } : {}), at: time(l.timestamp) };
     } else if (l.type === "turn_context") {
       this.meta = { ...this.meta, model: p.model ?? this.meta.model, effort: p.effort ?? p.reasoning_effort ?? this.meta.effort, at: time(l.timestamp) };
     } else if (p.type === "token_count") {

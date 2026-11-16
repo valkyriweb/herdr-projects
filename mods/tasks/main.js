@@ -5,32 +5,42 @@
 // (drill in: its chat). A running task's agents carry the label herdr.task=<key>; its status is
 // theirs, read live.
 // Every list on every machine: this computer's, and each connected machine's (read now and then).
-// Grouped by status (Needs you, Ready, Merging, Working, Queued, To do, Done, then Automations),
-// space, machine, or machine then space (shared "tasks.groupby", from the header's ⋯:
-// mods/tasks-menu; the machine ones only while more than one machine has tasks).
+// Grouped For you, by space or by status (shared "tasks.group", from the header's ⋯: mods/tasks-menu;
+// core/tasks.js groupBy). For you (the default, SHEP-98, as Shepherdr's): what needs the person on
+// top (everything that needs them, inbox.js, then Ready, flat, each row saying its space), Pinned,
+// then each space's other work in status order under its name (a click opens the space), Done
+// hidden behind its count at the end. The machine is never a group: a space's heading says it only
+// when two machines have a space of that name.
 // "Needs you" lists everything that needs the person (inbox.js), here or not.
+// This space (the filter row's first chip, remembered by this panel): only the shown space's tasks, automations and
+// Needs you (core/tasks.js inSpace); it follows the space picked. The tab bar's counts still cover every space.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input } from "gpui-base";
 import { machines, exec, readTextFile, watchFolder, appHome, home, run, theme, nextCommand, shared, setShared, openOverlay, layout } from "herdr";
+import { holdKeys } from "./keyholder.js";
 import { spaces, panes, agents, terminals, inRender } from "./live.js";
 // What needs the person, from every space and machine (lib/inbox.js, shared; the tab
 // bar runs its engine): agents asking or waiting, task problems, failed automations, merges.
-import { items as needs, ASKS, toAgent, reasonOf, reqReason, REASONS, fit } from "./inbox.js";
+import { items as needs, ASKS, toAgent, reasonOf, reqReason, REASONS, fit, tabOf } from "./inbox.js";
 import { words } from "./core/asks.js";
 import { taskDot, ownProgress } from "./dot.js";
 import { taskMenu } from "./core/menus.js";
+import { machinesInOrder, machineOrderOf, chatPane } from "./core/spaces.js";
 // The rules for a task's status, order and words: shared with the web app (core/tasks.js).
-import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, machineOf, machineName, refOf, taskKey, autoPrefix, place,
-  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine } from "./core/tasks.js";
+import { RANK, STATUS, RANK_OF, ORDER, GROUP_BY, groupBy, groupNow, machineOf, machineName, refOf, taskKey, autoPrefix, place,
+  queueReason, reportOf as report, secondLine, leftOf, order, matches, day, ago, capital, short, autoWhere, fromLine, inSpace, holdingItems } from "./core/tasks.js";
 import { READ_LISTS, taskLists } from "./core/tasklists.js";
+import { SH } from "./core/paths.js";
+import { settle } from "./core/pending.js";
+import { dirs } from "./dirs.js";
 import { TEXT, H, RADIUS, red, amber } from "./ui.js";
 
 const CLI = () => `${appHome()}/mods/tasks/bin/herdr-task`;
 const DONE_SHOWN = 5; // Done rows a group shows before "Show N more"
 // Task ids in monospace, small and dim at the start of a row's second line (Herdr ships JetBrains Mono).
 const ID_FONT = "JetBrains Mono", ID_SIZE = TEXT.id;
-// Every list in ~/.herdr/tasks on a machine is read with READ_LISTS and kept by taskLists (one
+// Every list in ~/.local/share/shepherdr/tasks on a machine is read with READ_LISTS and kept by taskLists (one
 // rule with herdr-task's: tasklists.js).
 // Pinned tasks, as Pinned spaces (mods/spaces-chat): a view choice, never a change to the task.
 // Shared "tasks.pinned" = ["<machine, empty here>:<folder>#<id>"] (shared.json: survives
@@ -43,8 +53,15 @@ const pinnedKeys = () => { const v = shared(PINS); return Array.isArray(v) ? v :
 // sidebar's order: the list goes by that space's name, else its folder's.
 // spaces() is read once a render (render() fills this), not once a row.
 let spaceAt = null;
+// the machines in the sidebar's order (shared "spaces-chat".machineOrder, SHEP-153): "" this computer, else names
+const machineRank = () => {
+  const keys = machinesInOrder([null, ...machines().map((m) => m.name).filter(Boolean)], machineOrderOf(shared("spaces-chat")));
+  return (m) => { const i = keys.indexOf(m ?? ""); return i < 0 ? keys.length : i; };
+};
+
 function spaceOf(list) {
-  if (!spaceAt) { spaceAt = new Map(); for (const [i, s] of spaces().entries()) { const k = `${s.machine ?? ""}:${s.folder}`; if (!spaceAt.has(k)) spaceAt.set(k, { name: s.name, at: i }); } }
+  // each space's place: its machine's in the sidebar's order, then Herdr's among its machine's
+  if (!spaceAt) { spaceAt = new Map(); const rank = machineRank(), n = spaces().length + 1; for (const [j, s] of spaces().entries()) { const i = rank(s.machine) * n + j; const k = `${s.machine ?? ""}:${s.folder}`; if (!spaceAt.has(k)) spaceAt.set(k, { id: s.id, name: s.name, at: i, active: Boolean(s.active) }); } }
   return spaceAt.get(`${list.machine ?? ""}:${list.folder}`) ?? { name: list.name, at: Infinity };
 }
 const placeName = (list) => spaceOf(list).name;
@@ -52,7 +69,8 @@ const placeName = (list) => spaceOf(list).name;
 // herdr-task, here or (through its --on) on the machine that holds the folder. Resolves with its
 // JSON output; rejects with its error.
 async function cli(machine, [command, ...args], folder) {
-  const r = await exec(CLI(), [...(machine ? ["--on", machine] : []), command, "--json", "--folder", folder, ...args]);
+  // still running there after a slow or dropped link: its real result, followed (core/pending.js)
+  const r = await settle((a) => exec(CLI(), a), await exec(CLI(), [...(machine ? ["--on", machine] : []), command, "--json", "--folder", folder, ...args]));
   let out = null;
   try { out = JSON.parse(r.stdout || "null"); } catch {}
   if (r.code !== 0 || !out || out.error) throw new Error(out?.error || r.stderr?.trim() || "herdr-task failed");
@@ -60,6 +78,9 @@ async function cli(machine, [command, ...args], folder) {
 }
 
 export { GROUP_BY };
+
+// a worker's own helper agent (SHEP-54): an hc child labelled reviewer or helper
+const helper = (k) => ["reviewer", "helper"].includes(k.labels?.["herdr.role"]) && !!k.parent;
 
 export default class Tasks extends View {
   init(_props, cx) {
@@ -74,6 +95,8 @@ export default class Tasks extends View {
     this.shutKeys = saved("shut");
     // The filter row's choice: "all" (grouped) or one status, flat.
     try { this.filter = localStorage.getItem("filter") ?? "all"; } catch { this.filter = "all"; }
+    // This space: on or off, remembered (off at first: every space's, as before).
+    try { this.here = localStorage.getItem("here") === "1"; } catch { this.here = false; }
     this.filterAt = shared("tasks.filterreq")?.at ?? 0;
     this.searchAt = shared("tasks.searchreq")?.at ?? 0;
     if (shared("tasks.menuopen")) setShared("tasks.menuopen", null); // left over if the app quit with More open
@@ -87,13 +110,15 @@ export default class Tasks extends View {
     // too. Esc clears it; F gets to it while the list holds the keyboard.
     this.query = InputState.new({ placeholder: "Filter tasks" });
     this.query.on("change", (_e, cx) => cx.notify());
-    this.query.on("focus", (_e, cx) => { this.searching = true; cx.notify(); });
+    // Its search or list taking the keyboard: the Assistant chat beside it leaves it here (keyholder.js, #633).
+    this.query.on("focus", (_e, cx) => { this.searching = true; holdKeys("tasks"); cx.notify(); });
     this.query.on("blur", (_e, cx) => { this.searching = false; cx.notify(); });
     this.listFocus = cx.focus_handle();
     bindSearchKeys(cx, "tasks_search");
     // The Archived view (the "Archived" row at the bottom): this list's archived tasks instead.
     this.archivedOpen = false;
-    // Keys: tasks.status, tasks.space, tasks.machine, tasks.machine-space group the list that way;
+    // Keys: tasks.you, tasks.space, tasks.status group the list that way (tasks.machine and
+    // tasks.machine-space, of old: For you);
     // tasks.filter-<status>; tasks.search goes to the search field.
     // At most 5 s per wait (one pending nextCommand), so a reload's old build ends at its next
     // cx use instead of staying in memory.
@@ -105,7 +130,9 @@ export default class Tasks extends View {
         if (c === undefined) continue;
         cmd = null;
         if (c === "search") this.query.focus();
-        else if (GROUP_BY.includes(c) || c === "folder") setShared("tasks.groupby", groupBy(c));
+        // pane.go landed on this panel (mod.json "focusable"): the list takes the keyboard (F: the search field).
+        else if (c === "focus") { holdKeys("tasks"); this.listFocus.focus(); }
+        else if (GROUP_BY.includes(c) || ["folder", "machine", "machine-space"].includes(c)) setShared("tasks.group", groupBy(c));
         // tasks.filter-all, tasks.filter-needs, ...: the filter row's chip.
         else if (c.startsWith("filter-") && (c === "filter-all" || ORDER.includes(c.slice(7)))) {
           this.pickFilter(c.slice(7));
@@ -113,32 +140,34 @@ export default class Tasks extends View {
         cx.notify();
       }
     });
-    // This computer's lists, read again whenever ~/.herdr/tasks changes; every other machine's
+    // This computer's lists, read again whenever ~/.local/share/shepherdr/tasks changes; every other machine's
     // (their files can't be watched) now and then.
     cx.spawn(async (cx) => this.load(cx, null));
     this.watch(cx);
     this.loadRemote(cx);
     cx.timer.every(10000, (cx) => this.loadRemote(cx));
+    // The watch can end or fail (see watch()): this computer's lists are read again every 10 s anyway.
+    cx.timer.every(10000, (cx) => this.load(cx, null));
     // Times like "4m" and "2h ago" move on by the minute.
     cx.timer.every(60000, (cx) => cx.notify());
   }
 
-  // ~/.herdr/tasks here changes: read again. One watch for the panel's life.
+  // ~/.local/share/shepherdr/tasks here changes: read again. One watch for the panel's life.
   watch(cx) {
     if (this.watching) return;
     this.watching = true;
+    // A failed watch is tried again after 5 s (it used to end here for good: no live updates until the panel reopened).
     cx.spawn(async (cx) => {
-      try {
-        let w = null;
-        for (;;) {
-          // At most 5 s per wait, as the commands above.
-          w ??= watchFolder(`${home()}/.herdr/tasks`).then(() => true);
-          if (!(await Promise.race([w, cx.sleep(5000)]))) continue;
-          w = null;
-          await this.load(cx, null);
-        }
-      } catch {}
-      this.watching = false;
+      let w = null;
+      for (;;) {
+        // At most 5 s per wait, as the commands above.
+        w ??= watchFolder(dirs().tasks).then(() => true, () => false);
+        const got = await Promise.race([w, cx.sleep(5000).then(() => "wait")]);
+        if (got === "wait") continue;
+        w = null;
+        if (got) await this.load(cx, null);
+        else await cx.sleep(5000);
+      }
     });
   }
 
@@ -175,10 +204,10 @@ export default class Tasks extends View {
     cx.notify();
   }
 
-  // Every machine's lists as one: this computer's first, then the machines' in the sidebar's order.
+  // Every machine's lists as one, the machines in the sidebar's order (this computer first until dragged).
   merge() {
-    const order = [null, ...machines().map((m) => m.name).filter(Boolean)];
-    this.lists = [...this.byMachine.entries()].sort(([a], [b]) => order.indexOf(a || null) - order.indexOf(b || null)).flatMap(([, ls]) => ls);
+    const rank = machineRank();
+    this.lists = [...this.byMachine.entries()].sort(([a], [b]) => rank(a || null) - rank(b || null)).flatMap(([, ls]) => ls);
   }
 
   // A task's agents now: live terminals labelled with its key, on the folder's machine.
@@ -188,7 +217,7 @@ export default class Tasks extends View {
     const f = this.frame ?? {};
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
     return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
-      .filter((k) => k.program?.key !== "shell" && !k.program?.shell)
+      .filter((k) => k.program?.key !== "shell" && !k.program?.shell && !helper(k))
       .map((k) => {
         // agents() knows when someone looked at a finished agent (done -> idle), as Herdr shows it.
         const a = shown.get(k.address);
@@ -196,10 +225,11 @@ export default class Tasks extends View {
         const st = a?.status ?? (RANK[k.status] ? k.status : null);
         const tab = k.labels?.["herdr.tab"];
         // Where it shows: its own pane, else the chat pane it's parked behind (mods/chat).
-        const chat = k.labels?.["herdr.chat"];
-        const pane = (f.panes ??= panes()).find((p) => p.terminal === k.address)?.pane ?? (chat ? (m ? `${m}/${chat}` : chat) : null);
+        const pane = (f.panes ??= panes()).find((p) => p.terminal === k.address)?.pane ?? chatPane(k);
         return { address: k.address, status: st, program: a?.program ?? k.program, tab: tab && m ? `${m}/${tab}` : tab, pane,
-          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn };
+          role: k.labels?.["herdr.role"] ?? "worker", turn: k.turn,
+          // when its status last changed: a quiet agent needs the person only after core/tasks.js GRACE_MS
+          ...(typeof k.status_ms === "number" ? { since: k.status_ms } : {}) };
       });
   }
 
@@ -209,7 +239,20 @@ export default class Tasks extends View {
     const st = task.state;
     const live = st === "running" || st === "ready" ? this.live(list, task) : [];
     const loaded = machines().find((m) => (m.name ?? null) === (list.machine ?? null))?.layout !== "loading";
-    return place(list, task, { live, loaded });
+    return place(list, task, { live, loaded, helpers: live.length ? this.helpers(list, task, live) : [] });
+  }
+
+  // Its worker's own helper agents (SHEP-54: a reviewer it started as its hc child): never among its agents; one at
+  // work or asking keeps the task Working (core/tasks.js place()).
+  helpers(list, task, live) {
+    const key = `${list.slug}#${task.id}`, m = list.machine ?? null;
+    const mine = new Set(live.map((a) => a.address.split("/").pop()));
+    const f = this.frame ?? {};
+    const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
+    // on the folder's machine, a child of one of its agents
+    return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && helper(k)
+      && machineOf(k.address) === m && mine.has(String(k.parent).split("/").pop()))
+      .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? (RANK[k.status] ? k.status : null) }));
   }
 
   // Why a queued task waits (core/tasks.js): the tasks it comes after, else the folder is full.
@@ -235,15 +278,23 @@ export default class Tasks extends View {
     if (fq?.at && fq.at !== this.filterAt) { this.filterAt = fq.at; this.pickFilter(fq.key); }
     // Ctrl+K's jump (mods/jump) to a task with no chat to open: the list, searched for it, all statuses.
     const sq = shared("tasks.searchreq");
-    if (sq?.at && sq.at !== this.searchAt) { this.searchAt = sq.at; this.pickFilter("all"); this.archivedOpen = false; this.query.set_value(String(sq.q ?? "")); }
+    if (sq?.at && sq.at !== this.searchAt) { this.searchAt = sq.at; this.pickFilter("all"); this.archivedOpen = false; this.query.set_value(String(sq.q ?? "")); this.jumpQ = String(sq.q ?? ""); }
+    // Shepherdr settings' "Status filters" off (shared "tasks.filters" false): no row, all shown (This space too).
+    const filters = shared("tasks.filters") !== false;
+    // This space: the shown space's only; not for Ctrl+K's jump while its words are still in the search field.
+    const here = this.here && filters && !(this.jumpQ && this.query.value() === this.jumpQ) ? spaces().find((s) => s.active) ?? null : null;
     let placed = this.lists.flatMap((l) => l.tasks.map((task) => this.place(l, task)));
+    // Each task's status as its list says it now, archived ones too: a Needs-you item the list has moved past is stale.
+    const truth = new Map(placed.map((p) => [`${p.list.machine ?? ""}:${p.list.folder}:${refOf(p.list, p.task)}`, p]));
+    if (here) placed = placed.filter((p) => inSpace(here, { machine: p.list.machine ?? null, folder: p.list.folder, space: p.task.space }));
     // Archived tasks (herdr-task: Done ones archive themselves after a while) leave every list and
     // count: only the Archived view and a search show them, the latest archived first.
     const archived = placed.filter((p) => this.shelved(p)).sort((a, b) => (b.task.archived ?? 0) - (a.task.archived ?? 0));
     placed = placed.filter((p) => !archived.includes(p));
     this.prunePins(placed, cx);
     // Needs you: asks, stuck agents, problems, failed automations (a task ready to merge is in Ready).
-    let inbox = needs();
+    let inbox = holdingItems(needs(), truth);
+    if (here) inbox = inbox.filter((x) => this.needHere(here, x));
     this.readAsks(inbox, cx);
     this.readPrefixes(inbox, cx);
     // What the search field holds: only what matches it shows, in its group, every Done one too.
@@ -264,13 +315,12 @@ export default class Tasks extends View {
     // In the sidebar's order: each list as its space, a list no space works in after its machine's
     // spaces, by name.
     const lists = [...this.lists].sort((a, b) => spaceOf(a).at - spaceOf(b).at || this.lists.indexOf(a) - this.lists.indexOf(b));
-    // Group by (the ⋯ menu): by machine only while more than one machine has tasks; Machine › Space
-    // is then by space.
+    // More than one machine has tasks: automations' rows say theirs.
     const multi = new Set(this.lists.filter((l) => l.tasks.length || l.automations?.length).map((l) => l.machine ?? "")).size > 1;
     this.multi = multi;
-    const chosen = groupBy(shared("tasks.groupby"));
-    const by = multi || !chosen.startsWith("machine") ? chosen : chosen === "machine" ? "status" : "space";
-    this.names = { machine: true, space: true };
+    // Group by (the ⋯ menu): For you until another is chosen (core/tasks.js groupNow).
+    const by = groupNow(shared);
+    this.names = { machine: false, space: true };
 
     // Needs you: everything that needs the person (inbox.js), from every space and machine. A task
     // in it isn't shown again further down.
@@ -289,19 +339,17 @@ export default class Tasks extends View {
     const tasksOf = {};
     for (const s of ORDER.slice(1, -1)) tasksOf[s] = sorted(placed.filter((p) => p.section === s));
     const autos = lists.flatMap((l) => (l.automations ?? []).filter((a) => !q || matches(q, a.title, placeName(l), l.name, l.machine))
+      .filter((a) => !here || inSpace(here, { machine: l.machine ?? null, folder: l.folder, space: a.space }))
       .map((a) => [l, a]));
     // The filter row: All, then a chip for each status that holds something now.
     const count = (k) => (k === "needs" ? needRows.length : k === "automations" ? autos.length : tasksOf[k].length);
-    // Shepherdr settings' "Status filters" off (shared "tasks.filters" false): no row, all shown.
-    const filters = shared("tasks.filters") !== false;
     // A chip picked stays picked while searching, even with nothing matching (its list says so).
     const keep = filters && Boolean(q) && ORDER.includes(this.filter);
     const chips = ORDER.filter((k) => count(k) || (keep && k === this.filter));
     const filter = filters && chips.includes(this.filter) ? this.filter : "all";
-    // What rows say of where they are: all of it in a flat list or by status; by machine, the
-    // space; by space, nothing (the headings say it).
-    this.names = filter !== "all" || by === "status" ? { machine: true, space: true }
-      : by === "machine" ? { machine: false, space: true } : { machine: false, space: false };
+    // What rows say of where they are: their space, never their machine (SHEP-98: a quiet detail);
+    // by space, nothing (the headings say it). For you's space rows sit under their heading (bare).
+    this.names = filter === "all" && by === "space" ? { machine: false, space: false } : { machine: false, space: true };
     // Shepherdr settings' "Where on task rows" off (shared "tasks.place" false): rows say none.
     if (shared("tasks.place") === false) this.names = { machine: false, space: false };
     // A status's rows, made only when shown (by status, or its chip).
@@ -318,44 +366,52 @@ export default class Tasks extends View {
       body.push(rows.length ? v_flex().flex_none().gap(1).children(rows) : note(`No ${what} match “${q}”.`));
     }
     else {
-      // Pinned first, whatever the grouping, in status order; every one shows (Done ones too).
-      if (pinned.length) body.push(this.group("pinned", "Pinned", sorted(pinned).map((p) => this.row(p, t)), t, { open }));
-      const ownNeeds = needList.filter((n) => !n.pin).map((n) => n.row);
-      if (ownNeeds.length) body.push(this.group("needs", STATUS.needs, ownNeeds, t, { open }));
       const rest = placed.filter((p) => !isPin(p));
-      if (by === "status") {
-        for (const s of ORDER.slice(1, -1)) {
-          const ps = tasksOf[s].filter((p) => !isPin(p));
-          // A group shows only when it holds something (To do too).
-          if (!ps.length) continue;
-          body.push(this.group(s, STATUS[s], ps.map((p) => this.row(p, t)), t, { open, done: s === "done" ? ps.length : 0 }));
+      if (by === "you") {
+        // For you: everything that needs the person (pinned or not), then Ready; each row says its space.
+        const mine = [...needRows, ...tasksOf.ready.map((p) => this.row(p, t))];
+        if (mine.length) body.push(this.group("you", "For you", mine, t, { open, top: true }));
+        // Pinned: the rest of them, in status order; every one shows (Done ones too).
+        const pins = pinned.filter((p) => placed.includes(p) && p.section !== "ready");
+        if (pins.length) body.push(this.group("pinned", "Pinned", sorted(pins).map((p) => this.row(p, t)), t, { open }));
+        // Each space's other work, in status order, under its name: the machine only when two machines have a space
+        // of that name.
+        const work = rest.filter((p) => p.section !== "ready" && p.section !== "done");
+        const shownLists = lists.filter((l) => work.some((p) => p.list === l));
+        for (const l of shownLists) {
+          const twin = shownLists.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
+          body.push(this.spaceGroup(l, sorted(work.filter((p) => p.list === l)).map((p) => this.row(p, t, true)), t, twin ? machineName(l.machine) : null));
         }
+        // Done: only its count, a quiet line, until opened (then a group that folds it away again).
+        const done = tasksOf.done.filter((p) => !isPin(p));
+        if (done.length) body.push(open || this.shut("done:open") ? this.group("done", STATUS.done, done.map((p) => this.row(p, t)), t, { open, done: done.length, onFold: () => this.fold("done:open", false) })
+          : this.doneLine(done, t));
       } else {
-        const before = body.length;
-        // A space's group: its tasks in status order. By space across machines, the machine
-        // quiet after its name (Shepherdr's note).
-        const spaceGroup = (l, note) => {
-          const ps = sorted(rest.filter((p) => p.list === l));
-          return ps.length ? this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note, done: ps.filter((p) => p.section === "done").length }) : null;
-        };
-        const machinesOf = [...new Set(this.lists.map((l) => l.machine ?? null))];
-        if (by === "space") body.push(...lists.map((l) => spaceGroup(l, multi ? machineName(l.machine) : null)).filter(Boolean));
-        else for (const [i, mc] of machinesOf.entries()) {
-          const ps = sorted(rest.filter((p) => (p.list.machine ?? null) === mc));
-          if (!ps.length) continue;
-          const key = `machine:${mc ?? ""}`;
-          if (by === "machine") body.push(this.group(key, machineName(mc), ps.map((p) => this.row(p, t)), t, { open,
-            done: ps.filter((p) => p.section === "done").length, machine: true, first: body.length === before }));
-          else {
-            body.push(this.group(key, machineName(mc), [], t, { open, machine: true, first: body.length === before, count: ps.length }));
-            if (open || !this.shut(key)) body.push(...lists.filter((l) => (l.machine ?? null) === mc).map((l) => spaceGroup(l, null)).filter(Boolean));
+        // Pinned first, in status order; every one shows (Done ones too).
+        if (pinned.length) body.push(this.group("pinned", "Pinned", sorted(pinned).map((p) => this.row(p, t)), t, { open }));
+        const ownNeeds = needList.filter((n) => !n.pin).map((n) => n.row);
+        if (ownNeeds.length) body.push(this.group("needs", STATUS.needs, ownNeeds, t, { open }));
+        if (by === "status") {
+          for (const s of ORDER.slice(1, -1)) {
+            const ps = tasksOf[s].filter((p) => !isPin(p));
+            // A group shows only when it holds something (To do too).
+            if (ps.length) body.push(this.group(s, STATUS[s], ps.map((p) => this.row(p, t)), t, { open, done: s === "done" ? ps.length : 0 }));
+          }
+        } else {
+          // A space's group: its tasks in status order, the machine quiet after its name when two machines have a
+          // space of that name.
+          const withTasks = lists.filter((l) => rest.some((p) => p.list === l));
+          for (const l of withTasks) {
+            const ps = sorted(rest.filter((p) => p.list === l));
+            const twin = withTasks.some((o) => o !== l && placeName(o) === placeName(l) && (o.machine ?? null) !== (l.machine ?? null));
+            body.push(this.group(`folder:${l.machine ?? ""}:${l.folder}`, placeName(l), ps.map((p) => this.row(p, t)), t, { open, note: twin ? machineName(l.machine) : null, done: ps.filter((p) => p.section === "done").length }));
           }
         }
       }
       // Automations: their own group, last.
       if (rowsOf.automations.length) body.push(this.group("automations", "Automations", rowsOf.automations, t, { open }));
       // Nothing at all to show: say so once (never "yet").
-      if (!body.length && this.ready && !q) body.push(note(this.emptyLine()));
+      if (!body.length && this.ready && !q) body.push(note(here ? `Nothing in ${here.name}.` : this.emptyLine()));
       // Searching, the archived tasks that match come last, as a group; else a row opens them.
       if (q && found.length) { this.names = { machine: true, space: true }; body.push(this.group("archived", "Archived", found.map((p) => this.row(p, t)), t, { open })); }
       else if (!q && archived.length) body.push(this.archivedLink(archived.length, t));
@@ -369,14 +425,14 @@ export default class Tasks extends View {
         .child(h_flex().id("task-more").size(H.sm).flex_none().items_center().justify_center().rounded(RADIUS.control).cursor_pointer().text_color(t.muted)
           .hover((s) => s.bg(t.hover).text_color(t.foreground))
           // Its menu (mods/tasks-menu): a 28 heading, then 32 rows (ui.js menuRow).
-          .on_click(() => openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 200, height: 8 + 28 + (multi ? 4 : 2) * 32, props: { menu: "group", machines: multi } }))
+          .on_click(() => openOverlay({ mod: "tasks-menu", kind: "popup", at: "pointer", width: 200, height: 8 + 28 + 3 * 32, props: { menu: "group", current: by } }))
           .child(svg("mods/tasks/more.svg").size(14).flex_none())))
       .child(this.searchField(t))
-      .when(!this.archivedOpen && filters, (el) => el.child(this.filterRow(chips, count, filter, t)))
+      .when(!this.archivedOpen && filters, (el) => el.child(this.filterRow(chips, count, filter, t, here)))
       // A press in the list gives it the keyboard: F then goes to the search field.
       .child(v_flex().id("task-list").flex_1().min_h(0).overflow_y_scrollbar().p(6).gap(6)
         .track_focus(this.listFocus)
-        .on_mouse_down("left", () => this.listFocus.focus())
+        .on_mouse_down("left", () => { holdKeys("tasks"); this.listFocus.focus(); })
         .on_key_down((e, cx) => {
           if (e.keystroke === "f" && !this.searching) { cx.stop_propagation(); this.query.focus(); cx.notify(); }
           else if (e.keystroke === "escape" && this.archivedOpen) { cx.stop_propagation(); this.archivedOpen = false; cx.notify(); }
@@ -391,11 +447,11 @@ export default class Tasks extends View {
   // The filter row: All statuses (not the header's All, which is folders), a chip for each status that wants a look (Needs you, Working, Ready) as
   // far as the panel's width allows, and the rest (and any that don't fit) behind More, a menu.
   // It never wraps and never scrolls. Widths are estimated: about 7px a character at 12px.
-  filterRow(chips, count, filter, t) {
+  filterRow(chips, count, filter, t, here) {
     const label = (k) => (k === "automations" ? "Automations" : STATUS[k]);
     const est = (text, n) => 16 + text.length * 7 + (n > 0 ? 5 + String(n).length * 7 : 0) + 2;
     const MORE = 62;
-    let room = (this.width ?? 360) - 12 - est("All statuses", 0);
+    let room = (this.width ?? 360) - 12 - est("This space", 0) - 2 - est("All statuses", 0);
     const shown = [];
     const primary = ["needs", "working", "ready"].filter((k) => chips.includes(k));
     const others = chips.length > primary.length;
@@ -410,6 +466,7 @@ export default class Tasks extends View {
     const picked = inMore.includes(filter) ? filter : null;
     const items = inMore.map((k) => ({ key: k, label: label(k), count: count(k) }));
     return h_flex().id("task-filter").flex_none().px(6).pt(6).gap(2).overflow_hidden()
+      .child(this.hereChip(here, t))
       .child(this.chip("all", "All statuses", 0, filter, t))
       .children(shown.map((k) => this.chip(k, label(k), count(k), filter, t)))
       .when(inMore.length > 0, (el) => el.child(this.moreChip(picked, picked ? label(picked) : "More", picked ? count(picked) : 0, items, filter, t)));
@@ -443,6 +500,30 @@ export default class Tasks extends View {
       .on_click((_e, cx) => { this.pickFilter(key); cx.notify(); })
       .child(label)
       .when(n > 0, (el) => el.child(div().text_color(t.dim).child(String(n))));
+  }
+
+  // This space: a toggle before the status chips (they pick one status; this narrows to the shown space whatever the
+  // status). On, it sits on the soft background, as a picked chip.
+  hereChip(here, t) {
+    const on = this.here;
+    return h_flex().id("chip-here").h(H.sm).px(8).gap(5).flex_none().items_center().rounded(RADIUS.control).cursor_pointer().text_size(TEXT.label)
+      .bg(on ? t.selected : t.background).text_color(on ? t.foreground : t.muted)
+      .hover((s) => s.bg(on ? t.selected : t.hover).text_color(t.foreground))
+      .on_click((_e, cx) => {
+        this.here = !this.here;
+        this.jumpQ = null;
+        try { localStorage.setItem("here", this.here ? "1" : "0"); } catch {}
+        cx.notify();
+      })
+      .child("This space");
+  }
+
+  // A Needs-you item of the shown space: its task's list or space (core/tasks.js inSpace), else the tab its agent is in
+  // (inbox.js tabOf, as the tab bar counts it) is one of the space's.
+  needHere(space, x) {
+    if (x.folder && inSpace(space, { machine: x.machine ?? null, folder: x.folder, space: x.space })) return true;
+    const tab = tabOf(x);
+    return Boolean(tab) && (space.tabs ?? []).some((tb) => tb.id === tab);
   }
 
   pickFilter(key) {
@@ -553,30 +634,30 @@ export default class Tasks extends View {
   // A group: a heading that folds it (a chevron, its label and count; no icon: icons go on rows
   // only), then its rows. Done rows past the newest few wait behind "Show N more".
   // open (searching): every row shows, folded or not, and the heading is just a heading.
-  // note: quiet after the label (by space across machines, the machine). machine: a machine's
-  // heading (by machine, or over its spaces' groups: count, theirs), a step above the others: its
-  // name brighter and larger, and a hairline over it but the first (Shepherdr's MachineHeading).
-  group(key, label, rows, t, { done = 0, open = false, note = null, machine = false, first = false, count = rows.length } = {}) {
-    const shut = !open && this.shut(key);
+  // note: quiet after the label (by space, the machine when two machines have a space of that
+  // name). top: For you's heading, a step above the others (its label brighter and larger: the
+  // list's first thing to read). onFold: what a click on the heading does instead of folding it
+  // (For you's opened Done goes back to its count).
+  group(key, label, rows, t, { done = 0, open = false, note = null, top = false, count = rows.length, onFold = null } = {}) {
+    const shut = !open && !onFold && this.shut(key);
     const all = open || this.allDone.has(key);
     const cut = !all && done > DONE_SHOWN ? done - DONE_SHOWN : 0;
     const shown = cut ? rows.slice(0, rows.length - cut) : rows;
     return v_flex().flex_none().gap(1)
-      .when(machine && !first, (el) => el.mt(4).pt(6).border_t(1).border_color(t.border))
       // a step of room over each group, so groups read as sections (as the web's)
-      .when(!machine, (el) => el.pt(6))
+      .pt(6)
       // As Shepherdr's: the whole heading is the button; the chevron in the rows' icon column
       // (brighter on hover), the label small, its count right by it ("Ready 2"), not across the panel.
       .child(h_flex().id(`head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
         .when(!open, (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
           .on_hover((on, cx) => { this.hoverHead = on ? key : this.hoverHead === key ? null : this.hoverHead; cx.notify(); })
-          .on_click((_e, cx) => { this.fold(key, !shut); cx.notify(); }))
+          .on_click((_e, cx) => { if (onFold) onFold(); else this.fold(key, !shut); cx.notify(); }))
         .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
           .child(svg(`mods/workspace-chrome/chevron-${shut ? "right" : "down"}.svg`).size(12).flex_none()
             .text_color(this.hoverHead === key ? t.foreground : t.dim)))
         .child(h_flex().id(`head-${key}-label`).flex_1().min_w(0).gap(6).items_center()
-          .child(div().min_w(0).truncate().when(machine, (el) => el.text_size(TEXT.body).font_semibold().text_color(t.muted))
-            .when(!machine, (el) => el.font_medium().text_color(t.muted)).child(label))
+          .child(div().min_w(0).truncate().when(top, (el) => el.text_size(TEXT.body).font_semibold().text_color(t.foreground))
+            .when(!top, (el) => el.font_medium().text_color(t.muted)).child(label))
           .when(Boolean(note), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${note}`)))
           .when(Boolean(count), (el) => el.child(div().flex_none().text_color(t.dim).child(String(count))))))
       .when(!shut, (el) => el.children(shown)
@@ -590,6 +671,38 @@ export default class Tasks extends View {
           .child(all ? "Show less" : `Show ${cut} more`))));
   }
 
+  // For you: a space's name over its other work (Shepherdr's SpaceHeading): its emoji (else #) where
+  // the rows' dots are, its name, its machine quieter (note), its count. A click opens the space
+  // (its chat); a list no space works in is just its name.
+  spaceGroup(list, rows, t, note) {
+    const sp = spaceOf(list);
+    const icon = shared("spaces-chat")?.icons?.[sp.id] ?? null;
+    const key = `space-${list.machine ?? ""}:${list.folder}`;
+    return v_flex().flex_none().gap(1).pt(6)
+      .child(h_flex().id(`head-${key}`).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).text_size(TEXT.label)
+        .when(Boolean(sp.id), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover))
+          .on_click(() => run("space.select", { id: sp.id })))
+        .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
+          .child(div().text_size(icon ? 12 : TEXT.label).text_color(t.dim).child(icon ?? "#")))
+        .child(h_flex().flex_1().min_w(0).gap(6).items_center()
+          .child(div().min_w(0).truncate().font_medium().text_color(t.muted).child(placeName(list)))
+          .when(Boolean(note), (el) => el.child(div().flex_none().text_color(t.dim).child(`· ${note}`)))
+          .child(div().flex_none().text_color(t.dim).child(String(rows.length)))))
+      .children(rows);
+  }
+
+  // For you's Done, shut: one quiet line, "3 done today" (or "12 done", some older); a click shows them.
+  doneLine(ps, t) {
+    const today = new Date().toDateString();
+    const all = ps.every((p) => p.task.done_at && new Date(p.task.done_at * (p.task.done_at < 1e12 ? 1000 : 1)).toDateString() === today);
+    return h_flex().id("task-done-line").flex_none().mt(6).h(28).px(8).gap(12).items_center().rounded(RADIUS.card).cursor_pointer()
+      .text_size(TEXT.label).text_color(t.dim).hover((s) => s.bg(t.hover).text_color(t.muted))
+      .on_click((_e, cx) => { this.fold("done:open", true); cx.notify(); })
+      .child(h_flex().w(14).h(14).flex_none().items_center().justify_center()
+        .child(svg("mods/workspace-chrome/chevron-right.svg").size(12).flex_none()))
+      .child(`${ps.length} done${all ? " today" : ""}`);
+  }
+
   // A row's status mark: Shepherdr's task dot (dot.js); a Working row's pie shows its % done.
   glyph(p, w) {
     return taskDot(p.section, { pct: w?.done });
@@ -597,7 +710,7 @@ export default class Tasks extends View {
 
   // An automation (herdr-task auto), by its name (no id), and on the right when it runs next
   // ("Didn't start" in red). A click opens its last task.
-  autoRow(list, a, placed, t) {
+  autoRow(list, a, placed, t, bare = false) {
     const last = list.tasks.find((x) => `${list.prefix}-${x.id}` === a.last_task);
     const p = last && (placed.find((q) => q.task === last) ?? this.place(list, last));
     const go = p ? this.target(p) : null;
@@ -610,7 +723,7 @@ export default class Tasks extends View {
     const when = !err && !a.paused && a.next_run ? day(a.next_run) : null;
     // Where it is: its machine (with more than one) and space whatever the grouping, as the Automations group sits
     // under no machine or space heading; none with "Where on task rows" off.
-    const where = shared("tasks.place") === false ? null : autoWhere(machineName(list.machine), placeName(list), this.multi);
+    const where = bare || shared("tasks.place") === false ? null : autoWhere(machineName(list.machine), placeName(list), this.multi);
     return this.line(`auto-${list.machine ?? ""}:${list.folder}#${a.id}`, {
       go, glyph: svg("mods/tasks/repeat.svg").size(14).flex_none().text_color(err ? red() : t.dim),
       ref: null, title: a.title, dim: a.paused, sub, meta: when, where,
@@ -689,7 +802,8 @@ export default class Tasks extends View {
       if (!slug || this.prefixes.has(at) || this.listOf(slug, m)) continue;
       this.prefixes.set(at, null);
       cx.spawn(async (cx) => {
-        const text = await readTextFile(`${home()}/.herdr/tasks/${slug}.json`, { on: m }).catch(() => null);
+        const text = m ? (await exec("sh", ["-c", SH + 'cat "$SHEP_TASKS/$1.json"', "sh", slug], { on: m }).catch(() => null))?.stdout ?? null
+          : await readTextFile(`${dirs().tasks}/${slug}.json`).catch(() => null);
         let d = null;
         try { d = JSON.parse(text || "null"); } catch {}
         if (d?.folder) { this.prefixes.set(at, d.prefix || autoPrefix(d.folder)); cx.notify(); }
@@ -704,9 +818,9 @@ export default class Tasks extends View {
 
   // What a row says of where it is, on its right, as far as its group doesn't say it already
   // (this.names, set by render()): its machine (not this computer) and its space or folder.
-  // need: a Needs you row, under no grouping but status.
+  // need: a Needs you row: its space, whatever the grouping. Never the machine (SHEP-98).
   whereOf(machine, name, need = false) {
-    const n = need ? { machine: true, space: true } : this.names ?? { machine: true, space: true };
+    const n = need ? { machine: false, space: shared("tasks.place") !== false } : this.names ?? { machine: false, space: true };
     return [n.machine ? machine : null, n.space ? name : null].filter(Boolean).join(" · ") || null;
   }
 
@@ -751,7 +865,8 @@ export default class Tasks extends View {
     return open(null, { note: p.section === "queued" ? capital(this.queueReason(list, task)) : "This task hasn't started." });
   }
 
-  row(p, t) {
+  // bare: under For you's space heading, which says where it is.
+  row(p, t, bare = false) {
     const { list, task, live, section } = p;
     const shown = this.frame ? (this.frame.agents ??= new Map(agents().map((a) => [a.address, a]))) : new Map(agents().map((a) => [a.address, a]));
     const focused = live.some((a) => shown.get(a.address)?.focused);
@@ -766,7 +881,7 @@ export default class Tasks extends View {
     const key = taskKey(list, task);
     return this.line(`task-${key}`, {
       go: this.target(p), glyph: this.glyph(p, w), ref: refOf(list, task), title: task.title, sub, left, leftColor: section === "scheduled" ? t.dim : null,
-      dim: section === "done", selected: focused, where: this.whereOf(list.machine, placeName(list)),
+      dim: section === "done", selected: focused, where: bare ? null : this.whereOf(list.machine, placeName(list)),
       action: section === "ready" ? this.acceptButton(p, t) : null,
       pin: this.shelved(p) ? null : { key, on: this.pins().has(key), status: section, machine: list.machine ?? null, folder: list.folder,
         ref: refOf(list, task), sub: section === "scheduled" ? sub : null },
@@ -894,11 +1009,14 @@ function agentName(address) {
 // where the shown layout has that view. Shared "tasks.thread" = { terminal (its agent, live or its
 // last one; null: never started), task (its id), title, key ({ machine, folder, slug, id }), log
 // ({ path, kind }: an ended agent's own log), note (why one never started waits), at }.
-const hasThread = (n) => Boolean(n && typeof n === "object") && (n.id === "tasks-thread" || (n.children ?? []).some(hasThread));
-const threads = () => hasThread(layout());
+const hasNode = (n, id) => Boolean(n && typeof n === "object") && (n.id === id || (n.children ?? []).some((c) => hasNode(c, id)));
+const threads = () => hasNode(layout(), "tasks-thread");
 function openThread({ terminal = null, task = null, title = null, key = null, log = null, note = null }) {
   setShared("tasks.thread", { terminal, task, title, key, log, note, at: Date.now() });
   run("layout.select", { stack: "tasks", child: "tasks-thread" });
+  // On its chat, as mods/chat/panel.js openTaskThread: the drill-in has one Terminal block, so it would
+  // still show the last task's worker under this task's header (GitHub #756).
+  if (hasNode(layout(), "tasks-thread-body")) run("layout.select", { stack: "tasks-thread-body", child: "tasks-thread-chat" });
 }
 
 // The Accept card's accept under way (shared "tasks.accepting" = { "<machine>:<folder>:<ref>": at },

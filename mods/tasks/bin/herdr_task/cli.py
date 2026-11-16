@@ -7,7 +7,9 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
+from . import link
 from .base import bundle, Fail, guard, run, STORE, sync_held, VERSION
 from .agents import LINE_MAX, SUMMARY_MAX
 from .launch import cmd_allow, name_tabs
@@ -23,6 +25,8 @@ from .machines import cmd_assistants, cmd_machines, cmd_sync_auto, cmd_tell
 from .autopilot import cmd_autopilot, cmd_complete, cmd_progress
 from .home import cmd_home
 from .assistant_settings import cmd_session_note
+from .feedback import cmd_feedback
+from .sandbox import cmd_sandbox
 
 
 # ---- another machine ------------------------------------------------------------------------
@@ -71,7 +75,10 @@ def remote_run(machine, argv, timeout=None):
         guard(["hc"])
         # A machine with Herdr's own install (its window's) holds herdr-task's source: copies come from there, it's
         # never written to (machines.py, the same rule). Its link ~/.local/bin/herdr-task leads into that install.
-        if run(["hc", "exec", "--on", machine, "--", "test", "-d", ".config/herdr-app/mods/tasks/bin/herdr_task"]).returncode == 0:
+        there = run(["hc", "exec", "--on", machine, "--", "test", "-d", ".config/herdr-app/mods/tasks/bin/herdr_task"])
+        if link.lost(there):
+            raise Fail(f"Can't reach {machine}: its link is down, and nothing was run there. Try again once it's back.")
+        if there.returncode == 0:
             os.makedirs(os.path.dirname(mark), exist_ok=True)
             with open(mark, "w") as f:
                 f.write("source")
@@ -88,9 +95,15 @@ def remote_run(machine, argv, timeout=None):
     if not installed and not sync_held():
         install()
     install_secret(machine)
+    if argv[:1] == ["_job"]:
+        # an action that was still running there (link.PENDING): its result, waiting again
+        return link.follow(machine, argv[1] if len(argv) > 1 else "", argv, time.monotonic() + link.wait_s())
+    if argv[:1] and argv[0] in link.ACTIONS:
+        # the person's action: runs there whole even when the link drops, its result read back (SHEP-227, #1055)
+        return link.action(machine, argv, install)
     wait = ["--timeout", str(timeout)] if timeout else []
     call = ["hc", "exec", "--on", machine, *wait, "--", "sh", "-c", 'exec "$HOME/.local/bin/herdr-task" "$@"', "herdr-task", *argv]
-    r = run(call)
+    r = link.again(machine, argv, lambda: run(call)) if argv[:1] and argv[0] in link.READS else run(call)
     if r.returncode == 127 or "not found" in r.stderr and not r.stdout:
         install()
         r = run(call)
@@ -137,7 +150,14 @@ def remote(machine, argv):
 def main():
     argv = sys.argv[1:]
     if argv[:1] == ["--on"] and len(argv) > 1:
-        return remote(argv[1], argv[2:])
+        try:
+            return remote(argv[1], argv[2:])
+        except Fail as e:
+            if "--json" in argv:
+                print(json.dumps({"error": str(e)}))
+            else:
+                print(f"herdr-task: {e}", file=sys.stderr)
+            return 1
     if argv[:1] == ["--version"]:
         print(VERSION)
         return 0
@@ -171,6 +191,8 @@ def main():
                             "review.mustFix=blocker|major|minor, proof=on|off, merge=\"on its own\"|\"after checks\"|\"ask me first\" (\"\": Settings' again)")
         c.add_argument("--base", help="the branch its worktree branches from and merges into (default: its space's Base branch "
                                       "setting, else the folder's current branch)")
+        c.add_argument("--branch", help="its branch's exact name, e.g. a ticket's ABC-2137 (default: the folder's Branch names "
+                                        "setting, else task/<n>-<title words>); refused when that branch exists already (\"\": the pattern's)")
 
     def agent_opts(c):
         c.add_argument("--agent", help="agent key (claude, codex, pi, pii, grok, hermes, amp, cursor, or a program on PATH)")
@@ -207,6 +229,7 @@ def main():
     c.add_argument("--space")
     c.add_argument("--parent", help="a coordinator's terminal: the agent's hc parent (default: the space's coordinator)")
     c.add_argument("--now", action="store_true", help="skip the queue (a scheduled task: start it now)")
+    c.add_argument("--branch", help="its branch's exact name (as add --branch), before its worktree is made")
     g = c.add_mutually_exclusive_group()
     g.add_argument("--here", action="store_true")
     g.add_argument("--worktree", action="store_true")
@@ -223,8 +246,9 @@ def main():
     c = cmd("reviewed", cmd_reviewed, "a task's agent records one review round of its current commit (Review: on): ready then "
                                       "accepts that commit; uses one of its Review rounds")
     c.add_argument("--report", help="the round's findings in a line (levels, what was fixed)")
+    c.add_argument("--commit", help="the commit the round reviewed, when fixes were committed since (default: HEAD)")
     cmd("review-more", cmd_review_more, "the Assistant gives a task one more review round, once all are used (never its own agent)")
-    c = cmd("status", cmd_status, "a task's agent says what it's doing now, at the start and each natural step: status 4 \"Fixing the two failing tests\" --done 40 --left 5m")
+    c = cmd("status", cmd_status, "a task's agent says what it's doing now, at the start, each natural step and at least every 5 minutes: status 4 \"Fixing the two failing tests\" --done 40 --left 5m")
     c.add_argument("text", help=f"what it is doing, at most {LINE_MAX} characters (longer is cut at a word)")
     c.add_argument("--done", type=int, help="how far through the whole task, 0-100 (%%)")
     c.add_argument("--left", help="your best guess of how long is left: 5m, 90s, 1h30m; on every status, the first too (a rough guess beats none)")
@@ -232,6 +256,27 @@ def main():
     c.add_argument("title", help="what can't wait, a few words")
     c.add_argument("--body", help="why, a line or two")
     c.add_argument("--task", help="the task it's about (an Assistant's alert about one of its tasks always reaches the person)")
+    c = cmd("feedback", cmd_feedback, "a problem in Shepherdr itself (not the project's): feedback \"<one line>\" --details \"goal, what "
+            "was tried, what went wrong, expected, suggested fix\" returns at once and your Assistant offers the person to file it "
+            "on GitHub; an Assistant gets whether to offer, and files it only on the person's yes (--file)", id=False)
+    c.add_argument("line", nargs="?", default="", help="the problem in one line")
+    c.add_argument("--details", help="goal, what was tried, what went wrong, expected, suggested fix (no secrets, no logs whole)")
+    c.add_argument("--key", help="the problem's key, as its news line or an earlier answer gave it")
+    g = c.add_mutually_exclusive_group()
+    g.add_argument("--file", action="store_true", help="Assistant, after the person's yes: search open issues for a duplicate, then file it")
+    g.add_argument("--no", action="store_true", help="Assistant: the person said no; never offered again")
+    g.add_argument("--later", action="store_true", help="Assistant on an Autopilot wake: offer it once the person is back")
+    g.add_argument("--list", action="store_true", help="what waits to be offered in this space")
+    for f, words in (("goal", "what they were trying to do"), ("happened", "what went wrong"), ("tried", "what was tried"),
+                     ("expected", "what should have happened"), ("fix", "a suggested fix"), ("repro", "minimal steps to reproduce")):
+        c.add_argument(f"--{f}", help=f"--file: {words}")
+    c.add_argument("--title", help="--file: the issue's title (default: the one line)")
+    c.add_argument("--surface", choices=["web", "window", "both"], help="--file: where the person used Shepherdr")
+    c.add_argument("--repo", help=argparse.SUPPRESS)  # a test's throwaway repo; Settings' otherwise
+    h = c.add_mutually_exclusive_group()
+    h.add_argument("--new", action="store_true", help="--file: file it even though duplicates are open")
+    h.add_argument("--comment", type=int, metavar="N", help="--file: add it as a comment on open issue N instead")
+    c.add_argument("--dry-run", action="store_true", help="--file: show the redacted draft and duplicates, file nothing")
     cmd("done", lambda a: cmd_state(a, "done"), "mark done (the person's call: only when they ask; agents finish with ready)")
     c = cmd("accept", cmd_accept, "the person's Accept on a Ready task: merges first when there is something to merge, then done")
     agent_opts(c)
@@ -290,6 +335,9 @@ def main():
             c.add_argument("--agent")
             c.add_argument("--space", help="the space its tasks start in (default: yours)")
             c.add_argument("--parent", help="its tasks' agents' parent (default: you)")
+            c.add_argument("--set", action="append", metavar="KEY=VALUE",
+                           help="a setting for each task it adds, as add --set: review=on|off, review.rounds=1..10, proof=on|off, "
+                                "merge=..., ... (\"\": Settings' again)")
             g = c.add_mutually_exclusive_group()
             g.add_argument("--here", action="store_true")
             g.add_argument("--worktree", action="store_true")
@@ -359,9 +407,13 @@ def main():
     c.add_argument("--auto", action="store_true", help=argparse.SUPPRESS)
     c.add_argument("--json", action="store_true")
     c.set_defaults(fn=lambda a: cmd_sync_auto(a.machine) if a.auto else cmd_machines(a))
-    c = ma.add_parser("reach", help="the reach map: the machines this one reaches (herdr-core links, ssh, Tailscale), and through each, what that one reaches")
+    c = ma.add_parser("reach", help="the reach map: the machines this one links to over herdr-core, and through each, what that one links to (contacts nothing else)")
     c.add_argument("--refresh", action="store_true", help="check every link now (default: the scheduler's map, at most 10 minutes old)")
     c.add_argument("--quiet", action="store_true", help=argparse.SUPPRESS)
+    c.add_argument("--json", action="store_true")
+    c.set_defaults(fn=cmd_machines)
+    c = ma.add_parser("find", help="Find machines: list the ssh config's hosts and online Tailscale peers not linked yet (contacts none); --go tries each once")
+    c.add_argument("--go", action="store_true", help="try each listed host once now (ssh, batch mode); at most once every 10 minutes")
     c.add_argument("--json", action="store_true")
     c.set_defaults(fn=cmd_machines)
     ho = sub.add_parser("home", help="a machine's home Assistant: show (default) says whether you are one and how the machine is now")
@@ -408,10 +460,18 @@ def main():
     c.add_argument("--keep", action="store_true", help="add the agent beside the old one")
     c = sub.add_parser("_allow")  # Codex's PermissionRequest hook (own_argv)
     c.add_argument("--command", required=True)
+    c.add_argument("--sandboxed", action="store_true")  # Codex's: its proof and commits run escalated (#866)
     c.set_defaults(fn=cmd_allow, json=False)
     c = sub.add_parser("_session-note")  # the chat's SessionStart hook (mods/chat/session-note.sh): an Assistant's extra words
     c.add_argument("terminal")
     c.set_defaults(fn=cmd_session_note, json=False)
+    c = sub.add_parser("_hold-news")  # feedback's report, queued for its Assistant in the background (feedback.queue_news)
+    c.add_argument("to")
+    c.add_argument("text")
+    c.set_defaults(fn=lambda a: __import__("herdr_task.news", fromlist=["hold"]).hold(a.to, a.text, "news"), json=False)
+    c = cmd("sandbox", cmd_sandbox, "whether Codex's sandbox (bwrap) can start on this machine, and the fix for it when it can't "
+            "(asked once and kept; --check asks again)", id=False)
+    c.add_argument("--check", action="store_true", help="ask again now")
     c = sub.add_parser("_track")
     c.add_argument("id")
     c.add_argument("address")
@@ -423,11 +483,21 @@ def main():
         p.print_help()
         return 1
     try:
-        args.fn(args)
+        rc = args.fn(args)
     except Fail as e:
-        if getattr(args, "json", False):
-            print(json.dumps({"error": str(e)}))
-        else:
-            print(f"herdr-task: {e}", file=sys.stderr)
-        return 1
-    return 0
+        return _refused(args, str(e))
+    except OSError as e:
+        # #1057: a program it runs (hc, git, gh) that couldn't be started (the system refusing a new process
+        # under memory pressure, hc missing or broken) ended Accept with a traceback at its first hc call
+        # (busy_again's). Said plainly instead (a store open when it failed is left as it was).
+        what = os.path.basename(str(e.filename)) if e.filename else "a program it needs"
+        return _refused(args, f"couldn't start {what} ({e.strerror or e}). Try again in a moment.")
+    return rc if type(rc) is int else 0
+
+
+def _refused(args, why):
+    if getattr(args, "json", False):
+        print(json.dumps({"error": why}))
+    else:
+        print(f"herdr-task: {why}", file=sys.stderr)
+    return 1

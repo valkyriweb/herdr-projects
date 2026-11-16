@@ -12,7 +12,32 @@
 #   HERDR_RESTART_RESUME=1          argv resumes the same conversation: no handoff is sent.
 set -u
 old=$1 argv=${2:-}
-info=$(hc get "$old" --json) || exit 1
+# Another machine's agent (<machine>/<address>): this script runs there (its logs, templates and hc are
+# that machine's), carried over hc like any cross-machine command; the new address comes back as
+# <machine>/<address>, as this side names it.
+if [[ "$old" == */* ]]; then
+  on=${old%/*} here=${old##*/}
+  envs=()
+  [ -n "${HERDR_RESTART_CHAT:-}" ] && envs+=(--env "HERDR_RESTART_CHAT=$HERDR_RESTART_CHAT")
+  [ -n "${HERDR_RESTART_RESUME:-}" ] && envs+=(--env "HERDR_RESTART_RESUME=1")
+  # its own say on why it didn't (#980: a silent exit there read only as "It didn't restart"), kept apart from hc's
+  errf=$(mktemp "${TMPDIR:-/tmp}/herdr-restart.XXXXXX")
+  out=$(hc exec --on "$on" --stdin --timeout 300 ${envs[@]+"${envs[@]}"} -- bash -s "$here" "$argv" <"$0" 2>"$errf")
+  code=$?
+  why=$(grep -v '^[[:space:]]*$' "$errf" 2>/dev/null | tail -n 1)
+  rm -f "$errf"
+  new=$(tail -n 1 <<<"$out")
+  if [ "$code" -ne 0 ] || [ -z "$new" ]; then
+    state=$(hc machine ls --json 2>/dev/null | jq -r --arg m "${on%%/*}" '.machines[]? | select(.name == $m) | .state' 2>/dev/null)
+    if [ -n "$state" ] && [ "$state" != connected ]; then echo "$on is offline. Try again once it's back." >&2
+    elif [ -n "$why" ]; then echo "It didn't restart on $on: $why" >&2
+    else echo "It didn't restart on $on." >&2; fi
+    exit 1
+  fi
+  echo "$on/$new"
+  exit 0
+fi
+info=$(hc get "$old" --json) || { echo "$old isn't running here any more." >&2; exit 1; }
 get() { jq -r "$1 // empty" <<<"$info"; }
 space=$(get '.labels["herdr.space"]') tab=$(get '.labels["herdr.tab"]') role=$(get '.labels["herdr.role"]')
 # Assistants start from the assistant template (earlier ones from "coordinator").
@@ -21,7 +46,12 @@ cwd=$(get .cwd) app=$(get .status.app) pid=$(get .foreground.pid) created=$(get 
 # A parked agent (behind a chat) has no tab labels: the chat names where it goes instead.
 # A coordinator in Chat mode says where it lives in its own labels (its workers name that tab).
 [ -n "$tab" ] || tab=$(get '.labels["herdr.coordinator.tab"]')
-[ -n "$space" ] && [ -n "$tab" ] || [ -n "${HERDR_RESTART_CHAT:-}" ] || [ -n "$(get '.labels["herdr.chat"]')" ] || exit 1
+# Somewhere to start the new one: a tab, a chat, or (#980) a space alone: the service's own Assistant on a machine
+# without the window (service/spaces.ts) has a space but no tab or chat, and restarts in the background there too.
+if [ -z "$space" ] && [ -z "${HERDR_RESTART_CHAT:-}" ] && [ -z "$(get '.labels["herdr.chat"]')" ]; then
+  echo "$old has no space, tab or chat to restart into." >&2
+  exit 1
+fi
 
 # What the previous agent did: its screen, and its session log when we can find it.
 dir=${HERDR_APP_HOME:-$HOME/.config/herdr-app}/data/coordinator/handoff
@@ -56,10 +86,19 @@ if [ "$role" = coordinator ]; then
   fi
 fi
 
-labels=(--label "herdr.space=$space" --label "herdr.tab=$tab")
+if [ -n "$tab" ]; then
+  labels=(--label "herdr.space=$space" --label "herdr.tab=$tab")
+else
+  # #980: no tab (an Assistant the service started without the window): kept in the background under its space,
+  # as the service starts it, so its space's chat finds the new one
+  labels=(--keep --label "herdr.space=$space")
+  v=$(get '.labels["herdr.coordinator.space"]'); [ -n "$v" ] && labels+=(--label "herdr.coordinator.space=$v")
+fi
 [ "$role" = coordinator ] && labels+=(--label herdr.role=coordinator)
 # An agent in Chat mode (parked behind a chat pane) restarts parked behind the same chat.
 chat=${HERDR_RESTART_CHAT:-$(get '.labels["herdr.chat"]')}
+# The label holds the pane as its own machine names it, never a window's "<machine>/<pane>" (#761).
+chat=${chat##*/}
 if [ -n "$chat" ]; then
   origin=$(get '.labels["herdr.chat.origin"]'); origin=${origin:-$old}
   labels=(--keep --label "herdr.chat=$chat" --label "herdr.chat.origin=$origin")
@@ -69,28 +108,43 @@ if [ -n "$chat" ]; then
   done
   [ "$role" = coordinator ] && labels+=(--label herdr.role=coordinator)
 fi
+# The new agent never inherits a parent Claude Code session's markers the holder may carry (SHEP-86):
+# the same line as core/clean-env.js CLEAN_ENV (test_repo keeps them equal).
+clean='for v in $(env | sed -nE '"'"'s/^(CLAUDECODE|CLAUDE_PID|CLAUDE_CODE_[A-Za-z0-9_]+)=.*/\1/p'"'"' | grep -vE '"'"'^CLAUDE_CODE_(USE|SKIP|DISABLE|ENABLE|MAX|OAUTH|CLIENT|API)_'"'"'); do unset "$v"; done;'
+tpl=$HOME/.config/herdr-core/templates/assistant.md
+# A coordinator restarted without an argv: the assistant template's own command and words.
+own=""
+[ -z "$argv" ] && [ "$role" = coordinator ] && own=$(awk '/^---[[:space:]]*$/ {f++; next} f == 1 && sub(/^command:[ \t]*/, "") {print; exit}' "$tpl" 2>/dev/null)
+# argv's words into cmd. A read loop, not mapfile: macOS's /bin/bash is 3.2, which has no mapfile (#736).
+argv_cmd() { local a; cmd=(); while IFS= read -r a; do cmd+=("$a"); done < <(jq -r '.[]' <<<"$argv"); }
 if [ -n "${HERDR_RESTART_RESUME:-}" ] && [ -n "$argv" ]; then
-  mapfile -t cmd < <(jq -r '.[]' <<<"$argv")
+  argv_cmd
   [ ${#cmd[@]} -gt 0 ] || exit 1
-  new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(basename "${cmd[0]}")" -- "${cmd[@]}" | jq -r '.address // empty')
-elif [ -z "$argv" ] && [ "$role" = coordinator ]; then
+  new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$(basename "${cmd[0]}")" -- sh -c "$clean"' exec "$@"' herdr-clean "${cmd[@]}" | jq -r '.address // empty')
+elif [ -z "$argv" ] && [ "$role" = coordinator ] && [ -z "$own" ]; then
   new=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" assistant "$handoff" | jq -r .address)
 else
-  mapfile -t cmd < <(jq -r '.[]' <<<"$argv")
-  [ ${#cmd[@]} -gt 0 ] || exit 1
-  key=$(basename "${cmd[0]}")
-  # Codex runs its commands outside hc without --no-daemon.
-  [ "$key" = codex ] && [[ " ${cmd[*]} " != *" --no-daemon "* ]] && cmd+=(--no-daemon)
+  if [ -n "$own" ]; then
+    own=${own#exec }
+    line=$own key=$(basename "${own%% *}")
+  else
+    argv_cmd
+    [ ${#cmd[@]} -gt 0 ] || exit 1
+    key=$(basename "${cmd[0]}")
+    # Codex runs its commands outside hc without --no-daemon.
+    [ "$key" = codex ] && [[ " ${cmd[*]} " != *" --no-daemon "* ]] && cmd+=(--no-daemon)
+    line=$(printf '%q ' "${cmd[@]}")
+  fi
   msg=$handoff
   if [ "$role" = coordinator ]; then
-    body=$(awk 'f>=2 {print} /^---[[:space:]]*$/ {f++}' "$HOME/.config/herdr-core/templates/assistant.md")
+    body=$(awk 'f>=2 {print} /^---[[:space:]]*$/ {f++}' "$tpl")
     msg="$body"$'\n\n'"$handoff"
   fi
   # hc delivers a template's first message once the agent is ready, so the
   # handoff goes in a one-off template, removed once it has started.
   one=herdr-handoff-$$
   file=$HOME/.config/herdr-core/templates/$one.md
-  { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$(printf '%q ' "${cmd[@]}")"
+  { printf -- '---\nname: %s\ndescription: A one-off Herdr handoff, removed after use.\ncommand: %s\n---\n' "$one" "$clean exec $line"
     printf '%s\n' "$msg"; } >"$file"
   out=$(hc run --bg --json --no-parent --cwd "$cwd" "${labels[@]}" --label "herdr.agent=$key" "$one")
   rm -f "$file"

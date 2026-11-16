@@ -66,11 +66,11 @@ export const KINDS = {
         ]
       },
       {
-        "id": "claude-fable-5-1",
-        "name": "Fable 5.1",
+        "id": "claude-fable-5-2",
+        "name": "Fable 5.2",
         "match": [
           "fable",
-          "claude-fable-5-1"
+          "claude-fable-5-2"
         ]
       },
       {

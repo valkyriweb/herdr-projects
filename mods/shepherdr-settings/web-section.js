@@ -1,5 +1,5 @@
 // The Web page (Shepherdr 3.1): Shepherdr in a browser on phone, tablet and desktop, private to the tailnet. Its link
-// and a QR code to open it on a phone, as the service last wrote them (~/.herdr/shepherdr/web.json: the service shares
+// and a QR code to open it on a phone, as the service last wrote them (~/.local/state/shepherdr/service/web.json: the service shares
 // /shepherdr with tailscale serve and draws the QR picture under data/). On or off: the Web add-on, under Window.
 // Serve from (core/host.js): the machine that serves it, picked from this computer and every linked one (its line says
 // its system, and Offline when it is), then confirmed under the list; the service moves it (shepherdr web serve-from)
@@ -9,6 +9,8 @@ import { v_flex, h_flex } from "gpui-base";
 import { home, appHome, readTextFile } from "herdr";
 import { button, menuRow, red, TEXT, RADIUS, H } from "./ui.js";
 import { on } from "./addons.js";
+import { localService, localToken } from "./local.js";
+import { dirsReady } from "./dirs.js";
 // The page's words and its state line: core/settings.js and core/host.js, shared with the web app.
 import { WEB, SECTIONS, webState } from "./core/settings.js";
 import { SERVE } from "./core/host.js";
@@ -18,12 +20,14 @@ let web = null, readAt = 0, loaded = false;
 const inApp = (p) => (p.startsWith(`${appHome()}/`) ? p.slice(appHome().length + 1) : p);
 // the list open, the line picked (waiting for Move it), and what the service said to it
 let open = false, picked = null, said = "";
+// the link was copied a moment ago: its button says so
+let copied = false;
 
 // What the service says now, read again at most every 5 s while the page shows (every second while it moves).
 function current(view) {
   if (Date.now() - readAt > (web?.serve?.moving ? 1000 : 5000)) {
     readAt = Date.now();
-    readTextFile(`${home()}/.herdr/shepherdr/web.json`).then((s) => { web = JSON.parse(s ?? "null"); }).catch(() => { web = null; })
+    dirsReady().then((d) => readTextFile(`${d.service}/web.json`)).then((s) => { web = JSON.parse(s ?? "null"); }).catch(() => { web = null; })
       .finally(() => { loaded = true; });
   }
   return web;
@@ -31,10 +35,13 @@ function current(view) {
 
 // Asks this machine's service to move it (the same as the web app's Settings › Web).
 async function move(label) {
-  const token = (await readTextFile(`${home()}/.herdr/shepherdr/token`).catch(() => null))?.trim();
+  const token = await localToken();
   if (!token) return "Shepherdr's service isn't running here.";
+  // its port, and that Shepherdr's own service answers there (not another app), before the token goes out
+  const svc = await localService().catch(() => null);
+  if (!svc) return "Shepherdr's service isn't answering here.";
   try {
-    const r = await fetch("http://127.0.0.1:7788/api/action", { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    const r = await fetch(`${svc.base}/api/action`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
       body: JSON.stringify({ type: "setting", key: "web.serve", value: label }) });
     const j = await r.json().catch(() => null);
     return j?.ok === false ? j.error ?? "It could not be moved." : "";
@@ -84,7 +91,12 @@ export function webSection(view, t) {
     .child(view.row(t, WEB.title, state, div()))
     .when(Boolean(!off && w?.serve?.rows?.length), (el) => el.child(servePicker(view, t, w.serve)))
     .when(Boolean(!off && w?.link && !w?.why), (el) => el
-      .child(view.row(t, WEB.link, w.link, button("web-copy", WEB.copy, { onClick: (_e, cx) => cx.write_to_clipboard(w.link) })))
+      .child(view.row(t, WEB.link, w.link, button("web-copy", copied ? WEB.copied : WEB.copy, { onClick: (_e, cx) => {
+        cx.write_to_clipboard(w.link);
+        copied = true;
+        cx.timer.after(1500, (cx) => { copied = false; cx.notify(); });
+        cx.notify();
+      } })))
       .when(Boolean(w.qr), (el) => el.child(v_flex().py(12).gap(8)
         .child(div().text_size(13).text_color(t.muted).child(WEB.phone))
         .child(h_flex().child(image(inApp(w.qr)).size(168).rounded(8))))));
