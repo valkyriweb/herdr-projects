@@ -1,12 +1,14 @@
-"""The person's settings (~/.herdr/shepherdr.json and per-folder), the agent each task runs, and
+"""The person's settings (~/.config/shepherdr/settings.json and per-folder), the agent each task runs, and
 the Settings block a task's brief ends with."""
 
 import json
 import os
 import re
+import shlex
 import shutil
+import subprocess
 
-from .base import Fail, HOME, MAX_RUNNING
+from .base import Fail, git, HOME, MAX_RUNNING, WHERE
 from . import kinds as K
 
 
@@ -16,16 +18,17 @@ AGENTS = {k: list(v["run"]) for k, v in K.kinds().items()}
 
 # ---- the person's settings ------------------------------------------------------------------
 
-SETTINGS = os.environ.get("HERDR_TASK_SETTINGS") or os.path.join(HOME, ".herdr", "shepherdr.json")
+SETTINGS = os.environ.get("HERDR_TASK_SETTINGS") or WHERE.path("settings")
 # The role instructions are herdr-core templates (`hc templates` lists them): assistant.md (the
 # coordinator's), worker.md and reviewer.md. Workers and reviewers used ~/.herdr/instructions.
 TEMPLATES = os.environ.get("HERDR_TASK_TEMPLATES") or os.path.join(HOME, ".config", "herdr-core", "templates")
 OLD_INSTRUCTIONS = os.path.join(HOME, ".herdr", "instructions")
 ASSISTANT_TEMPLATES = ("assistant", "coordinator")  # "coordinator": Assistants started before the rename
 DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "max_running": MAX_RUNNING, "worktrees": True,
-                      "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": ""},
+                      "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": "", "branch": "",
+                      "worktree_root": ""},
             "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {},
-            "agents": {"reactions": True}}
+            "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"}}
 LEVELS = ["blocker", "major", "minor"]
 
 
@@ -121,7 +124,7 @@ def settings_for(s, space=None):
     """The settings for this folder's tasks: Shepherdr settings' Everywhere, then this machine's,
     then the override of the space working in this folder (--space's when several do): the most
     specific wins. The window no longer writes agent or task values for a machine (only its
-    machine-only rows, read by machine_limits/machine_option); ones set before still apply here. Written by the settings window (~/.herdr/shepherdr.json); herdr-task only
+    machine-only rows, read by machine_limits/machine_option); ones set before still apply here. Written by the settings window (~/.config/shepherdr/settings.json); herdr-task only
     reads them."""
     everywhere, machine, pick = settings_layers(s, space)
     out = {k: dict(v) for k, v in DEFAULTS.items()}
@@ -269,6 +272,8 @@ SET_KEYS = {"review": "review", "brief.review": "review", "merge": "merge", "bri
             "mustfix": "must_fix", "must-fix": "must_fix", "must_fix": "must_fix", "review.mustfix": "must_fix",
             "agent": "agent", "task.agent": "agent", "model": "model", "task.model": "model", "effort": "effort", "task.effort": "effort",
             "reviewer": "reviewer", "reviewer.agent": "reviewer", "reviewer.model": "reviewer_model", "reviewer.effort": "reviewer_effort",
+            "reviewer_model": "reviewer_model", "reviewer-model": "reviewer_model",
+            "reviewer_effort": "reviewer_effort", "reviewer-effort": "reviewer_effort",
             "proof": "proof", "brief.proof": "proof"}
 # The Proof line (as Shepherdr's skill asks of its task agents), on and off.
 PROOF_WORDS = {"on": "show verifiable proof in one recipe artifact: each proof with a one-line caption, real and from this work now, "
@@ -340,6 +345,9 @@ def set_opts(t, args):
             raise Fail(f"--set takes key=value, not {pair!r}.")
         k, v = pair.split("=", 1)
         set_task(t, k, v)
+    if getattr(args, "reviewer_model", None) or getattr(args, "reviewer", None) or any(
+            SET_KEYS.get(p.split("=", 1)[0].strip().lower()) in ("reviewer", "reviewer_model") for p in getattr(args, "set", None) or []):
+        check_reviewer_model(t)
 
 
 def by_layer(s, space, section, key, value, default):
@@ -353,6 +361,13 @@ def by_layer(s, space, section, key, value, default):
     return None
 
 
+def cli_here(kind):
+    """The last sign-in check's word on a CLI here (takeover.py's cli-check, which the scheduler
+    keeps every 15 minutes): "ready", "signed-out", "missing" or None (unknown). Only read, never run."""
+    from .takeover import read_checks
+    return (((read_checks().get("machines") or {}).get("") or {}).get(kind))
+
+
 def other_cli(agent):
     """The reviewer by default: another CLI than the task agent's where it's installed (Claude Code
     and Codex first, as before, then the other kinds in kinds.json's order), else its own."""
@@ -362,8 +377,103 @@ def other_cli(agent):
     return agent
 
 
-def task_settings(s, t, space=None, argv=None):
-    """The settings that shape this task's work, each {label, text, value, by}."""
+CLI_NAMES = {"claude": "Claude Code", "codex": "Codex"}
+LOGIN = {"claude": "claude auth login", "codex": "codex login"}
+
+
+def codex_models():
+    """The model ids Codex offers here: its models_cache.json, which Codex fetches for the account it is signed in
+    with (a ChatGPT account gets fewer than an API key, #948); None when there is none to read."""
+    home = os.environ.get("CODEX_HOME") or os.path.join(os.path.expanduser("~"), ".codex")
+    try:
+        with open(os.path.join(home, "models_cache.json")) as f:
+            d = json.load(f)
+    except (OSError, ValueError):
+        return None
+    ids = [m.get("slug") for m in (d.get("models") or [] if isinstance(d, dict) else []) if isinstance(m, dict) and m.get("slug")]
+    return ids or None
+
+
+def codex_lacks(model):
+    """The models Codex offers here when `model` isn't one of them (it would refuse to start on it), else None."""
+    ids = codex_models()
+    return ids if model and ids and model not in ids else None
+
+
+CLAUDE_MODEL = re.compile(r"^(claude-|opus|sonnet|haiku|fable)", re.I)
+
+
+def check_reviewer_model(t):
+    """add/edit: a reviewer model Codex here can't use is refused when it is set (#948), not found at review time."""
+    m = t.get("reviewer_model")
+    if not m or t.get("reviewer") not in (None, "", "codex") or (not t.get("reviewer") and CLAUDE_MODEL.match(m)):
+        return
+    ids = codex_lacks(m)
+    if ids:
+        raise Fail(f"Codex here doesn't offer {m} for the account it is signed in with: pick one of {', '.join(ids)} "
+                   "(or leave the reviewer model unset for Codex's own default).")
+
+
+def codex_login_now():
+    """Codex's own word on its sign-in here, asked now (#947): (True, "") signed in, (False, what it said) when not
+    (an unreadable auth file says an error, and Codex then opens its sign-in screen), (None, "") when unknown."""
+    if not shutil.which("codex"):
+        return None, ""
+    try:
+        r = subprocess.run(["codex", "login", "status"], stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None, ""
+    out = f"{r.stdout}\n{r.stderr}"
+    if re.search(r"^\s*logged in", out, re.I | re.M):
+        return True, ""
+    said = next((ln.strip() for ln in out.splitlines() if ln.strip()), "")
+    return False, said[:160]
+
+
+def trust_roots(folder):
+    """The folders Codex asks to trust for an agent started in folder: the folder itself and its git
+    repository's root, which for a worktree is the main checkout's (Codex: "Trusting will apply to
+    the repository root")."""
+    if not folder:
+        return []
+    out = [folder]
+    ok, common, _ = git(folder, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if ok and common:
+        root = os.path.dirname(common) if os.path.basename(common) == ".git" else \
+            git(folder, "rev-parse", "--show-toplevel")[1]
+        if root and root not in out:
+            out.append(root)
+    return out
+
+
+def reviewer_command(who, model=None, effort=None, folder=None):
+    """The command a worker starts its reviewer with (the brief's Reviewer line): read-only, and for
+    Codex on its own app server (--no-daemon, as task agents run: a shared one can keep a sign-in
+    since replaced, and every turn then fails, #745). Codex would first stop on its own screens,
+    nobody at the keys (#798, #753): "Trust this folder?" in a folder it hasn't seen (the task's
+    folder and its repository's root are trusted for this run only, as a table: a dotted
+    projects."<path>" key breaks on a dot in the path, as in ~/.local) and "Hooks need review"
+    when a hook is new or changed (hooks off: a read-only reviewer needs none, and they would run
+    outside its sandbox)."""
+    if who == "codex":
+        a = ["codex", "--no-daemon", "--sandbox", "read-only", "--ask-for-approval", "never", "--disable", "hooks"]
+        roots = trust_roots(folder)
+        if roots:
+            a += ["-c", "projects={" + ",".join(f'{json.dumps(r)}={{trust_level="trusted"}}' for r in roots) + "}"]
+        a += ["-m", model] if model else []
+        a += ["-c", f'model_reasoning_effort="{effort}"'] if effort else []
+    elif who == "claude":
+        a = ["claude", "--permission-mode", "plan"]
+        a += ["--model", model] if model else []
+        a += ["--effort", effort] if effort else []
+    else:
+        return None
+    return shlex.join(a)
+
+
+def task_settings(s, t, space=None, argv=None, live=False):
+    """The settings that shape this task's work, each {label, text, value, by}. live: for a brief, so its Reviewer
+    line is checked against what Codex says now (sign-in and models), not only the last periodic check."""
     space = space or t.get("space")
     cfg = settings_for(s, space)
     k, sets = cfg["tasks"], t.get("set") or {}
@@ -373,10 +483,15 @@ def task_settings(s, t, space=None, argv=None):
         lines.append({"label": label, "text": text, "value": value, "by": by})
 
     rounds_cfg = int(k.get("review_rounds") or 0)
+    # The Review its brief gave (keep_review): a setting changed while it runs is for tasks added
+    # later, as the change's notice says (#750); the Assistant's own --set for it still wins.
+    kept = t.get("brief_review") if "review" not in sets and "review_rounds" not in sets else None
     if "review" in sets:
         on, rev_by = sets["review"] == "on", "task"
     elif "review_rounds" in sets:
         on, rev_by = sets["review_rounds"] > 0, "task"
+    elif kept:
+        on, rev_by = bool(kept.get("on")), kept.get("by")
     else:
         on, rev_by = rounds_cfg > 0, by_layer(s, space, "tasks", "review_rounds", rounds_cfg > 0, False)
     here = t.get("mode") != "worktree"
@@ -393,17 +508,44 @@ def task_settings(s, t, space=None, argv=None):
         for f in ("model", "effort"):
             if t.get(f"reviewer_{f}"):
                 rv[f] = t[f"reviewer_{f}"]
-        who = rv.get("agent") or other_cli(agent)
+        want = rv.get("agent") or other_cli(agent)
+        who, said = want, ""
+        if want != agent and cli_here(want) == "signed-out":
+            # Signed out here, it would sit at its sign-in screen and never review (#745): the task's own CLI does.
+            who, rv = agent, {}
+        elif want == "codex" and want != agent and live:
+            # #947: the periodic check can't read every answer (an unreadable auth file says an error, not "Not logged
+            # in"), so a brief asks Codex now; anything but signed in would leave the reviewer on its sign-in screen
+            ok, said = codex_login_now()
+            if ok is False:
+                who, rv = agent, {}
+        # #948: a model Codex here doesn't offer this account stops it at once: its own default instead, said
+        lacks = codex_lacks(rv.get("model")) if who == "codex" else None
+        dropped = rv.get("model")
+        if lacks:
+            rv = {k: v for k, v in rv.items() if k != "model"}
         text = who + (f", model {rv['model']}" if rv.get("model") else "") + (f", effort {rv['effort']}" if rv.get("effort") else "")
-        if not rv.get("agent"):
+        if lacks:
+            text += (f" (Codex's own default model: Codex here doesn't offer {dropped} "
+                     "for the account it is signed in with)")
+        if who != want:
+            text += (f" (your own CLI: {CLI_NAMES.get(want, want)} isn't signed in here"
+                     + (f", `{LOGIN.get(want, want + ' login')} status` says \"{said}\"" if said and not re.match(r"not logged in", said, re.I) else "")
+                     + f"; the person runs `{LOGIN.get(want, want + ' login')}` on this machine, then asks for the review again)")
+        elif not rv.get("agent"):
             text += " (the other CLI)" if who != agent else " (your own CLI: no other is installed)"
-        add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort")}, rv_by)
+        folder = t.get("worktree") or getattr(s, "loc", {}).get("folder")
+        cmd = reviewer_command(who, rv.get("model"), rv.get("effort"), folder)
+        if cmd:
+            text += f"; start it as `{cmd}`"
+        add("Reviewer", text, {"agent": who, "model": rv.get("model"), "effort": rv.get("effort"), "command": cmd}, rv_by)
         must = sets.get("must_fix") or (k.get("must_fix") if k.get("must_fix") in LEVELS else "major")
         add("Must fix", MUST_WORDS[must], must, "task" if "must_fix" in sets else by_layer(s, space, "tasks", "must_fix", must, "major"))
-        rounds = sets.get("review_rounds") or (rounds_cfg if rounds_cfg > 0 else 3)
+        rounds = sets.get("review_rounds") or (kept or {}).get("rounds") or (rounds_cfg if rounds_cfg > 0 else 3)
         more = int(t.get("review_rounds_added") or 0)
         add("Review rounds", f"at most {rounds + more}" + (f" ({more} added by the assistant)" if more else ""), rounds + more,
-            "task" if "review_rounds" in sets else by_layer(s, space, "tasks", "review_rounds", rounds, 3))
+            "task" if "review_rounds" in sets else (kept or {}).get("rounds_by") if kept else
+            by_layer(s, space, "tasks", "review_rounds", rounds, 3))
     policy = sets.get("merge") or (k.get("merge") if k.get("merge") in MERGE_WORDS else "ask")
     m_by = "task" if "merge" in sets else by_layer(s, space, "tasks", "merge", policy, "ask")
     if here:
@@ -421,12 +563,43 @@ def task_settings(s, t, space=None, argv=None):
     a_by = "task" if any(t.get(f) for f in ("agent", "model", "effort")) else \
         by_layer(s, space, "worker", None, bool(cfg.get("worker")), False)
     add("Agent", text, {"agent": agent, "model": model, "effort": effort}, a_by)
+    # Suggested next message (SHEP-186): the reply ends with the words the person would likely send next (templates/worker.md)
+    sug = (cfg.get("agents") or {}).get("suggestions") is not False
+    add("Suggested next message", "on (your reply ends with the message you'd likely send next, shown greyed out in the box)" if sug
+        else "off (no suggested next message)", sug, by_layer(s, space, "agents", "suggestions", sug, True))
     return lines
 
 
-def settings_block(s, t, space=None, argv=None):
-    rows = [f"- {x['label']}: {x['text']}" + (f" ({SET_BY[x['by']]})" if x["by"] else "") for x in task_settings(s, t, space, argv)]
+def settings_block(s, t, space=None, argv=None, live=False):
+    lines = task_settings(s, t, space, argv, live)
+    rows = [f"- {x['label']}: {x['text']}" + (f" ({SET_BY[x['by']]})" if x["by"] else "") for x in lines]
+    # Codex's sandbox can't start here (SHEP-227, #998): the worker hears it in its brief and tells the person.
+    word = sandbox_word(lines, argv or (t["agents"][-1].get("argv") if t.get("agents") else None) or worker_argv(s, t, space))
+    if word:
+        rows.append(f"- Sandbox: {word}")
     return "\n".join([SETTINGS_HEAD, *rows])
+
+
+def sandbox_word(lines, argv):
+    """The Settings block's Sandbox line when this task's worker or reviewer runs Codex in its
+    sandbox and that sandbox can't start on this machine (sandbox.check), else None."""
+    from . import sandbox
+    rv = next((x["value"] for x in lines if x["label"] == "Reviewer"), None) or {}
+    if not (sandbox.sandboxed(argv) or rv.get("agent") == "codex"):
+        return None
+    broken = sandbox.check()
+    return sandbox.notice(broken, short=True) if broken else None
+
+
+def keep_review(s, t, space=None):
+    """A fresh brief gives today's Review: kept on the task (brief_review), so its Settings block,
+    ready and reviewed keep agreeing with that brief while it runs (#750)."""
+    t.pop("brief_review", None)
+    rows = {x["label"]: x for x in task_settings(s, t, space)}
+    rev, rounds = rows["Review"], rows.get("Review rounds")
+    t["brief_review"] = {"on": bool(rev["value"]), "by": rev["by"]}
+    if rounds:
+        t["brief_review"].update(rounds=rounds["value"] - int(t.get("review_rounds_added") or 0), rounds_by=rounds["by"])
 
 
 def review_limits(s, t):
@@ -445,6 +618,27 @@ def space_base(s, space=None):
     """The branch a space's new tasks branch from and merge into (Shepherdr settings > Tasks >
     Base branch, per space); "" when unset: the folder's current branch."""
     return str(settings_for(s, space)["tasks"].get("base") or "").strip()
+
+
+# Shepherdr settings > Tasks > Branch names (tasks.branch, #570): a folder's new task branches.
+# {n}: the task's number, {key}: its id (SHEP-4), {slug}: its title's words. Unset: this.
+BRANCH_PATTERN = "task/{n}-{slug}"
+
+
+def branch_pattern_problem(pattern):
+    """Why a Branch names pattern can't be used, or None (core/settings.js branchPattern says the same)."""
+    p = str(pattern or "").strip()
+    if not p:
+        return None
+    if "{n}" not in p and "{key}" not in p:
+        return "Put {n} or {key} in it, so each task's branch is its own."
+    if re.search(r"\{(?!(?:n|key|slug)\})[^}]*\}", p):
+        return "Only {n}, {key} and {slug} can be filled in."
+    sample = p.replace("{n}", "4").replace("{key}", "ABC-4").replace("{slug}", "fix-login")
+    if (sample.startswith("-") or sample.startswith("/") or sample.endswith("/") or sample.endswith(".") or sample.endswith(".lock")
+            or re.search(r"[\s~^:?*\[\\]|\.\.|@\{|//|/\.", sample)):
+        return "That isn't a name git allows for a branch."
+    return None
 
 
 def merge_policy(s, t):

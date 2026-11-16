@@ -3,25 +3,27 @@
 // shapes 2.1's screen reads (web/shared/types.ts: Snapshot, Chat), and its chat keys back into terminals.
 //   a space's chat (its Assistant):  p:<space id, "/" as ":">     a task's chat:  <task id>/worker
 // A task id is its ref ("SHEP-7"), "<machine>:<ref>" on another machine, as 2.1 wrote them.
+import { failedOf } from "./send-once.ts";
 import type { Snapshot, Place, Task, Need, Section, Machine, Chat, Message, Status, TaskStatus, StepKind, ActivityAnswer, Question, Artifact, SettingSection, Job } from "../web/shared/types.ts";
 import * as T from "../core/tasks.js";
 import * as SPc from "../core/spaces.js";
 import { kindOf as kindOfTerm } from "../core/chat-reader.js";
 import * as CL from "../core/chat-log.js";
 import * as CV from "../core/chat-view.js";
+import { taskArtifacts } from "../core/task-artifacts.js";
 const { summary, names, pilotLine } = CL as any;
-const { senderName, briefLabel, newsTimeline, resolveArtifacts, unsigned, fromName, sentTo, selfName } = CV as any;
+const { senderName, briefLabel, firstUser, firstKeys, newsTimeline, resolveArtifacts, unsigned, fromName, sentTo, selfName, subagentsOf, isHelper } = CV as any;
 import { mentionedIn } from "../core/send.js";
 import * as MEc from "../core/mentions.js";
 import * as SCc from "../core/screens.js";
+import { codexChoice } from "../core/asks.js";
 const { SCREEN } = SCc as any;
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-const APP_HOME = process.env.HERDR_APP_HOME || join(HOME, ".config", "herdr-app");
 import * as MNc from "../core/menus.js";
 import * as APc from "../core/autopilot.js";
 const { machineLabel } = MNc as any;
-import { HOME } from "./paths.ts";
+import { HOME, appHome } from "./paths.ts";
 const { spaceName } = SPc as any;
 import type { Where } from "./worktree.ts";
 import * as AGc from "../core/agents.js";
@@ -185,6 +187,18 @@ export function artifactOf(a: any, spaces: Space[], program: (addr: string) => s
   };
 }
 
+/** Codex's own questions (a log's ask item with its questions) as a question card: its id cq:<item id>, answered on
+ *  Codex's screen (service/actions.ts, core/asks.js codexSteps). */
+export function codexQuestion(x: any, key: string): Question {
+  const qs: any[] = x.questions ?? [];
+  const choices = (q: any) => q.choices.map(codexChoice);
+  // no note: its picker has nowhere for one beside a pick
+  if (qs.length > 1)
+    return { id: `cq:${x.id}`, title: `${qs.length} questions`, kind: "Question", to: key, choices: [], other: true, noNote: true,
+      parts: qs.map((q) => ({ title: q.text, header: q.header || undefined, choices: choices(q) })) };
+  return { id: `cq:${x.id}`, title: qs[0].text, kind: "Question", to: key, other: true, noNote: true, choices: choices(qs[0]) };
+}
+
 export class Compat {
   /** another machine's key -> the name people read for it (who sent a message: core/chat-view.js fromName) */
   machineNames = new Map<string, string>();
@@ -198,11 +212,13 @@ export class Compat {
   private rows: Row[] = [];
   /** the artifacts' registries as herdr-artifact lists them (versions with who published them), for a chat's publishes */
   private rawArts: any[] = [];
+  /** the artifact ids each chat log says were published (service/task-logs.ts), set by main */
+  taskLogs: { ids(path: string): string[] } | null = null;
   private spaceList: Space[] = [];
   /** A space by its id: its folder and machine. */
   spaceOf(id: string) { const s = this.spaceList.find((x) => x.id === id); return s ? { id: s.id, folder: s.folder, machine: s.machine ?? null } : null; }
   /** Every space: its folder and machine (the worktree dialog's "open" marks). */
-  allSpaces() { return this.spaceList.map((s) => ({ id: s.id as string, folder: s.folder as string, machine: (s.machine ?? null) as string | null })); }
+  allSpaces() { return this.spaceList.map((s) => ({ id: s.id as string, folder: s.folder as string, machine: (s.machine ?? null) as string | null, ...((s as any).own ? { own: true } : {}) })); }
 
   /** The tasks a chat's messages can mention (#HAT-1): its folder's, on its machine, as the window's chat has them. */
   tasksFor(chatKey: string) {
@@ -221,6 +237,8 @@ export class Compat {
   machineStats: ((m: string | null) => any) | null = null;
 
   /** The model menu and restarts (service/agents.ts), set by main. */
+  /** The agent Shepherdr settings choose for a space's Assistant (main.ts: Settings.role), for a start from the web. */
+  assistantPick: ((space: string) => any) | null = null;
   agents: { info(addr: string, reader: any): Promise<unknown>; restart(addr: string, reader: any, pick: any): Promise<string>; choices(machine: string | null): Promise<unknown>; ownDefaults(): Promise<Record<string, unknown>> } | null = null;
 
   /** Agents' secret asks (service/secrets.ts), set by main. */
@@ -249,7 +267,7 @@ export class Compat {
     const w = a.words;
     if (w.kind === "questions") {
       const q = w.questions[0];
-      const choices = (x: any) => x.options.map((o: any) => ({ label: o.name, ...(o.description ? { description: o.description } : {}), ...(o.recommended ? { recommended: true } : {}) }));
+      const choices = (x: any) => x.options.map((o: any) => ({ label: o.name, ...(o.description ? { description: o.description } : {}), ...(o.recommended ? { recommended: true } : {}), ...(o.preview ? { preview: o.preview } : {}) }));
       // several questions: one card with a step for each, then one to check the answers (3.0's card)
       if (w.questions.length > 1)
         return { id: a.id, title: `${w.questions.length} questions`, kind: "Question", to: key, choices: [], other: true,
@@ -274,7 +292,7 @@ export class Compat {
    *  again by its words, and shows with the page's id and files */
   sends = new Map<string, Sent[]>();
   noteSend(addr: string, s: Sent) {
-    this.sends.set(addr, [...(this.sends.get(addr) ?? []).filter((x) => Date.now() - x.at < 30 * 60_000), s].slice(-20));
+    this.sends.set(addr, [...(this.sends.get(addr) ?? []).filter((x) => x.cid !== s.cid && Date.now() - x.at < 30 * 60_000), s].slice(-20));
   }
 
   addrOf(key: string) { return this.chats.get(key) ?? null; }
@@ -342,6 +360,8 @@ export class Compat {
       return { id: s.id, name, ...(!s.name || s.name === "~" ? { unnamed: true } : {}), ...(s.icon ? { emoji: s.icon } : {}),...(s.git ? { git: s.git.linked ? "linked" : "main", repo: s.git.repo, gitName: s.git.name, branch: s.git.branch ?? null } : {}), ...(s.git?.linked ? { worktree: true } : {}), machine: s.machine ?? host, level: 0, status: AGENT[s.assistantStatus] ?? "idle", mode: s.autopilot ? "autopilot" : "regular", chat: key, header, where, ...(cwd ? { cwd } : {}), assistantTab, ...(s.pilot ? { pilot: headerPilot(s.pilot) } : {}),store: artifactStore(s as any), ...((s as any).changedAt ? { changedAt: (s as any).changedAt } : {}),...(tabs.length ? { tabs } : {}) };
     });
 
+    // every agent's own helper agents (SHEP-54): their chats open by t:<address>, as a tab's
+    for (const k of (this as any).terminalsAll?.() ?? []) if (isHelper(k)) chats.set(`t:${k.address}`, k.address);
     this.tasks = new Map(rows.map((r) => [taskId(r), { ref: r.ref, folder: r.folder, machine: r.machine ?? null, key: `${r.slug}#${r.id}`, pin: r.key,
       where: { folder: r.worktree, machine: r.machine ?? null, base: r.base, start: r.start, branch: r.branch, pr: r.pr } }]));
     // one older than 10 minutes was left by a quit (as the window reads it)
@@ -357,6 +377,8 @@ export class Compat {
         // its latest news (ms), as Jump orders tasks newest first
         at: Math.max(0, ...[r.done_at, r.ready_at, r.started].filter((x: unknown): x is number => typeof x === "number")),
         ...(r.sub ? { sub: r.sub } : {}),
+        // its worker's own helper agents (SHEP-54), named in its detail's header; each one's row is over its chat's box
+        ...(r.subagents?.length ? { subagents: r.subagents.map((x: any) => ({ chat: `t:${x.address}`, title: x.title, status: x.status, at: x.at, ...(x.ended ? { ended: x.ended } : {}) })) } : {}),
         // the window's Accept card accepting it now (shared "tasks.accepting", mods/accept-card): "Accepting…"
         ...(accepting(r) ? { accepting: true } : {}),
         // the minutes left under a Working row's dot, as the window writes them (core/tasks.js leftOf: "6m", "<1m", "2h")
@@ -367,6 +389,10 @@ export class Compat {
         ...(r.started ? { started: r.started } : {}), ...(r.summary ? { summary: r.summary } : {}), ...(r.details ? { details: r.details } : {}),
         ...(r.pr ? { pr: { number: r.pr.number, url: r.pr.url } } : {}),
         ...(r.branch ? { branch: r.branch } : {}), ...(r.base ? { base: r.base } : {}),
+        // its Artifacts tab (SHEP-60): its proof first, then newest first; its chat logs as the fallback (this machine's)
+        ...((arts) => (arts.length ? { artifacts: arts } : {}))(taskArtifacts(this.rawArts, { ref: r.ref, folder: r.folder, machine: r.machine ?? null, agents: r.agents, proof: r.proof },
+          r.machine ? [] : (r.logs ?? []).flatMap((p: string) => this.taskLogs?.ids(p) ?? []))),
+        ...(r.proof ? { proof: r.proof } : {}),
         // the task's browser (agent-browser), relayed for this machine's tasks
         ...(r.machine ? { browser: { ready: false, hint: `This task runs on ${r.machine}. Its browser can be watched only from that machine's Herdr for now.` } } : { browser: { ready: true } }),
         ...(r.pinned ? { pinned: 1 } : {}),
@@ -427,9 +453,8 @@ export class Compat {
         ...(spaces.some((s) => spaceOwn(n, s.id)) ? { others: spaces.filter((s) => spaceOwn(n, s.id)).map((s) => ({ id: s.id, name: places.find((p) => p.id === s.id)?.name ?? s.name })) } : {}) },
         // machines that set their own before machine scope went: still applied, shown with Reset (the window's)
         ...Object.entries((n as any).machines ?? {}).filter(([, v]) => NOTIFY.includes(v as string)).map(([m, v]) =>
-          ({ label: STc.machineLabel(m), key: `notify.machine@${m}`, value: "", button: STc.RESET, hint: STc.notifyMachineAbout(v) })),
-        // push alerts on this phone or browser: 2.1's alerts action (it asks the device, then tells the service)
-        { label: "Alerts on this device", key: "alerts", value: "", options: ["Turn on"] }] },
+          ({ label: STc.machineLabel(m), key: `notify.machine@${m}`, value: "", button: STc.RESET, hint: STc.notifyMachineAbout(v) }))] },
+      // (push alerts on this phone or browser: the alerts plugin's part on top of this page, web/plugins/alerts/device.tsx)
       ...spaces.map((s) => {
         // "Inherited from Everywhere", or its machine's own set before
         const m = machineOfSpace(s.id), from = STc.fromWord(machineOwn(n, m) ? "machine" : "everywhere", m);
@@ -464,7 +489,7 @@ export class Compat {
   private firsts = new Map<string, { at: number; text: string | null }>();
   firstTask(t: any, addr?: string | null) {
     const safe = (s: string) => String(s).replace(/[^\w.-]/g, "_");
-    const names = [t?.labels?.["herdr.chat.slot"], t?.labels?.["herdr.chat.origin"], addr].filter(Boolean).map((n) => join(APP_HOME, "data", "chat-first", `${safe(n)}.txt`));
+    const names = firstKeys({ labels: t?.labels, addr }).map((n: string) => join(appHome(), "data", "chat-first", `${safe(n)}.txt`));
     for (const f of names) {
       const was = this.firsts.get(f);
       if (was && Date.now() - was.at < 10_000) { if (was.text) return was.text; continue; }
@@ -519,22 +544,29 @@ export class Compat {
     // what pages sent it, known again in the log: the page's id comes back on it
     const sends = (own && this.sends.get(own)) || [], takenSends = new Set<string>();
     const asking = !!own && (this.asks?.of(own) ?? []).some((a: any) => a.words?.kind === "questions");
+    // Codex's own questions (request_user_input) waiting on its screen: a card that answers them there (SHEP-91), at
+    // the end, in place of its "Asked you" box
+    const codexAsk = reader.kind === "codex" && t?.status?.state === "blocked"
+      ? [...items].reverse().find((x: any) => x.kind === "ask") : null;
+    const codexCard = codexAsk && !codexAsk.closed && codexAsk.questions?.length ? codexAsk : null;
     // an Assistant started from its chat with the person's words: what they asked (data/chat-first, as the window's)
-    const ft = reader.start === 0 && items[0]?.kind === "user" ? this.firstTask(t, own)?.trim() : null;
+    // the session's first message: the first user item (core/chat-view.js firstUser)
+    const fi = firstUser(items);
+    const ft = reader.start === 0 && fi >= 0 ? this.firstTask(t, own)?.trim() : null;
     for (const [i, raw] of items.entries()) {
       let x = raw;
       if (x.at) at = x.at;
       while (mi < made.length && x.at && made[mi].at < x.at) messages.push(newsLine(made[mi++]));
       const reactions = reactionsOf(reader.conv?.reactions?.get(x.id));
       // the template's part a quiet "New session" row, the person's words their own message
-      const first = i === 0 && !!ft && x.kind === "user" && String(x.text ?? "").trim().endsWith(ft);
+      const first = i === fi && !!ft && x.kind === "user" && String(x.text ?? "").trim().endsWith(ft);
       if (first) {
         const body = String(x.text).trim().slice(0, -ft!.length).trim();
         if (body) messages.push({ id: `${x.id}:b`, who: "you", at: x.at, text: body, brief: { label: "New session" } });
         x = { ...x, text: ft };
       }
       // not typed by the person: a launch brief or another agent's message, as one quiet row
-      const brief = x.kind === "user" && !first ? briefLabel(x, i, { start: reader.start, template, task, sender, ...peers }) : null;
+      const brief = x.kind === "user" && !first ? briefLabel(x, i, { start: reader.start, template, task, sender, ...peers, first: fi }) : null;
       if (brief) {
         const restart = /^<restart>/.test(x.text ?? "");
         messages.push({ id: x.id, who: "you", at: x.at, text: restart ? x.text.replace(/<\/?restart>/g, "") : x.from ? unsigned(x.text) : x.text, brief: { label: brief, ...(restart ? { bare: true } : {}), ...(x.from ? { from: fromName(x, sender, peers) } : {}) } });
@@ -564,10 +596,20 @@ export class Compat {
         const to = sentTo(x, (a: string) => sender(a, ""));
         messages.push({ id: x.id, who: "agent", at: x.at, text: unsigned(x.text), brief: { label: `Message to ${to}`, from: self, to } });
       }
-      else if (x.kind === "agent" && x.text) messages.push({ id: x.id, who: "agent", text: x.text, at: x.at, ...reactions });
+      else if (x.kind === "agent" && x.text) {
+        // the pictures and videos it put in its words (core/chat-view.js mediaIn), each right under them as a file of
+        // its own, as the person's are; only files a chat names are ever served (fileOf)
+        const md = (CV as any).mediaIn(x.text, { cwd: t?.foreground?.cwd ?? t?.cwd ?? null, home: machine ? null : HOME }) as { text: string; media: { path: string; name: string; alt: string }[] };
+        // the suggested next message it ends with (SHEP-186): the box shows it greyed out while nothing is typed
+        if (md.text || !md.media.length) messages.push({ id: x.id, who: "agent", text: md.text || x.text, at: x.at, ...reactions, ...(x.suggest ? { suggest: x.suggest } : {}) });
+        for (const [n, m] of md.media.entries()) {
+          (this.files.get(key) ?? this.files.set(key, new Set()).get(key)!).add(m.path);
+          messages.push({ id: `${x.id}:m${n}`, who: "agent", at: x.at, file: { name: m.name, path: m.path, ...(m.alt ? { alt: m.alt } : {}) }, ...(md.text || n ? {} : reactions) } as Message);
+        }
+      }
       else if (x.kind === "error" && x.text) messages.push({ id: x.id, who: "agent", text: x.text, at: x.at, error: true });
       // its own question asked now shows as its card (at the end), in place of its "Asked you" box, as the window's
-      else if (x.kind === "ask" && !x.closed && asking) continue;
+      else if (x.kind === "ask" && !x.closed && (asking || x === codexCard)) continue;
       else if (x.kind === "ask" && x.text) messages.push({ id: x.id, who: "agent", text: x.text, at: x.at, asked: x.closed === "answered" ? "answered" : x.closed ? "dismissed" : "open" });
       else if (x.kind === "news" && x.ref) {
         // a task's news line in its Assistant's chat (<herdr-news task=… event=…>), as it was said
@@ -603,6 +645,7 @@ export class Compat {
     }
     // what the agent asks now, as cards at the end of its chat
     for (const a of addr ? this.asks?.of(addr) ?? [] : []) messages.push({ id: `ask:${a.id}`, who: "agent", at: a.at, question: this.question(a, key) });
+    if (codexCard) messages.push({ id: `ask:cq:${codexCard.id}`, who: "agent", at: codexCard.at ?? Date.now(), question: codexQuestion(codexCard, key) });
     for (const a of (this.secrets?.asks() ?? []).filter((x) => x.address === addr)) messages.push({ id: `secret:${a.address}:${a.name}`, who: "agent", at: Date.now(), secret: this.secretAsk(a) } as Message);
     // asks that closed, as the window's quiet lines ("✓ Run: npm test · Allowed in the chat"); a question's own line is
     // its "Asked you" box, from the log
@@ -630,7 +673,11 @@ export class Compat {
     const st = t?.status?.state ?? null;
     // the CLI's own subagents still at work, then its background shells and watchers, above the box (3.0: the helpers
     // list; core/bg-jobs.js)
+    // first its own helper agents in herdr (SHEP-54: a reviewer it started as its hc child), each opening to its own chat
+    const kids = addr ? subagentsOf((this as any).terminalsAll?.() ?? [], addr) : [];
     const jobs: Job[] = [
+      // (one that ended keeps its row a while, done, but no longer opens: its log is found by its running process)
+      ...kids.map((s: any) => ({ id: `c:${s.address}`, kind: "child" as const, title: s.title, at: s.at, ...(s.ended ? {} : { chat: `t:${s.address}` }), status: s.status, role: s.role, ...(s.cli ? { cli: s.cli } : {}), ...(s.ended ? { ended: s.ended } : {}) })),
       ...(reader.conv?.running?.() ?? []).map((h: any, i: number) => ({ id: `h${i}`, kind: "agent" as const, title: h.desc, at: h.at ?? Date.now() })),
       ...(reader.jobs?.() ?? []).map((j: any) => ({ id: `b:${j.id}`, kind: j.kind === "monitor" ? "monitor" as const : "shell" as const, title: j.label, at: j.at ?? Date.now(), command: j.cmd, stop: true, ...(j.path ? { more: "output" as const } : {}) })),
     ];
@@ -664,6 +711,7 @@ export class Compat {
       : reader.state === "missing" && reader.pinned ? "gone"
       : reader.state === "none" || reader.state === "missing" ? ((t && t.state !== "live") || !t ? "ended" : kind ? "none" : "unsupported")
       : !reader.pinned && (!t || t.state !== "live") && !items.length ? "ended" : null;
-    return { key, messages, ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
+    const failed = failedOf(addr);
+    return { key, messages, ...(failed.length ? { failed } : {}), ...head, ...under, ...(note ? { note } : {}), ...(notice ? { notice } : {}), ...(agent ? { agent } : {}), ...(jobs.length ? { jobs } : {}), working: st === "working", cli: reader.kind === "codex" ? "codex" : "claude", ...(reader.pinned || (t && t.state !== "live") ? { finished: true } : {}) };
   }
 }

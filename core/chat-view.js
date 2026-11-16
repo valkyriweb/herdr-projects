@@ -11,6 +11,9 @@ export const WORDS = {
   noMatches: "No matches",
   searchEarlier: "Search earlier",
   needsYou: "Needs you",
+  // a subagent row's state (SHEP-54), and how it opens
+  subDone: "Done",
+  subOpen: "Open its chat",
   askingInTerminal: "The agent is asking something in the terminal.",
   openTerminal: "Open terminal",
   replyInstead: "Reply instead…",
@@ -20,6 +23,8 @@ export const WORDS = {
   // typed while it works: in its CLI's queue, taken at its next step (Claude Code's own queue)
   inQueue: "Queued · it reads it at its next step",
   sendNow: "Send now",
+  // Send now on one in its queue that its CLI didn't offer to take at once (its screen had no "ctrl+enter to send now")
+  notNow: "It couldn't take it now",
   ended: "This task's agent has ended.",
   resuming: "Resuming…",
   emptyTitle: "What should the Assistant do?",
@@ -39,6 +44,8 @@ export const WORDS = {
   opening: "Opening the conversation…",
   restarting: "Restarting the agent…",
   agentEnded: "This agent has ended",
+  assistantEnded: "The Assistant has ended",
+  assistantEndedBody: "Restart it to carry on the same conversation here.",
   taskEnded: "This task's agent has ended",
   unsupported: "No chat for this agent",
   unsupportedBody: "Chat reads Claude Code's and Codex's own session logs. This agent works in its terminal only.",
@@ -78,6 +85,8 @@ export const notSent = (why) => `Not sent: ${String(why ?? "").replace(/\.$/, ""
 // An earlier publish of an artifact, as one quiet line; the latest one's card.
 export const published = (title, v) => `Published ${title} v${v}`;
 export const artifactLine = (v) => `Artifact · v${v}`;
+// a video an agent showed, in the window (which can't play one): a line that opens it in the system's player
+export const videoLine = (name) => `${name} · Video`;
 // m:ss, for the working line, a recording and a call.
 export const elapsed = (secs) => `${Math.floor(Math.max(0, secs) / 60)}:${String(Math.floor(Math.max(0, secs)) % 60).padStart(2, "0")}`;
 
@@ -221,12 +230,31 @@ export function selfName({ assistant = false, task = null, kind = null } = {}) {
 // A name's initial for its avatar: a task ref's letters ("SHEP-4" → "S"), else its first letter.
 export const initialOf = (name) => (String(name ?? "").trim().match(/[A-Za-z0-9]/)?.[0] ?? "?").toUpperCase();
 
+// The session's first message: the first user item, not items[0] (#589: lines read out of it, like task news, come
+// before it). -1: none.
+export const firstUser = (items) => (items ?? []).findIndex((x) => x?.kind === "user");
+
+// The names an Assistant's first words (what the person asked when its chat started it) are kept under in
+// data/chat-first/<name>.txt: the window's chat writes its slot's (else its origin's), the web app's its slot's (else
+// the agent's address). A chat opened again by the agent's address (after a reload) finds them by its labels (#592).
+export function firstKeys({ slot = null, labels = {}, origin = null, addr = null } = {}) {
+  return [...new Set([slot, labels?.["herdr.chat.slot"], labels?.["herdr.chat.origin"], origin, addr].filter(Boolean).map(String))];
+}
+
+// What the person typed, as markdown that shows it as typed (#591): a "<" or an "&" they wrote is a character, not
+// HTML or an entity ("B1 = <yours>" kept its "<yours>"). Code, fenced or inline, is left as it is.
+export function literal(text) {
+  return String(text ?? "").split(/(```[\s\S]*?(?:```|$)|`[^`\n]*`)/)
+    .map((part, i) => (i % 2 ? part : part.replace(/</g, "\\<").replace(/&(?=#?\w+;)/g, "\\&"))).join("");
+}
+
 // A user message the person didn't type, in words for its quiet row, else null: the session's first message when the
 // agent was started from a template (a coordinator), as a handoff, or for a task (herdr-task); and any message
 // another agent sent with hc. i: its place in the conversation; start: the first byte read (0: the log's start).
-export function briefLabel(x, i, { start = null, template = null, task = false, sender = (f) => f, machineName = (m) => m, here = null } = {}) {
+// first: where the session's first message is in the conversation (firstUser()).
+export function briefLabel(x, i, { start = null, template = null, task = false, sender = (f) => f, machineName = (m) => m, here = null, first = 0 } = {}) {
   if (x.from) return `Message from ${fromName(x, sender, { machineName, here })}`;
-  if (i !== 0 || start !== 0) return null;
+  if (i !== first || start !== 0) return null;
   if (/^<restart>/.test(x.text ?? "")) return "New session";
   if (/^You are taking over this tab/.test(x.text ?? "") || /^herdr-handoff/.test(template ?? "")) return "Handoff from the previous agent";
   if (template) return "New session";
@@ -270,6 +298,8 @@ export function newsTimeline(items, tasks, { start = null } = {}) {
   const first = items.find((x) => x.at)?.at ?? 0;
   for (const [ref, x] of tasks) for (const [event, at] of [["started", x.started], ["ready", x.ready_at], ["done", x.done_at]]) {
     if (!Number.isFinite(at) || said.has(`${ref}:${event}`) || (at < first && start !== 0)) continue;
+    // A ready not yet said, while the task is still at work (its checks running, SHEP-175) or needs the person: not ready yet.
+    if (event === "ready" && !["ready", "done"].includes(x.status)) continue;
     all.push({ id: `tn:${ref}:${event}:${at}`, at, ref, event, text: "", made: true });
   }
   all.sort((a, b) => a.at - b.at);
@@ -320,4 +350,143 @@ export function fitThumbs(sizes, width = Infinity) {
   const k = Math.min(1, width / Math.max(1, total));
   if (k < 1) boxes = boxes.map((b) => ({ w: Math.floor(b.w * k), h: Math.floor(b.h * k) }));
   return { boxes, h: Math.max(24, ...boxes.map((b) => b.h)) };
+}
+
+// ---- subagents: an agent's own helper agents in herdr (SHEP-54) ----
+// What a worker (or an Assistant) starts with `hc run` for itself: a reviewer, a second opinion. Each is an hc child of
+// its terminal, labelled herdr.role reviewer or helper (herdr.task: its worker's task). Never a task's worker (an
+// Assistant's children are mostly workers: herdr.task without a helper role) nor an Assistant. Shown over its parent's
+// chat as a subagent row: its role and CLI, working / needs / done, how long, opening to its last messages and its own
+// chat. One that ended stays a while (it reported, its parent ended it).
+export const HELPER_ROLES = ["reviewer", "helper"];
+export const subagentWord = (status) => (status === "working" ? WORDS.working : status === "needs" ? WORDS.needsYou : WORDS.subDone);
+export const SUBAGENT_KEEP_MS = 60 * 60000;
+
+// ---- the rows over the box, grouped (SHEP-92) ----
+// Several subagents or background shells stacked over the box ate a phone's screen: each kind takes at most one row.
+// One of a kind shows as its own row; two or more as one group row ("3 background processes"), its newest's title, how
+// long that one has run and their shared state, opening in place to the list of them, each opening as before.
+const SUB_KINDS = ["agent", "headless", "child"];
+// shared by a group of subagents: one asking makes it ask, else one at work makes it work, else all are done
+const sharedStatus = (items) =>
+  items.some((j) => j.status === "needs") ? "needs" : items.some((j) => !j.status || j.status === "working") ? "working" : "done";
+export function bgGroups(items) {
+  const sub = items.filter((j) => SUB_KINDS.includes(j.kind));
+  const proc = items.filter((j) => !SUB_KINDS.includes(j.kind));
+  const group = (kind, list) => {
+    const newest = list.reduce((a, b) => ((b.at ?? 0) > (a.at ?? 0) ? b : a));
+    const n = list.length;
+    const words = n < 2 ? null : kind === "sub" ? `${n} subagents` : `${n} background processes`;
+    return { kind, items: list, newest, status: kind === "sub" ? sharedStatus(list) : "working", words };
+  };
+  return [...(sub.length ? [group("sub", sub)] : []), ...(proc.length ? [group("proc", proc)] : [])];
+}
+const roleOf = (k) => k?.labels?.["herdr.role"] ?? null;
+export const isHelper = (k) => HELPER_ROLES.includes(roleOf(k)) && !!k?.parent;
+
+// k's parent, as an address comparable with `addr`: another machine's terminal names its parent on that machine ("t5"
+// for "vm/t5").
+function parentAddr(k) {
+  const p = String(k?.parent ?? "");
+  if (!p) return null;
+  const m = String(k.address ?? "").includes("/") ? String(k.address).split("/")[0] : null;
+  return m && !p.includes("/") ? `${m}/${p}` : p;
+}
+
+const AGENTS = { codex: "Codex", claude: "Claude Code", "claude-code": "Claude Code", pi: "Pi" };
+// its CLI: its herdr.agent label, else what hc says runs in it, else its command's name
+export function subagentCli(k) {
+  const a = k?.labels?.["herdr.agent"] ?? k?.agent ?? null;
+  if (a) return String(a).replace(/^claude-code$/, "claude");
+  const argv = k?.foreground?.argv ?? k?.argv ?? [];
+  const prog = argv.map((x) => String(x).split("/").pop()).find((x) => /^(claude|codex|pi)$/.test(x));
+  return prog ?? null;
+}
+
+// "Reviewer · Codex"
+export function subagentTitle(s) {
+  const role = s.role === "reviewer" ? "Reviewer" : s.role && s.role !== "helper" ? s.role[0].toUpperCase() + s.role.slice(1) : "Helper";
+  return [role, AGENTS[s.cli] ?? (s.cli ? s.cli[0].toUpperCase() + s.cli.slice(1) : null)].filter(Boolean).join(" · ");
+}
+
+// how it is: "working", "needs" (it asks in its terminal) or "done" (its turn over, or it ended)
+export function subagentStatus(k) {
+  if (k?.state && k.state !== "live") return "done";
+  const st = typeof k?.status === "object" ? k.status?.state : k?.status;
+  return st === "working" ? "working" : st === "blocked" ? "needs" : "done";
+}
+
+// The subagents of the terminal at `addr`, oldest first: [{ address, role, cli, title, status, at, ended?, name }].
+// terms: every terminal hc knows (live and finished).
+export function subagentsOf(terms, addr, now = Date.now()) {
+  if (!addr) return [];
+  const out = [];
+  for (const k of terms) {
+    if (!k || !isHelper(k) || parentAddr(k) !== addr) continue;
+    const ended = k.state && k.state !== "live";
+    if (ended && now - (k.finished_ms ?? 0) > SUBAGENT_KEEP_MS) continue;
+    const s = { address: k.address, role: roleOf(k), cli: subagentCli(k), status: subagentStatus(k), at: k.created_ms ?? now, name: k.name ?? null, ...(ended ? { ended: k.finished_ms ?? now } : {}) };
+    out.push({ ...s, title: subagentTitle(s) });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+
+// Media an agent puts in its message (SHEP-142): a Markdown picture ![alt](path) or a link [words](path) to a local
+// image or video file (an absolute path, ~/…, file://… or one relative to its folder). The chat shows each one right
+// there, under the words (pictures as thumbnails, a video with a player), and keeps the rest of the words as they are:
+// a picture leaves the words, a link leaves its own words. Code (fenced or `inline`) is never read for media, and a web
+// address stays a link. { text, media: [{ path, name, alt, kind: "image" | "video" }] }, each path once, at most 12.
+export const MEDIA_IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp|svg)$/i;
+export const MEDIA_VIDEO = /\.(mp4|m4v|webm|mov|ogv)$/i;
+export const mediaKind = (name) => (MEDIA_IMAGE.test(String(name ?? "")) ? "image" : MEDIA_VIDEO.test(String(name ?? "")) ? "video" : null);
+const MEDIA_MAX = 12;
+export function mediaIn(text, { cwd = null, home = null } = {}) {
+  const src = String(text ?? "");
+  if (!src.includes("](")) return { text: src, media: [] };
+  const media = [];
+  const where = (raw) => {
+    let p = raw.trim().replace(/^<(.*)>$/, "$1");
+    if (/^file:\/\//i.test(p)) { try { p = decodeURIComponent(p.slice(7)); } catch { return null; } }
+    else if (/^[a-z][\w+.-]*:/i.test(p) || p.startsWith("#") || p.startsWith("//")) return null;
+    p = p.replace(/[?#].*$/, "");
+    if (!p || !mediaKind(p)) return null;
+    if (p.startsWith("~/")) p = home ? `${home.replace(/\/$/, "")}/${p.slice(2)}` : p;
+    else if (!p.startsWith("/")) { if (!cwd) return null; p = `${cwd.replace(/\/$/, "")}/${p.replace(/^\.\//, "")}`; }
+    // no way up and out of where it names
+    if (p.split("/").includes("..")) return null;
+    return p;
+  };
+  // where each picture was: a mark in its place, read again below (\u0000 never comes in a message)
+  const take = (path, alt) => {
+    let i = media.findIndex((m) => m.path === path);
+    if (i < 0 && media.length < MEDIA_MAX) i = media.push({ path, name: path.split("/").pop(), alt: alt.trim(), kind: mediaKind(path) }) - 1;
+    return i;
+  };
+  // the words outside code: fenced blocks and inline code stay as written
+  const parts = src.split(/(^ {0,3}(?:```|~~~)[^\n]*\n[\s\S]*?(?:\n {0,3}(?:```|~~~)[^\n]*(?:\n|$)|$))/m);
+  const out = parts.map((part, i) => {
+    if (i % 2) return part;
+    return part.split(/(`+[^`]*`+)/).map((bit, j) => {
+      if (j % 2) return bit;
+      return bit.replace(/(!?)\[([^\]\n]*)\]\(\s*(<[^>\n]+>|[^\s()]+(?:\([^\s()]*\)[^\s()]*)*)(?:\s+"[^"\n]*")?\s*\)/g, (whole, bang, words, target) => {
+        const path = where(target);
+        if (!path) return whole;
+        const i = take(path, words);
+        return bang ? (i >= 0 ? `\u0000${i}\u0000` : "") : words;
+      });
+    }).join("");
+  }).join("");
+  if (!media.length) return { text: src, media };
+  // a line with one picture and a short label ("Before:", "**After**") gives the picture its caption and goes; the lines
+  // a picture leaves empty go, and the gaps they leave close
+  const lines = out.split("\n").flatMap((l) => {
+    const marks = [...l.matchAll(/\u0000(\d+)\u0000/g)];
+    if (!marks.length) return [l.replace(/[ \t]+$/, "")];
+    const rest = l.replace(/\u0000\d+\u0000/g, "").replace(/^\s*(?:[-*+]|\d+[.)])\s+/, "").trim();
+    const label = rest.replace(/^[*_]+|[*_]+$/g, "").replace(/:$/, "").replace(/^[*_]+|[*_]+$/g, "").trim();
+    if (marks.length === 1 && label && rest.length <= 40 && (/:[*_]*$/.test(rest) || /^[*_]/.test(rest))) { media[Number(marks[0][1])].alt = label; return []; }
+    return rest ? [l.replace(/\u0000\d+\u0000[ \t]*/g, "").replace(/[ \t]+$/, "")] : [];
+  });
+  const words = lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return { text: words, media };
 }

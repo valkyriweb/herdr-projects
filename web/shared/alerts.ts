@@ -53,7 +53,8 @@ export const choicesLine = (q: Question) => q.choices.map((_, i) => short(q, i))
 
 /** a choice sends on its own tap: not a pick of several or one that needs a note, and never a plan or a merge, which
  *  stay a deliberate pick and Send. A note typed first brings Send back on any card. */
-export const sendsOnTap = (q: Question) => q.kind !== 'Plan' && !q.multi && q.noteRequiredFor === undefined && !q.evidence && !/^merge\b/i.test(q.title) && !q.id.startsWith('menu:')
+// options with previews (SHEP-139): a tap picks one and shows its preview; Send answers
+export const sendsOnTap = (q: Question) => q.kind !== 'Plan' && !q.multi && q.noteRequiredFor === undefined && !q.evidence && !/^merge\b/i.test(q.title) && !q.id.startsWith('menu:') && !q.choices.some((c) => c.preview)
 
 /** the choices a notification button may send at once: not a pick of several, not one that needs a note, not a grant
  *  for good, never a terminal menu (its first choices all say yes, and an old alert's button would press keys in whatever menu is up then);
@@ -210,4 +211,31 @@ export function pushPayload(a: Alert, w: { count: number; tags: string[] }): Pus
       ? { answer: { chat: a.card.chat, question: a.card.question }, actions: a.card.choices.map((c) => ({ action: String(c.choice), title: clip(c.label, ACTION_MAX) })) }
       : {}),
   }
+}
+
+/* ---------- phone alerts: what each device is told about (Settings › Notifications) ---------- */
+
+/** what a device can be told about, each its own switch; a device chooses its own (or one choice for all of them) */
+export const PUSH_TOPICS = [
+  { id: 'needs', label: 'Needs you', about: 'Questions, permission prompts, an agent stuck or asking for help' },
+  { id: 'ready', label: 'Ready for review', about: 'A task finished and waits for your Accept' },
+  { id: 'done', label: 'Done', about: 'A task merged or closed' },
+  { id: 'assistant', label: 'Messages from the Assistant', about: "A space's Assistant wrote in its chat" },
+  { id: 'autopilot', label: 'Autopilot updates', about: 'What an Assistant did when its Autopilot woke it' },
+] as const
+export type PushTopic = (typeof PUSH_TOPICS)[number]['id']
+/** a device turned on now: only what needs you */
+export const DEFAULT_TOPICS: PushTopic[] = ['needs']
+/** a device turned on before it could choose: what it got then */
+export const LEGACY_TOPICS: PushTopic[] = ['needs', 'ready']
+export const pushTopics = (v: unknown): PushTopic[] => (Array.isArray(v) ? PUSH_TOPICS.map((t) => t.id).filter((id) => v.includes(id)) : [...LEGACY_TOPICS])
+
+/** what this device's alerts are, from what the browser and the server say: never "off" for one that is on */
+export type DeviceState = 'on' | 'off' | 'blocked' | 'install' | 'unsupported'
+export function deviceState(d: { push: boolean; ios: boolean; standalone: boolean; permission: NotificationPermission | 'unknown'; subscribed: boolean }): DeviceState {
+  // an iPhone's Safari has push only in the app added to the Home Screen
+  if (d.ios && !d.standalone) return 'install'
+  if (!d.push) return 'unsupported'
+  if (d.permission === 'denied') return 'blocked'
+  return d.subscribed && d.permission === 'granted' ? 'on' : 'off'
 }

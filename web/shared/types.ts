@@ -326,6 +326,12 @@ export interface Task {
   plan?: string[]
   /** none until the task's agent starts */
   agent?: TaskAgent
+  /** the ids of the artifacts its agent and its helpers made or updated (SHEP-60): its proof first, then newest first */
+  artifacts?: string[]
+  /** its proof artifact's id (herdr-task ready --proof) */
+  proof?: string
+  /** its worker's own helper agents (SHEP-54: a reviewer it started), newest last */
+  subagents?: { chat: string; title: string; status: 'working' | 'needs' | 'done'; at: number; ended?: number }[]
   desc?: string
   said?: string
   /** its facts line when done: PR, commit, checks, review, what is not proven */
@@ -390,6 +396,8 @@ export interface Choice {
   description?: string
   /** the agent marked it (Recommended) */
   recommended?: boolean
+  /** what the agent drew to compare the options (a mockup, code), shown as its prompt shows it (SHEP-139) */
+  preview?: string
 }
 
 export interface Question {
@@ -534,6 +542,8 @@ export interface Reaction {
 export interface Message {
   id: string
   who: 'you' | 'agent'
+  /** the agent's suggested next message (its reply's last line): greyed out in the box until something is typed (SHEP-186) */
+  suggest?: string
   /** a live row: when it last changed; at keeps its place in the chat */
   updated?: number
   /** plain text (yours) or markdown (the agent's) */
@@ -551,8 +561,9 @@ export interface Message {
   /** why it waits: a menu is up (typed text could pick an option), the agent is starting, a CLI command waits for the
    *  turn to end, it is in the CLI's own queue until its next step, or nothing here: its machine is out of reach */
   waitsFor?: 'menu' | 'start' | 'turn' | 'queue'
-  /** an attached file: each one is a message of its own, right after the text it came with */
-  file?: { name: string; path: string }
+  /** an attached file: each one is a message of its own, right after the text it came with; an agent's picture or
+   *  video named in its words (core/chat-view.js mediaIn) comes the same way, with its Markdown words as alt */
+  file?: { name: string; path: string; alt?: string }
   /** the id the screen gave what you sent: it showed it at once, and this message takes its place */
   cid?: string
   /** what it answers: a short quote of that message, and its id while the chat still has it (a tap jumps to it) */
@@ -690,7 +701,8 @@ export interface TurnActivity {
 /** Work an agent started in the background that still runs */
 export interface Job {
   id: string
-  kind: 'agent' | 'shell' | 'monitor' | 'headless'
+  /** child: its own helper agent in herdr (SHEP-54: a reviewer it started), a chat of its own */
+  kind: 'agent' | 'shell' | 'monitor' | 'headless' | 'child'
   /** what it is: a subagent's description, a shell's command, a headless CLI's words */
   title: string
   at: number
@@ -702,6 +714,12 @@ export interface Job {
   command?: string
   /** it can be stopped from here (action stop-job) */
   stop?: boolean
+  /** a child: its chat's key (t:<address>), working / needs / done, its role and CLI, when it ended */
+  chat?: string
+  status?: 'working' | 'needs' | 'done'
+  role?: string
+  cli?: string
+  ended?: number
 }
 
 /** what the screen asks of a chat's activity: a turn's steps, a step's raw output, a background job's steps or output */
@@ -1260,6 +1278,8 @@ export type Action =
   | { type: 'pause'; chat: string }
   /** its agent goes and the task is To do; its work stays */
   | { type: 'stop'; chat: string }
+  /** Send now on a message in its CLI's own queue (waitsFor 'queue'): Claude Code takes it at once, mid-turn */
+  | { type: 'steer'; chat: string }
   /** Stop on a background shell or watcher over the box (Job.id) */
   | { type: 'stop-job'; chat: string; job: string }
   /** what the restart sheet shows for a coordinator (chat: its place id) or a task's agent (ID/Agent): RestartInfo */
@@ -1318,6 +1338,8 @@ export type ServerEvent =
   | { type: 'update'; update: UpdateStatus | null }
   /** the answer to a screen's ping: its link still works */
   | { type: 'pong' }
+  /** an agent shows the person an artifact (herdr-artifact open): this screen, the one they used last, opens it */
+  | { type: 'show'; artifact: string }
 
 /** how Shepherdr's last update of itself went (update.json in its folder, written by the supervisor) */
 export interface UpdateStatus {

@@ -9,7 +9,7 @@ import { image } from "gpui-kit";
 import { theme } from "herdr";
 import { asset, reply } from "./artifact.js";
 import data from "./recipe-data.js";
-import { chartShapes, choiceReply, formReply, withIds } from "./recipe.js";
+import { chartShapes, choiceReply, formReply, isLink, mdParts, mediaKind, withIds } from "./recipe.js";
 
 const TONE = { info: "surface", good: "done", warn: "working", bad: "blocked" };
 
@@ -22,11 +22,44 @@ export default class RecipeView extends View {
     this.sent = new Map();     // a choice's or form's words, once sent
     this.inputs = new Map();   // a form field's InputState
     this.checks = new Map();   // a form checkbox's value
+    this.copied = null;        // the code box just copied, for its "Copied" a moment
     try { this.recipe = withIds(data); } catch { this.error = "This artifact's recipe can't be read."; }
+    // every form field's InputState now: GPUI refuses InputState.new during render (#1026)
+    const walk = (bs) => (Array.isArray(bs) ? bs : []).forEach((b) => {
+      if (b?.type === "form") (b.fields ?? []).forEach((f) => f.kind !== "checkbox" && this.input(b, f));
+      else if (b?.type === "columns") (b.columns ?? []).forEach(walk);
+      else if (b?.type === "tabs") (b.tabs ?? []).forEach((x) => walk(x?.blocks));
+      else if (b?.type === "details") walk(b.blocks);
+    });
+    walk(this.recipe?.blocks);
   }
 
+  // Markdown words; each fenced code block in them gets its own code box with a Copy button (core/recipe.js mdParts).
   md(id, text, t) {
-    return div().w_full().min_w(0).text_size(13).text_color(t.foreground).child(TextView.markdown(`md-${id}`, String(text ?? " ")).selectable(true));
+    const words = (key, w) => div().w_full().min_w(0).text_size(13).text_color(t.foreground).child(TextView.markdown(key, w).selectable(true));
+    const parts = mdParts(text);
+    if (!parts.some((x) => "code" in x)) return words(`md-${id}`, String(text ?? " "));
+    return v_flex().w_full().min_w(0).gap(8).children(parts.map((x, i) => "code" in x ? this.code(`${id}-c${i}`, x.code, t) : words(`md-${id}-${i}`, x.md)));
+  }
+
+  // A code box: its text, and a Copy button at its top right that puts all of it on the clipboard (the
+  // window binds no copy key to a page's selected text, so this is how a command gets out whole). "Copied" a moment.
+  code(key, text, t) {
+    const done = this.copied === key;
+    return h_flex().w_full().min_w(0).p(10).gap(8).items_start().rounded(8).bg(t.surface)
+      .child(div().flex_1().min_w(0).font_family("JetBrains Mono").text_size(12).whitespace_normal().child(String(text)))
+      .child(div().id(`copy-${key}`).flex_none().h(22).px(8).flex().items_center().rounded(6).border_1().border_color(t.border)
+        .bg(t.background).text_size(12).text_color(done ? t.foreground : t.muted).cursor_pointer().hover((s) => s.text_color(t.foreground))
+        .on_click((_e, cx) => this.copy(key, text, cx))
+        .child(done ? "Copied" : "Copy"));
+  }
+
+  copy(key, text, cx) {
+    cx.stop_propagation();
+    cx.write_to_clipboard(String(text));
+    this.copied = key;
+    cx.notify();
+    cx.timer.after(1500, (cx) => { if (this.copied === key) { this.copied = null; cx.notify(); } });
   }
 
   send(key, text, cx) {
@@ -36,6 +69,7 @@ export default class RecipeView extends View {
     cx.spawn(async (cx) => { if (!(await reply(text))) this.sent.delete(key); cx.notify(); });
   }
 
+  // a form field's InputState, made in init() (render only reads it)
   input(b, f) {
     const k = `${b.id}:${f.name}`;
     if (!this.inputs.has(k)) this.inputs.set(k, InputState.new({ placeholder: f.label ?? f.name, ...(f.kind === "textarea" ? { multi_line: true } : {}) }));
@@ -73,6 +107,17 @@ export default class RecipeView extends View {
         .child(div().size(10).rounded(5).bg(colors[si % colors.length])).child(div().text_size(12).child(String(x.name ?? "")))))));
   }
 
+  // A clip, a sound or a PDF: the window's player can't play them, so it shows the clip's poster (or a tile) and says
+  // where to play it: the web app (the same artifact on the phone and in a browser plays it).
+  media(b, t, mark, what, poster) {
+    return v_flex().w_full().min_w(0).gap(4)
+      .child(poster ? image(asset(poster)).w_full().rounded(6).border_1().border_color(t.border)
+        : v_flex().w_full().h(96).rounded(6).bg(t.surface).items_center().justify_center().gap(2)
+          .child(div().text_size(17).text_color(t.muted).child(mark))
+          .child(div().text_size(12).text_color(t.muted).child(what)))
+      .child(div().text_size(12).text_color(t.muted).whitespace_normal().child(`${String(b.caption ?? b.src ?? what)} · plays in the web app`));
+  }
+
   block(b, t, cx) {
     switch (b.type) {
       case "heading": return div().text_size((b.level ?? 2) <= 1 ? 17 : 15).font_semibold().whitespace_normal().child(b.text);
@@ -90,13 +135,17 @@ export default class RecipeView extends View {
         .child(div().text_size(12).text_color(t.muted).child(String(x.label)))
         .child(div().text_size(17).font_semibold().child(String(x.value)))
         .when(!!x.note, (e) => e.child(div().text_size(12).text_color(t.dim).child(String(x.note))))));
+      case "video": return this.media(b, t, "▶", "Video", b.poster ? b.poster : null);
+      case "audio": return this.media(b, t, "♪", "Sound", null);
+      case "pdf": return this.media(b, t, "PDF", "PDF", null);
       case "image": return v_flex().gap(4)
         .child(image(asset(b.src)).w_full().when(!!b.w && !!b.h, (e) => e.max_w(b.w)).rounded(6).border_1().border_color(t.border))
         .when(!!b.caption, (e) => e.child(div().text_size(12).text_color(t.muted).whitespace_normal().child(b.caption)));
       case "pair": return h_flex().flex_wrap().gap(10).children([["Before", b.before], ["After", b.after]].map(([w, x]) => v_flex().flex_1().min_w(240).gap(4)
-        .child(image(asset(x.src)).w_full().rounded(6).border_1().border_color(t.border))
+        .child(mediaKind(x.src) === "video" ? this.media(x, t, "▶", "Clip", x.poster ?? null)
+          : image(asset(x.src)).w_full().rounded(6).border_1().border_color(t.border))
         .child(div().text_size(12).text_color(t.muted).child(x.caption ?? w))));
-      case "code": return div().w_full().p(10).rounded(8).bg(t.surface).font_family("JetBrains Mono").text_size(12).whitespace_normal().child(b.text);
+      case "code": return this.code(b.id, b.text, t);
       case "callout": return v_flex().gap(4).p(12).rounded(8).bg(t[TONE[b.tone ?? "info"]] ? t.surface : t.surface).border_l(3).border_color(t[TONE[b.tone ?? "info"]] ?? t.border)
         .when(!!b.title, (e) => e.child(div().text_size(13).font_semibold().child(b.title)))
         .when(!!b.md, (e) => e.child(this.md(b.id, b.md, t)));
@@ -145,13 +194,26 @@ export default class RecipeView extends View {
               this.send(b.id, formReply(b, values), cx);
             }).child(sent ? "Sent" : b.submit ?? "Send"));
       }
-      case "button": {
-        const sent = this.sent.has(b.id);
-        return div().id(`bt-${b.id}`).self_start().px(12).py(6).rounded(6).bg(t.solid).text_color(t.solid_foreground).text_size(13)
-          .when(!sent, (e) => e.cursor_pointer()).on_click((_e, cx) => this.send(b.id, b.reply, cx)).child(sent ? `${b.label} · Sent` : b.label);
-      }
+      case "button": return this.button(b, b.id, t).self_start();
+      case "buttons": return h_flex().flex_wrap().gap(8).items_center().children(b.items.map((x, i) => this.button(x, `${b.id}-${i}`, t)));
     }
     return div();
+  }
+
+  // A button: a press sends its reply, once; with an href (https only) it opens that page in the browser each press, a
+  // plain link the person acts on themselves. quiet: the softer look, beside the one to press.
+  button(b, key, t) {
+    const link = isLink(b.href) ? b.href : null;
+    const sent = this.sent.has(key);
+    const answers = typeof b.reply === "string";
+    const live = link || !sent;
+    return div().id(`bt-${key}`).px(12).py(6).rounded(6).text_size(13)
+      .when(!b.quiet, (e) => e.bg(t.solid).text_color(t.solid_foreground))
+      .when(!!b.quiet, (e) => e.border_1().border_color(t.border).text_color(t.foreground))
+      .when(live, (e) => e.cursor_pointer()).on_click((_e, cx) => {
+        if (link) cx.open_url(link);
+        if (answers) this.send(key, b.reply, cx);
+      }).child(sent && !link ? `${b.label} · Sent` : link ? `${b.label} ↗` : b.label);
   }
 
   render(cx) {

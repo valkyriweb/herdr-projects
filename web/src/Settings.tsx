@@ -16,6 +16,7 @@ import * as STc from '@core/settings.js'
 const ST = STc as any
 import { useEffect, useLayoutEffect, useRef, useState, type ComponentType, type FC, type ReactNode } from 'react'
 import { machineName, type SettingRow, type SettingSection, type Snapshot } from '@shared/types.ts'
+import { useCopy } from './copy.ts'
 import { act, registry, setUI, useSnap, useUI, type UI } from './kernel.ts'
 // Autopilot's schedule words (Custom…, its example), the window's: core/autopilot.js
 import * as APc from '@core/autopilot.js'
@@ -540,8 +541,11 @@ function groupsOf(sections: SettingSection[], ui: UI): { name: string; pages: Pa
   const pages = [...sections.filter((x) => x.level === level && !x.global), ...(space ? [] : sections.filter((x) => x.global))]
     .filter((x) => ORDER.includes(x.name) && (!space || SPACE_PAGES.has(x.name)))
     .sort((a, b) => ORDER.indexOf(a.name) - ORDER.indexOf(b.name))
-  const own = registry.settingsPages.filter((x) => x.when(ui)).map(({ name, about, Icon, View }): Page => ({ name, about, Icon, View, device: true, rows: [] }))
-  return [{ name: space ? ST.SPACE_TITLE : ST.TITLE, pages: [...pages, ...own] }].filter((g) => g.pages.length)
+  const plugged = registry.settingsPages.filter((x) => x.when(ui))
+  const own = plugged.filter((x) => !x.into).map(({ name, about, Icon, View }): Page => ({ name, about, Icon, View, device: true, rows: [] }))
+  // a plugin's part of one of the server's pages (Notify's: alerts on this device), drawn on top of it, Everywhere only
+  const withParts = pages.map((p) => ({ ...p, View: space ? undefined : plugged.find((x) => x.into === p.name)?.View }))
+  return [{ name: space ? ST.SPACE_TITLE : ST.TITLE, pages: [...withParts, ...own] }].filter((g) => g.pages.length)
 }
 
 /** where a page sits in the list of them (for ui.settings.section), or -1 where it doesn't show */
@@ -549,6 +553,21 @@ export const sectionOf = (name: string, sections: SettingSection[], ui: UI) =>
   groupsOf(sections, ui)
     .flatMap((g) => g.pages)
     .findIndex((p) => p.name === ({ 'Alerts and voice': 'Voice' }[name] ?? name))
+
+/** the pages' names in order (a section's index is its place here) */
+export const pageNames = (sections: SettingSection[], ui: UI) => groupsOf(sections, ui).flatMap((g) => g.pages).map((p) => p.name)
+
+/** a page as said ("secrets", "the window page"): its index, its name exactly, else case and words aside, else -1 */
+export function sectionLike(said: string, sections: SettingSection[], ui: UI) {
+  const exact = sectionOf(said, sections, ui)
+  if (exact >= 0) return exact
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const want = norm(said.replace(/\b(the|page|settings|section|tab)\b/gi, ''))
+  if (!want) return -1
+  const names = pageNames(sections, ui).map(norm)
+  const i = names.indexOf(want)
+  return i >= 0 ? i : names.findIndex((n) => n.startsWith(want) || (want.length > 3 && n.includes(want)))
+}
 
 /** a machine's own Machine page (to open Settings on it): its section and level */
 export function settingsPageOf(sections: SettingSection[], machine: string, ui: UI) {
@@ -562,13 +581,13 @@ export function settingsPageOf(sections: SettingSection[], machine: string, ui: 
 const iconOf = (p: Page) => p.Icon ?? ICONS[p.name] ?? CogIcon
 
 /** a phone's rounded group of rows, a shade lighter than the page under it in dark mode, as iOS's */
-const card = 'rounded-box bg-bg dark:bg-bubble'
+export const card = 'rounded-box bg-bg dark:bg-bubble'
 /** a row's look: in a phone's group its line starts where its words do, as iOS's; on a wider screen a line between rows */
 export const rowLook = (phone: boolean) =>
   phone
     ? 'relative flex min-h-12 items-center justify-between gap-3 px-4 py-2.5 not-first:before:absolute not-first:before:inset-x-0 not-first:before:top-0 not-first:before:left-4 not-first:before:h-px not-first:before:bg-line'
     : 'flex min-h-12 items-center justify-between gap-3 py-2 not-first:border-t not-first:border-line'
-const heading = (phone: boolean) => (phone ? 'px-4 pb-1.5 text-[0.8125rem] text-fg2' : 'pb-1 text-[0.75rem] font-medium text-fg3')
+export const heading = (phone: boolean) => (phone ? 'px-4 pb-1.5 text-[0.8125rem] text-fg2' : 'pb-1 text-[0.75rem] font-medium text-fg3')
 
 /** the window's stepper: − its value + (a count, a percent, a size), stepping through the row's choices; a value off
  *  the list (Off) steps from where the row says */
@@ -650,7 +669,8 @@ const setExtra = (key: string) => void act({ type: 'setting', key, value: 'on' }
 
 /** Copy, as the window's Web › Link */
 function CopyButton({ text }: { text: string }) {
-  return <Ghost onClick={() => void navigator.clipboard?.writeText(text).catch(() => {})}>{ST.WEB.copy}</Ghost>
+  const { copied, copy } = useCopy()
+  return <Ghost onClick={(e) => void copy(text, 'copy', e)}>{copied ? ST.WEB.copied : ST.WEB.copy}</Ghost>
 }
 
 /** a value set here that is what the row would follow anyway unsets it: it follows again */

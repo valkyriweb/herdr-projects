@@ -1,29 +1,29 @@
-// Shepherdr settings for the web app: ~/.herdr/shepherdr.json as the window's settings show it (core/settings.js: the
+// Shepherdr settings for the web app: ~/.config/shepherdr/settings.json as the window's settings show it (core/settings.js: the
 // same words and choices), as 2.1's settings sections, and a change from the web written back to the same file,
 // keeping everything else in it. The window's settings read the file when they open; herdr-task reads it each time.
 // Levels as the window's scopes: Everywhere ("everywhere"), a space ("spaces"[its id], with its repo folder, which is
 // how herdr-task finds it), and for the Machines page each machine ("machines"[its name, "local" here]).
 import { existsSync, readFileSync, renameSync, watch, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { HOME } from "./paths.ts";
+import { HOME, settingsFile, where, writableSettings } from "./paths.ts";
 import * as C from "../core/settings.js";
+import { SH } from "../core/paths.js";
 import * as M from "../core/machines.js";
 import * as HC from "../core/host.js";
 import * as APc from "../core/autopilot.js";
 import type { SettingRow, SettingSection } from "../web/shared/types.ts";
 
-const { TASK_ROWS, DEFAULTS, wordFor, valueFor, ROLES: CORE_ROLES, NOTES: CORE_NOTES, ABOUT, BACKUP, REACTIONS, upgradeReactions, BASE, MACHINES, OLD_NAMES, SECTIONS,
+const { TASK_ROWS, DEFAULTS, wordFor, valueFor, ROLES: CORE_ROLES, NOTES: CORE_NOTES, ABOUT, BACKUP, REACTIONS, SUGGESTIONS, FEEDBACK, feedbackRepo, upgradeReactions, BASE, BRANCH, branchPattern, MACHINES, OLD_NAMES, SECTIONS,
   WEB, modelLabel, roleSel, otherCli, otherCliWords, backupProblem, homeAbout, webState, fromWord, LOADING_AGENTS, RESET, machineLabel } = C as any;
 const AP = APc as any;
 /** Autopilot as Everywhere has it now (herdr-task's view: what Settings keeps, else what it kept before, else the
  *  defaults): its schedule's words, events, heartbeat words and what wakes it in plain words */
 export type PilotEverywhere = { every: string | null; events: string[]; words: string; trigger?: string };
 const { HOLD } = M as any;
-const FILE = process.env.HERDR_TASK_SETTINGS || join(HOME, ".herdr", "shepherdr.json");
 const TEMPLATES = join(HOME, ".config", "herdr-core", "templates");
 // herdr-task's check of each machine's CLIs (installed, signed in), and its home round (each machine's home space)
-const CLI_CHECK = join(HOME, ".herdr", "cli-check.json");
-const HOME_ROUND = join(HOME, ".herdr", "tasks", ".home.json");
+const CLI_CHECK = where()["cli-check"];
+const HOME_ROUND = join(where().tasks, ".home.json");
 const LOCAL = "local";
 const { SERVE } = HC as any;
 /** Settings › Web's Serve from, as the service tells it (service/main.ts serveNow) */
@@ -52,7 +52,8 @@ const ON = (v: unknown) => (v ? "on" : "off");
 
 // the window's push to other machines (mods/shepherdr-settings): each gets Everywhere, its machine's and its spaces'
 // (by their ids there), marked so it knows which machine it is; a file there without the mark is that machine's own
-export const PUSH = `f="$HOME/.herdr/shepherdr.json"; mkdir -p "$HOME/.herdr" || exit 1
+// (its settings file wherever that machine keeps it: Shepherdr's folders, or ~/.herdr on an older one: core/paths.js SH)
+export const PUSH = `${SH}f="$SHEP_SETTINGS"; mkdir -p "$(dirname "$f")" || exit 1
 if [ -f "$f" ] && ! grep -q '"pushed_from"' "$f"; then echo own; exit 0; fi
 if [ -f "$f" ] && [ "$(cat "$f")" = "$1" ]; then exit 0; fi
 umask 077; printf '%s\\n' "$1" > "$f.tmp" && mv "$f.tmp" "$f"`;
@@ -67,17 +68,18 @@ export function pushBody(file: any, m: string) {
  *  never writes a file with everything else gone. */
 export function readSettings(): any {
   let text: string;
-  try { text = readFileSync(FILE, "utf8"); } catch (e: any) { if (e?.code === "ENOENT") return {}; throw new Error("The settings file can't be read now. Try again."); }
+  try { text = readFileSync(settingsFile(), "utf8"); } catch (e: any) { if (e?.code === "ENOENT") return {}; throw new Error("The settings file can't be read now. Try again."); }
   // SHEP-42's assistant.reactions comes back as agents.reactions, so a change writes it there
   try { const f = JSON.parse(text); if (f && typeof f === "object" && !Array.isArray(f)) return upgradeReactions(f); } catch {}
-  throw new Error("The settings file can't be read now (~/.herdr/shepherdr.json isn't valid JSON).");
+  throw new Error(`The settings file can't be read now (${settingsFile()} isn't valid JSON).`);
 }
 const SAFE = (k: string) => !["__proto__", "constructor", "prototype"].includes(k);
 
 export function writeSettings(next: any) {
   next.version = 1;
-  writeFileSync(`${FILE}.web-tmp`, JSON.stringify(next, null, 2) + "\n");
-  renameSync(`${FILE}.web-tmp`, FILE);
+  const file = writableSettings();
+  writeFileSync(`${file}.web-tmp`, JSON.stringify(next, null, 2) + "\n");
+  renameSync(`${file}.web-tmp`, file);
   for (const fn of written) fn(next);
 }
 const written = new Set<(file: any) => void>();
@@ -93,12 +95,12 @@ export class Settings {
 
   start() {
     this.read();
-    if (existsSync(dirname(FILE))) watch(dirname(FILE), (_e, name) => { if (name === "shepherdr.json") this.read(); });
+    if (existsSync(dirname(settingsFile()))) watch(dirname(settingsFile()), (_e, name) => { if (name === "shepherdr.json") this.read(); });
   }
 
   private read() {
     let next: any = {};
-    try { next = upgradeReactions(JSON.parse(readFileSync(FILE, "utf8")) ?? {}); } catch {}
+    try { next = upgradeReactions(JSON.parse(readFileSync(settingsFile(), "utf8")) ?? {}); } catch {}
     if (JSON.stringify(next) === JSON.stringify(this.file)) return;
     this.file = next;
     for (const fn of this.listeners) fn();
@@ -114,6 +116,13 @@ export class Settings {
     const dflt = field ? DEFAULTS[section]?.[field] ?? null : null;
     const parent = mach ?? every ?? dflt;
     return { value: scope ? own ?? parent : every ?? dflt, own: own !== undefined, parent, level: mach !== undefined ? "machine" : "everywhere", machine: m };
+  }
+
+  /** The agent a role runs in a space (null: Everywhere's), as the window's chat starts it (lib/coordinator.js
+   *  shepherdrFor): { agent, model, effort, fast, perm }, or null when none is set (the template's own command). */
+  role(scope: string | null, role: string): any {
+    const v = this.pick(scope, role, null).value;
+    return v && typeof v === "object" && v.agent ? v : null;
   }
 
   /** What the agents offer (core/settings.js choicesFrom: menus, permission defaults, what an unset role runs), set by
@@ -207,6 +216,20 @@ export class Settings {
     const re = this.pick(scope, "agents", "reactions");
     rows.push({ label: REACTIONS.title, key: "agents.reactions", value: ON(re.value !== false), options: ["on", "off"], hint: REACTIONS.about,
       ...this.follows(s, re, (v) => ON(v !== false), "agents", "reactions") });
+    // Suggested next message: the agent's guess at what you'd say next, greyed out in the box (SHEP-186; the agents' side is herdr-task's settings)
+    const sg = this.pick(scope, "agents", "suggestions");
+    rows.push({ label: SUGGESTIONS.title, key: "agents.suggestions", value: ON(sg.value !== false), options: ["on", "off"], hint: SUGGESTIONS.about,
+      ...this.follows(s, sg, (v) => ON(v !== false), "agents", "suggestions") });
+    // Feedback offers: agents offer once to file a problem in Shepherdr itself, only on your yes (herdr-task's feedback.py);
+    // the repo it files to is Everywhere's only
+    const fb = this.pick(scope, "agents", "feedback");
+    rows.push({ label: FEEDBACK.title, key: "agents.feedback", value: ON(fb.value !== false), options: ["on", "off"], hint: FEEDBACK.about,
+      ...this.follows(s, fb, (v) => ON(v !== false), "agents", "feedback") });
+    if (!s) {
+      const repo = this.pick(null, "agents", "feedback_repo");
+      rows.push({ label: FEEDBACK.repoTitle, key: "agents.feedback_repo", value: String(repo.value ?? ""), text: true, hint: FEEDBACK.repoAbout,
+        placeholder: FEEDBACK.repo } as SettingRow);
+    }
     return { name: title("agents"), level: scope ?? "all", rows };
   }
 
@@ -233,6 +256,13 @@ export class Settings {
       const at = rows.findIndex((r) => r.key === "automations.enabled");
       rows.splice(at, 0, { label: BASE.title, key: "tasks.base", value: String(p.value ?? "").trim(), text: true, hint: BASE.about,
         placeholder: BASE.empty(this.branches[s.id] ?? ""), ...this.follows(s, p, (v) => v || BASE.follows, "tasks", "base") });
+    }
+    // Branch names (#570): Everywhere's or a space's own pattern for new task branches; empty: task/{n}-{slug}
+    {
+      const p = this.pick(scope, "tasks", "branch");
+      const at = rows.findIndex((r) => r.key === "automations.enabled");
+      rows.splice(at, 0, { label: BRANCH.title, key: "tasks.branch", value: String(p.value ?? "").trim(), text: true, hint: BRANCH.about,
+        placeholder: BRANCH.pattern, ...this.follows(s, p, (v) => v || BRANCH.pattern, "tasks", "branch") });
     }
     for (const n of NOTES) {
       const p = this.pick(scope, "tasks", `${n.id}_notes`);
@@ -401,6 +431,12 @@ export class Settings {
       // a space's own (the service checked the branch is there first); empty: back to the folder's branch
       if (!space) throw new Error("A base branch is set per space.");
       put("tasks", "base", word?.trim() ? word.trim() : null);
+    } else if (key === "tasks.branch") {
+      // a pattern herdr-task can fill in (core/settings.js branchPattern); empty: back to the level above
+      const v = word?.trim() ?? "";
+      const why = branchPattern(v);
+      if (why) throw new Error(why);
+      put("tasks", "branch", v || null);
     } else if (section === "tasks" && /^(start|finish)_notes$/.test(field)) {
       put("tasks", field, word === null ? null : word.slice(0, 8000));
     } else if (section === "role" && ROLES.some((r) => r.id === field)) {
@@ -434,6 +470,22 @@ export class Settings {
       if (word !== null && word !== "on" && word !== "off") throw new Error("Not one of its choices.");
       const parent = space ? file.everywhere?.agents?.reactions ?? DEFAULTS.agents.reactions : DEFAULTS.agents.reactions;
       put("agents", "reactions", word === null || (word === "on") === parent ? null : word === "on");
+    } else if (key === "agents.suggestions") {
+      // on or off; the same as what this level would inherit unsets it, so it follows again (as Reactions)
+      if (word !== null && word !== "on" && word !== "off") throw new Error("Not one of its choices.");
+      const parent = space ? file.everywhere?.agents?.suggestions ?? DEFAULTS.agents.suggestions : DEFAULTS.agents.suggestions;
+      put("agents", "suggestions", word === null || (word === "on") === parent ? null : word === "on");
+    } else if (key === "agents.feedback") {
+      // on or off; the same as what this level would inherit unsets it, so it follows again (as Reactions)
+      if (word !== null && word !== "on" && word !== "off") throw new Error("Not one of its choices.");
+      const parent = space ? file.everywhere?.agents?.feedback ?? DEFAULTS.agents.feedback : DEFAULTS.agents.feedback;
+      put("agents", "feedback", word === null || (word === "on") === parent ? null : word === "on");
+    } else if (key === "agents.feedback_repo") {
+      // Everywhere's only: owner/name (a github.com link is made one); empty goes back to Shepherdr's own repo
+      if (space) throw new Error("The feedback repo is set for every space at once.");
+      const repo = feedbackRepo(word ?? "");
+      if (repo === null) throw new Error(FEEDBACK.bad);
+      put("agents", "feedback_repo", repo || null);
     } else if (key === "backup.agent") {
       // off is "off"; on follows what it would get anyway when that is on, else names the other CLI (as the window's)
       const parent = space ? file.everywhere?.backup?.agent ?? null : null;

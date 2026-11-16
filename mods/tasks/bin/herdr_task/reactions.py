@@ -5,9 +5,8 @@ mods/chat/session-note.sh, asks `herdr-task _session-note`): an Assistant with i
 (assistant_settings.py), any other agent just these words (agent_note), and its terminal is
 labelled with what it was taught. A running one is told once when the setting changes for its
 space, as SHEP-49's <herdr-setting> line: an Assistant by assistant_settings' pass, every other
-agent its hook taught by reactions_pass here. A headless reviewer (claude -p, codex exec) has no
-chat: its hook may run in its worker's terminal, but it never gets the person's messages, so it has
-nothing to react to."""
+agent its hook taught by reactions_pass here. A reviewer runs as its worker's helper agent (SHEP-54):
+taught like any other, it seldom gets the person's messages to react to."""
 
 import json
 import os
@@ -63,9 +62,11 @@ def scope_of(space, d):
 def agent_note(terminal, k):
     """What a new session of an agent that isn't an Assistant (a task worker, an automation's run,
     an agent tab) is told: when and how with Reactions on in its space, never with them off."""
-    on = reactions_on(space_of(k))
+    space = space_of(k)
+    on = reactions_on(space)
     run(["hc", "label", terminal, f"{LABEL}={'on' if on else 'off'}"])
-    return GUIDE if on else OFF
+    from .feedback import AGENT_NOTE, feedback_on
+    return (GUIDE if on else OFF) + (f"\n{AGENT_NOTE}" if feedback_on(space) else "")
 
 
 def told(on, scope="everywhere"):

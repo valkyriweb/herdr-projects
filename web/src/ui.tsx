@@ -2,11 +2,17 @@
 // microphone are the drawn icons.
 import clsx from 'clsx'
 import { Fragment, useEffect, useId, useLayoutEffect, useRef, useState, type ButtonHTMLAttributes, type CSSProperties, type HTMLAttributes, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type Ref, type RefObject, type TextareaHTMLAttributes } from 'react'
-import { ChevronUpDownIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/16/solid'
+import { ChevronLeftIcon, ChevronUpDownIcon, MagnifyingGlassIcon, XMarkIcon } from '@heroicons/react/16/solid'
+import { ChevronLeftIcon as BackMini } from '@heroicons/react/20/solid'
+
+/** ‹, every Back's icon: marked, so a voice call's close and back find the screen's own Back (SHEP-51, voice/screen.ts) */
+export const BackIcon = (p: { className?: string }) => <ChevronLeftIcon data-back="" {...p} />
 import type { Status, Task, Report } from '@shared/types.ts'
 import { TALKING, type Sample } from './meter.ts'
 import { useMotion } from './motion.ts'
 import { useStore } from './kernel.ts'
+import { createPortal } from 'react-dom'
+import { placeFloat, type Placement } from './float.ts'
 
 export {
   AdjustmentsHorizontalIcon as ModeIcon,
@@ -24,6 +30,7 @@ export {
   ArrowPathRoundedSquareIcon as RestartIcon,
   ArrowTopRightOnSquareIcon as OpenIcon,
   ArrowUpIcon as UpIcon,
+  ArrowDownIcon as MoveDownIcon,
   ArrowUturnLeftIcon as ReplyIcon,
   BellIcon,
   BoltIcon as SpeedIcon,
@@ -40,7 +47,6 @@ export {
   ChevronDoubleLeftIcon as WidenIcon,
   ChevronDoubleRightIcon as NarrowIcon,
   ChevronDownIcon as DownIcon,
-  ChevronLeftIcon as BackIcon,
   ChevronRightIcon as NextIcon,
   ChevronUpDownIcon as UpDownIcon,
   ClipboardDocumentListIcon as PlanIcon,
@@ -293,10 +299,13 @@ export function Waves({ className }: { className?: string }) {
 /** minutes and seconds since a moment, ticking: "0:42" */
 export function useElapsed(since: number) {
   const [, tick] = useState(0)
+  // each tick on the second since it began, so two clocks of one call (the band, the sidebar's mark) never differ
   useEffect(() => {
-    const t = setInterval(() => tick((x) => x + 1), 1000)
-    return () => clearInterval(t)
-  }, [])
+    let t: ReturnType<typeof setTimeout>
+    const next = () => { t = setTimeout(() => { tick((x) => x + 1); next() }, 1000 - ((Date.now() - since) % 1000) + 10) }
+    next()
+    return () => clearTimeout(t)
+  }, [since])
   const s = Math.max(0, Math.floor((Date.now() - since) / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
@@ -725,6 +734,71 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, onClose: () => vo
 }
 
 /**
+ * A popup laid over everything on the screen's own layer (a portal), so no sidebar, scrolling list or drawer clips or
+ * covers it: placed from what opened it (float.ts) on the side with room, all of it in sight at any width, and placed
+ * again as the screen resizes or it grows. Too tall for the room, it scrolls. A list scrolling what opened it away
+ * closes it (onClose). `point`: a right click's spot, the anchor then only the row it was on.
+ */
+export function Floating({ anchor, point, place, gap, onClose, children }: { anchor: HTMLElement | null; point?: { x: number; y: number } | null; place: Placement; gap?: number; onClose?: () => void; children: ReactNode }) {
+  const device = useStore((s) => s.ui.device)
+  const ref = useRef<HTMLDivElement>(null)
+  const close = useRef(onClose)
+  close.current = onClose
+  useLayoutEffect(() => {
+    const box = ref.current!
+    const el = box.firstElementChild as HTMLElement | null
+    if (!el) return
+    const scrolls = getComputedStyle(el).overflowY !== 'visible'
+    const put = () => {
+      if (!point && !anchor?.isConnected) return
+      // measured where it has the whole screen's width, at its own height
+      box.style.left = box.style.top = '0px'
+      el.style.maxHeight = ''
+      if (!scrolls) el.style.overflowY = ''
+      const a = point ? { left: point.x, top: point.y, right: point.x, bottom: point.y } : anchor!.getBoundingClientRect()
+      const h = el.offsetHeight
+      const s = placeFloat(a, el.offsetWidth, h, place, innerWidth, innerHeight, gap)
+      box.style.left = `${s.x}px`
+      box.style.top = `${s.y}px`
+      if (h > s.maxH) {
+        el.style.maxHeight = `${s.maxH}px`
+        if (!scrolls) el.style.overflowY = 'auto'
+      }
+      // it springs out of the corner nearest what opened it
+      el.style.transformOrigin = `${s.left ? 'right' : 'left'} ${s.up ? 'bottom' : 'top'}`
+    }
+    put()
+    let frame = 0
+    const later = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(put)
+    }
+    const ro = new ResizeObserver(later)
+    ro.observe(el)
+    // the list under what opened it scrolled: it would float away from it, so it goes (or follows, with no onClose)
+    const scrolled = (e: Event) => {
+      if (!(e.target instanceof Node) || box.contains(e.target) || !anchor || !e.target.contains(anchor)) return
+      if (close.current) close.current()
+      else later()
+    }
+    addEventListener('resize', later)
+    addEventListener('scroll', scrolled, { capture: true, passive: true })
+    return () => {
+      cancelAnimationFrame(frame)
+      ro.disconnect()
+      removeEventListener('resize', later)
+      removeEventListener('scroll', scrolled, { capture: true })
+    }
+  }, [anchor, point, place, gap])
+  return createPortal(
+    <div ref={ref} data-device={device} data-float="" className={clsx('fixed top-0 left-0 z-50 max-w-[calc(100vw-16px)] font-sans text-fg antialiased', device === 'phone' ? 'text-base/6' : 'text-sm/5')}>
+      {children}
+    </div>,
+    document.body,
+  )
+}
+
+/**
  * A dropdown menu: one surface (the shared popover corner and shadow) whose rows all line up. Arrow keys, Home and
  * End move between its rows, Escape or a click outside closes it (useDismiss); opened from the keyboard, its first row takes the focus, and the focus
  * goes back to what opened it when it closes. `tabs`: it holds settings as tabs too, so Tab walks on to them rather
@@ -1052,12 +1126,85 @@ export function Small({ children, className, ...p }: HTMLAttributes<HTMLDivEleme
   )
 }
 
-/** Column header: 52px with a hairline under it; its icon buttons are round, like its ⋯ */
-export function Head({ children, className, conversation }: { children: ReactNode; className?: string; conversation?: boolean }) {
+/** Column header: 52px with a hairline under it; its icon buttons are round, like its ⋯.
+ *  A conversation's (the Assistant's, a task's) sits in the chat's reading column with its title in from the edge:
+ *  the gutter its Back needs (a 32px button, then 16px to the title). Its lead (Spaces, a pane's status) hangs in the
+ *  margin left of Back when the window leaves room, else it sits in line before Back: the title is at the same spot
+ *  in both, and in a chat with a Back or a reserved gutter (`reserve`, the Assistant's) it is one x. */
+export function Head({ children, className, conversation, lead, back, reserve }: { children: ReactNode; className?: string; conversation?: boolean; lead?: ReactNode; back?: ReactNode; reserve?: boolean }) {
+  const outer = useRef<HTMLDivElement>(null)
+  const col = useRef<HTMLDivElement>(null)
+  const [hung, setHung] = useState(true)
+  useLayoutEffect(() => {
+    const o = outer.current, c = col.current
+    if (!o || !c) return
+    const fit = () => {
+      const l = c.querySelector<HTMLElement>('[data-lead]')
+      const bare = l ? l.offsetWidth : 0
+      // the room left of the column, 4px clear of the Back button's left (what the lead must clear)
+      const room = c.getBoundingClientRect().left - o.getBoundingClientRect().left - LEAD_GAP
+      setHung(bare === 0 || bare <= room)
+    }
+    fit()
+    const ro = new ResizeObserver(fit)
+    ro.observe(o)
+    ro.observe(c)
+    return () => ro.disconnect()
+  })
+  const gutter = !!back || !!reserve
+  const inline = !!lead && !hung
+  const backRow = back ?? (reserve ? <span aria-hidden className="block size-8 shrink-0" /> : null)
+  if (!conversation)
+    return (
+      <div data-chrome className={clsx('relative flex min-h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3 pl-4 [&_.hit]:rounded-full', className)}>
+        {children}
+      </div>
+    )
   return (
-    <div data-chrome className={clsx('relative flex min-h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3 pl-4 [&_.hit]:rounded-full', conversation && 'px-0!', className)}>
-      {conversation ? <div data-conversation-head className="mx-auto flex min-h-[51px] w-full max-w-read min-w-0 items-center gap-2.5 pr-3 pl-5 [&_.hit]:rounded-full">{children}</div> : children}
+    <div ref={outer} data-chrome data-hang={inline ? 'inline' : undefined} className={clsx('relative flex min-h-[52px] shrink-0 items-center gap-2.5 border-b border-line pr-3 pl-4 px-0! [&_.hit]:rounded-full', className)}>
+      <div
+        ref={col}
+        data-conversation-head
+        className={clsx('relative mx-auto flex min-h-[51px] w-full max-w-read min-w-0 items-center gap-2.5 pr-3 [&_.hit]:rounded-full', inline ? 'pl-0' : gutter ? 'pl-14' : 'pl-5')}
+      >
+        {inline ? (
+          // no room in the margin: the lead, then Back (or its reserved space), in line before the title, centred on
+          // the header's first row (the title's two lines; its views may wrap under it)
+          <div className="-mr-0.5 flex h-[51px] shrink-0 items-center gap-1 self-start">
+            {lead ? <div data-lead className="flex shrink-0 items-center gap-1.5">{lead}</div> : null}
+            {backRow}
+          </div>
+        ) : (
+          <>
+            {/* hung, each centred on the header's first row, the title's two lines (its views may wrap under it) */}
+            {lead ? (
+              <div data-lead className="absolute top-0 right-[calc(100%-4px)] flex h-[51px] items-center gap-1.5">
+                {lead}
+              </div>
+            ) : null}
+            {backRow ? <div className="absolute top-0 right-[calc(100%-48px)] flex h-[51px] items-center">{backRow}</div> : null}
+          </>
+        )}
+        {children}
+      </div>
     </div>
+  )
+}
+// what a hung lead keeps clear of the column's left (the title's gutter is pl-14: Back at 16px in, 8px clear of the title)
+const LEAD_GAP = 4
+
+/** Back, in a conversation header: a plain 20px chevron in a 32px target, named for where it goes (the place's chat or
+ *  the Tasks list). No hover tooltip (the repo's rule): its name is for screen readers */
+export function LeadBack({ onClick, to }: { onClick: () => void; to: string }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={`Back to ${to}`}
+      className="press-dim relative inline-flex size-8 shrink-0 items-center justify-center rounded-full text-fg2 hover:bg-hover hover:text-fg"
+    >
+      <BackMini className="size-5 shrink-0" />
+    </button>
   )
 }
 
@@ -1133,7 +1280,7 @@ export function FootButton({ className, children, ...p }: Btn) {
     <button
       type="button"
       className={clsx(
-        'press flex min-h-8 items-center gap-2 rounded-row px-2 text-left text-fg2 hover:bg-hover hover:text-fg keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] focus-visible:outline-none coarse:min-h-11 coarse:text-fg phone:min-h-12 phone:text-fg phone:gap-3 phone:px-3',
+        'press flex min-h-8 min-w-0 items-center gap-2 rounded-row px-2 text-left whitespace-nowrap text-fg2 hover:bg-hover hover:text-fg keys:focus-visible:shadow-[inset_0_0_0_1.5px_var(--color-focus)] focus-visible:outline-none coarse:min-h-11 coarse:text-fg phone:min-h-12 phone:text-fg phone:gap-3 phone:px-3',
         className,
       )}
       {...p}

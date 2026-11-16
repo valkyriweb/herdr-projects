@@ -30,6 +30,7 @@ drops the space's own, and it inherits again. A few settings are one for every s
 | Tasks | Archive Done after | Everywhere, space | Some repos keep done work in view longer |
 | Tasks | Worktrees | Everywhere, space | A folder that isn't a repo, or one that can't take worktrees |
 | Tasks | Base branch | Space only | A branch only means something in one repo |
+| Tasks | Branch names (a pattern: `{n}`, `{key}`, `{slug}`; empty: `task/{n}-{slug}`; a task's own `--branch` wins) | Everywhere, space | A team may name branches after its tickets |
 | Tasks | Run automations | Everywhere, space | Pause one repo's automations |
 | Tasks | When a task starts / finishes | Everywhere, space | Setup and cleanup steps are a repo's |
 | Autopilot | Heartbeat, Schedule, Events | Everywhere, space | Each space works toward its own goal, at its own pace |
@@ -50,12 +51,16 @@ task values a machine set before (the old machine scope) still apply there until
 
 ## Where they're kept, and how they travel
 
-- `~/.herdr/shepherdr.json`: `everywhere` and `spaces[<space id>]` (another machine's space as `<machine>/<id>`), each
+- `~/.config/shepherdr/settings.json`: `everywhere` and `spaces[<space id>]` (another machine's space as `<machine>/<id>`), each
   with `coordinator`, `worker`, `reviewer`, `backup`, `tasks`, `automations`, `agents` (`{ reactions }`) and
   `autopilot` (`{ every, events, heartbeat }`). The window pushes each machine its share (Everywhere's and its spaces' by their
   ids there), and when the web app is served from another machine its service keeps the file in step with that host
-  (`service/sync.ts`). So a space on any machine, and the web on the Mac mini, see the same values.
-- Secrets live in one vault, `~/.herdr/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
+  (`service/sync.ts`). So a space on any machine, and the web on the Mac mini, see the same values. On a machine
+  still on an older Shepherdr the file is `~/.herdr/shepherdr.json`; pushes and syncs find it there.
+- `tasks.worktree_root` (in `everywhere`, a machine's or a space's `tasks`; no row in the window yet): the folder new
+  task worktrees go in, e.g. a bigger disk (`~` allowed). Unset: `~/.local/share/shepherdr/worktrees`. A task keeps
+  the worktree it has.
+- Secrets live in one vault, `~/.local/share/shepherdr/secrets/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as
   `shepherdr.host` is (`core/secrets.js`). `herdr-secret` on any other machine passes `set`, `rm` and `names` there
   over herdr-core (the value on stdin, scopes renamed into that machine's words); that machine's service answers every
@@ -67,11 +72,11 @@ task values a machine set before (the old machine scope) still apply there until
   and agents work with no setup; then the machine serving the web app moves them to itself with `move-to` (backup,
   verified copy, rollback), and does so again when Serve from moves. Picking another machine in Kept on stops the
   following; picking the Serve from machine starts it again. Voice calls with no record yet ask each linked machine
-  for the key. No record and nothing to decide yet: the machine without `~/.herdr/secret-remote` keeps them.
+  for the key. No record and nothing to decide yet: the machine without `~/.local/share/shepherdr/secrets/remote` keeps them.
 - Notify is in the shared document (`notify`), kept in step the same way.
 - herdr-task reads the effective value: `settings_for()` for agents and tasks (the Settings block every brief ends
   with names who set each line), `autopilot.resolve()` for Autopilot (`herdr-task autopilot show` lists which parts are
-  the space's own). Autopilot's schedule and events from before Settings kept them (`~/.herdr/tasks/.autopilot.json`
+  the space's own). Autopilot's schedule and events from before Settings kept them (`~/.local/share/shepherdr/tasks/.autopilot.json`
   `everywhere`) and its heartbeat file (`~/.config/herdr-core/autopilot/everywhere.md`) are what Everywhere inherits
   until it's set.
 
@@ -98,8 +103,8 @@ Assistant's, a task's and an agent tab's, in the window and on the web (`core/ch
   changed settings (below); every other live agent its hook taught gets it alone from herdr-task's news pass
   (`reactions_pass`), once, ending "carry on with what you were doing; if nothing, reply only `<hc no-reply/>`", so a
   worker mid-task keeps working. One started before this isn't told until it starts again.
-- **Reviewers** run headless (`claude -p`, `codex exec`): their output goes to their worker, not a chat. Their hook
-  may run in the worker's terminal and teach them too, but they never get your messages, so they never react.
+- **Reviewers** run as their worker's own helper agents (an hc child, shown as a subagent in its chat): their hook
+  teaches them too, but your messages rarely reach them, so they seldom react.
 - **A reaction only.** A reply of a `<hc react … />` line and `<hc no-reply/>` shows just the reaction on your
   message.
 

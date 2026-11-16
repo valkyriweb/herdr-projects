@@ -37,6 +37,23 @@ const CLAUDE_EFFORTS = KINDS.claude.effort.levels;
 // --dangerously-skip-permissions for full access; Codex: its sandbox and approvals; the others
 // ask, or get their one full-access flag).
 const PERMS = Object.fromEntries(AGENTS.map((k) => [k, KINDS[k].perms]));
+// A permission mode carried to the other agent when the agent is switched: its nearest mode there (auto stays auto,
+// full access stays full access, Claude's accept edits is Codex's auto, plan and read only swap), else that agent's
+// default (Claude's ask has no Codex match). Never silently drops auto to ask on a round trip (#758).
+// Only Claude Code and Codex have a crossing table; the other kinds keep a mode they list, else the default.
+const PERM_ACROSS = {
+  claude: { "read-only": "plan", auto: "auto", full: "bypassPermissions" },
+  codex: { plan: "read-only", auto: "auto", acceptEdits: "auto", bypassPermissions: "full" },
+};
+export function permAcross(perm, agent, permDefault) {
+  // Full access stays full access in any kind that has one (Claude's bypassPermissions, "full" elsewhere); a kind with
+  // none (pi, amp, cursor) gets its default instead.
+  if (perm === "bypassPermissions" || perm === "full") {
+    const full = agent === "claude" ? "bypassPermissions" : "full";
+    return PERMS[agent]?.some((p) => p.id === full) ? full : permDefault?.[agent] ?? null;
+  }
+  return PERM_ACROSS[agent]?.[perm] ?? (PERMS[agent]?.some((p) => p.id === perm) ? perm : null) ?? permDefault?.[agent] ?? null;
+}
 
 // What a model id says, in words: "claude-opus-5-5" → "Opus 5.5", "opus[1m]" → "Opus 1M".
 export function modelName(id) {
@@ -125,7 +142,8 @@ export function current(kind, argv, meta, dflt) {
   meta = meta ?? {};
   dflt = dflt ?? {};
   if (kind === "claude") {
-    const alias = flag(argv, "--model") ?? dflt.model;
+    // a /model in place (SHEP-181) names the row it switched to, its 1M too, which the log's turns don't say
+    const alias = meta.alias ?? flag(argv, "--model") ?? dflt.model;
     let fast = dflt.fast;
     const s = flag(argv, "--settings");
     if (s && /"fastMode"\s*:\s*(true|false)/.test(s)) fast = /"fastMode"\s*:\s*true/.test(s);
@@ -157,7 +175,7 @@ export function current(kind, argv, meta, dflt) {
     : sandbox === "read-only" ? "read-only" : "auto";
   return { agent: "codex", model, label: dflt.models?.find((m) => m.id === model)?.label ?? null, perm,
     effort: meta.effort ?? o.model_reasoning_effort ?? dflt.effort,
-    fast: tier ? ["fast", "priority"].includes(tier) : Boolean(dflt.fast), used: meta.used ?? null, window: meta.window ?? null };
+    fast: meta.speed ? meta.speed === "fast" : tier ? ["fast", "priority"].includes(tier) : Boolean(dflt.fast), used: meta.used ?? null, window: meta.window ?? null };
 }
 
 // An effort level as the person reads it: "xhigh" -> "Extra high". The CLIs still get the raw value.
@@ -321,11 +339,17 @@ const CLAUDE_VALUE = new Set(["--add-dir", "--mcp-config", "--append-system-prom
 const CODEX_VALUE = new Set(["-c", "--config", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-a", "--ask-for-approval",
   "-C", "--cd", "--add-dir", "-i", "--image", "--enable", "--disable", "--local-provider", "--oss"]);
 
+// Where the agent's own word (claude, codex, or another kind's program) is in argv: a terminal's argv starts with what launched it (nice,
+// sh -c, env, the person's `bash -ic`), whose words are no agent flags (#1001: its -ic was Codex's `-i c`, an image).
+function agentAt(argv) {
+  return argv.findIndex((a, i) => (i === 0 || !String(a).startsWith("-")) && PROGS.has(String(a).split("/").pop()));
+}
+
 // The old agent's flags worth keeping (permissions, folders, ...), without what is chosen again
 // or a first message.
 function kept(kind, argv) {
   const out = [];
-  const rest = argv.slice(1);
+  const rest = argv.slice(Math.max(agentAt(argv), 0) + 1);
   if (kind !== "claude" && kind !== "codex") {
     // The other kinds: every flag but the model, effort, session and full-access ones (their
     // values go with them); a bare word is the session id or a first message.
@@ -364,8 +388,15 @@ function kept(kind, argv) {
 // The same agent, model and flags as `argv`, without what resumed a conversation (and without a
 // first message), or null when argv resumed none: for a fresh start once that session is gone.
 export function freshArgv(kind, argv) {
+  const s = stripSession(kind, argv);
+  return s?.resumed ? s.out : null;
+}
+
+// argv without its session (a resume, fork, session id or first message): { out, resumed }, or null when no
+// claude/codex word is in it.
+function stripSession(kind, argv) {
   argv = argv ?? [];
-  const at = argv.findIndex((a, i) => (i === 0 || !a.startsWith("-")) && PROGS.has(String(a).split("/").pop()));
+  const at = agentAt(argv);
   if (at < 0) return null;
   const rest = argv.slice(at + 1), out = [argv[at]];
   let resumed = false;
@@ -378,7 +409,7 @@ export function freshArgv(kind, argv) {
       if (a === forkFlag(k)) { if (typeof k.fork === "string" && rest[i + 1] && !rest[i + 1].startsWith("-")) i++; continue; }
       if (a.startsWith("-")) { out.push(a); if (!(k.full ?? []).includes(a) && rest[i + 1] && !rest[i + 1].startsWith("-")) out.push(rest[++i]); }
     }
-    return resumed ? out : null;
+    return { out, resumed };
   }
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -396,7 +427,7 @@ export function freshArgv(kind, argv) {
     // A word that isn't a flag or a flag's value: the session's id or a first message.
     if (a.startsWith("-")) out.push(a);
   }
-  return resumed ? out.filter((x) => x !== undefined) : null;
+  return { out: out.filter((x) => x !== undefined), resumed };
 }
 
 // How to start the chosen agent: { argv, resume } (resume: argv already continues the session).
@@ -456,6 +487,18 @@ export function sessionOf(kind, path) {
 
 // A kind's fork flag, however the table spells it.
 const forkFlag = (k) => (typeof k.fork === "string" ? k.fork : k.fork?.flag ?? null);
+// The same conversation again, after its agent ended (an Assistant's /exit, GitHub #1039): its own flags, model, effort
+// and speed, resuming `session`.
+export function resumeArgv(kind, argv, session) {
+  const out = stripSession(kind, argv)?.out ?? [kind];
+  if (kind === "claude") return [...out, "--resume", session];
+  if (kind === "codex") return [out[0], "resume", ...out.slice(1), session];
+  // The other kinds resume as their table spells it (startArgv's same-agent resume).
+  const r = KINDS[kind]?.resume;
+  if (!r) return null;
+  return r.style === "flag" ? [...out, r.flag, session] : r.style === "thread" ? [out[0], ...r.sub, session, ...out.slice(1)] : [out[0], r.sub, ...out.slice(1), session];
+}
+
 // A copy of the conversation in a new tab beside this one, through the CLI's own fork.
 export function forkArgv(kind, argv, session) {
   argv = argv ?? [];
@@ -479,3 +522,23 @@ export function forkArgv(kind, argv, session) {
   const flags = [...kept(kind, argv), ...same];
   return kind === "claude" ? ["claude", ...flags, "--resume", session, "--fork-session"] : ["codex", "fork", ...flags, session];
 }
+
+// #1050: a fork of a task's conversation while the task's agent runs works in the same folder, so two agents would
+// edit one worktree. The task's live agent (a terminal record from `all`, reviewers and helpers aside) when `t` is a
+// task's terminal, else null: the fork then asks first (FORK_LIVE).
+const AGENT_APPS = new Set(["claude-code", "claude", "codex"]);
+export function liveTaskAgent(t, all) {
+  const task = t?.labels?.["herdr.task"];
+  if (!task) return null;
+  return [...(all ?? [])].find((k) => k?.state === "live" && k.labels?.["herdr.task"] === task
+    && !["reviewer", "helper"].includes(k.labels?.["herdr.role"])
+    // an agent runs there (a record that doesn't say what runs counts: better to ask once too often)
+    && (AGENT_APPS.has(k.status?.app) || AGENT_APPS.has(k.foreground?.name) || (!k.status?.app && !k.foreground))) ?? null;
+}
+// The ask, in the window's confirm and the web's alike: keep the live agent (Cancel) or fork anyway.
+export const FORK_LIVE = {
+  title: "This task's agent is still running",
+  detail: "A fork starts a second agent in the task's folder, and both would edit the same files. Keep working with the live one, or fork anyway.",
+  verb: "Fork anyway",
+  cancel: "Keep the live one",
+};

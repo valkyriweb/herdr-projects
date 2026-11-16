@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { WORDS, clock, bandActs, bandOrder, senderName, briefLabel, newsWords, newsTimeline, resolveArtifacts, fitThumbs, dayLabel, imagesLine, questionsBelow, notSent, unsigned, elapsed, reportMsg, doingWords, ownWords, outsideTerminal, fromName, sentTo, selfName, initialOf } from "./chat-view.js";
+import { WORDS, clock, bandActs, bandOrder, senderName, briefLabel, newsWords, newsTimeline, resolveArtifacts, fitThumbs, dayLabel, imagesLine, questionsBelow, notSent, unsigned, elapsed, reportMsg, doingWords, ownWords, outsideTerminal, fromName, sentTo, selfName, initialOf, literal, firstUser, firstKeys } from "./chat-view.js";
 
 const ROOT = join(import.meta.dir, "..");
 const read = (p) => readFileSync(join(ROOT, p), "utf8");
@@ -90,6 +90,10 @@ describe("rows", () => {
     const items = [{ kind: "agent", at: 50 }, { kind: "news", id: "n1", at: 300, ref: "H-1", event: "ready", text: "H-1 is ready: A · ok" }];
     const out = newsTimeline(items, tasks, { start: 0 });
     expect(out.map((e) => [e.event, e.made ?? false, e.accept])).toEqual([["started", true, false], ["ready", false, true]]);
+  });
+  test("no ready line while its checks still run (SHEP-175)", () => {
+    const tasks = new Map([["H-1", { title: "A", status: "working", started: 100, ready_at: 300 }]]);
+    expect(newsTimeline([{ kind: "agent", at: 50 }], tasks, { start: 0 }).map((e) => e.event)).toEqual(["started"]);
   });
   test("which artifact a publish made", () => {
     const arts = [{ id: "a", title: "Plan", version: 2, versions: [{ v: 1, at: 1000, publisher: "t7" }, { v: 2, at: 9000, publisher: "t7" }] }];
@@ -185,4 +189,71 @@ describe("agent to agent as a group chat (SHEP-27)", () => {
     expect(initialOf("SHEP-4")).toBe("S");
     expect(initialOf("Assistant on Mac mini · Home")).toBe("A");
   });
+});
+
+// SHEP-54: an agent's own helper agents in herdr, over its chat
+import { subagentsOf, subagentTitle, isHelper } from "./chat-view.js";
+test("subagentsOf: its own hc children labelled reviewer or helper, never workers", () => {
+  const now = 10_000_000;
+  const terms = [
+    { address: "t1", state: "live", labels: { "herdr.task": "x#1" } },
+    { address: "t2", parent: "t1", state: "live", status: { state: "working" }, created_ms: 100, name: "x-1-review", labels: { "herdr.task": "x#1", "herdr.role": "reviewer", "herdr.agent": "codex" } },
+    // a worker: an Assistant's child with a task, no helper role
+    { address: "t3", parent: "t0", state: "live", labels: { "herdr.task": "x#2" } },
+    { address: "t4", parent: "t1", state: "live", status: { state: "blocked" }, created_ms: 50, agent: "claude-code", labels: { "herdr.role": "helper" } },
+    // ended an hour and more ago: gone
+    { address: "t5", parent: "t1", state: "finished", finished_ms: now - 2 * 3600000, labels: { "herdr.role": "reviewer" } },
+    { address: "t6", parent: "t1", state: "finished", created_ms: 10, finished_ms: now - 60000, labels: { "herdr.role": "reviewer", "herdr.agent": "claude" } },
+    // another machine's: its parent named there
+    { address: "vm/t8", parent: "t7", state: "live", status: "idle", created_ms: 1, labels: { "herdr.role": "reviewer" } },
+  ];
+  const got = subagentsOf(terms, "t1", now);
+  expect(got.map((s) => [s.address, s.title, s.status])).toEqual([
+    ["t6", "Reviewer · Claude Code", "done"], ["t4", "Helper · Claude Code", "needs"], ["t2", "Reviewer · Codex", "working"]]);
+  expect(got[0].ended).toBe(now - 60000);
+  expect(subagentsOf(terms, "vm/t7", now).map((s) => [s.address, s.status])).toEqual([["vm/t8", "done"]]);
+  expect(subagentsOf(terms, "t0", now)).toEqual([]);
+  expect(isHelper({ labels: { "herdr.role": "reviewer" } })).toBe(false); // no parent: an old herdr-task reviewer
+  expect(subagentTitle({ role: "reviewer", cli: null })).toBe("Reviewer");
+});
+
+// SHEP-69 (#591, #592, #589): the person's words as typed, and the session's first message found again.
+describe("the person's words and the session's first message", () => {
+  test("a <word> the person typed stays in their bubble; code is left alone (#591)", () => {
+    expect(literal("Decisions: B1 = <yours>, B3 = <yours>.")).toBe("Decisions: B1 = \\<yours>, B3 = \\<yours>.");
+    expect(literal("a `<code>` and\n```\n<div>\n```\nafter <x>")).toBe("a `<code>` and\n```\n<div>\n```\nafter \\<x>");
+    // an entity typed is its characters; a lone & needs nothing
+    expect(literal("&lt; & ampersand")).toBe("\\&lt; & ampersand");
+    expect(literal(null)).toBe("");
+  });
+  test("the first message is the first user item, wherever news read out of it went (#589)", () => {
+    expect(firstUser([{ kind: "news" }, { kind: "news" }, { kind: "user" }, { kind: "user" }])).toBe(2);
+    expect(firstUser([{ kind: "agent" }])).toBe(-1);
+    // its quiet row's label follows it there
+    expect(briefLabel({ text: "role" }, 2, { start: 0, template: "herdr-assistant", first: 2 })).toBe("New session");
+    expect(briefLabel({ text: "later" }, 3, { start: 0, template: "herdr-assistant", first: 2 })).toBe(null);
+    expect(briefLabel({ text: "role" }, 0, { start: 0, template: "herdr-assistant" })).toBe("New session");
+  });
+  test("a chat opened again by the agent's address finds the first words by its labels (#592)", () => {
+    const labels = { "herdr.chat.slot": "coord-abc", "herdr.chat.origin": "slot:coord-abc" };
+    expect(firstKeys({ labels, origin: "slot:coord-abc", addr: "t12" })).toEqual(["coord-abc", "slot:coord-abc", "t12"]);
+    expect(firstKeys({ slot: "coord-abc", labels: {}, origin: "slot:coord-abc" })).toEqual(["coord-abc", "slot:coord-abc"]);
+    expect(firstKeys({})).toEqual([]);
+  });
+});
+
+// SHEP-92: at most one row over the box for each kind of background work
+import { bgGroups } from "./chat-view.js";
+test("bgGroups: one row per kind, subagents first, the newest and their shared state", () => {
+  expect(bgGroups([])).toEqual([]);
+  const one = bgGroups([{ id: "s1", kind: "shell", at: 5, title: "Build" }]);
+  expect(one.map((g) => [g.kind, g.words, g.newest.id])).toEqual([["proc", null, "s1"]]);
+  const many = bgGroups([
+    { id: "s1", kind: "shell", at: 5 }, { id: "m1", kind: "monitor", at: 9 }, { id: "s2", kind: "shell", at: 7 },
+    { id: "c1", kind: "child", at: 3, status: "done" }, { id: "a1", kind: "agent", at: 4 },
+  ]);
+  expect(many.map((g) => [g.kind, g.words, g.newest.id, g.status, g.items.length])).toEqual([
+    ["sub", "2 subagents", "a1", "working", 2], ["proc", "3 background processes", "m1", "working", 3]]);
+  expect(bgGroups([{ kind: "child", at: 1, status: "done" }, { kind: "child", at: 2, status: "needs" }, { kind: "child", at: 3, status: "working" }])[0].status).toBe("needs");
+  expect(bgGroups([{ kind: "child", at: 1, status: "done" }, { kind: "child", at: 2, status: "done" }])[0].status).toBe("done");
 });

@@ -1,8 +1,7 @@
 // The Tasks panel's small menus (mods/tasks), as popups at the pointer in the look of Herdr's
 // own menu. props().menu:
-//   "group"   the header's ⋯: group the list by status, space, machine, or machine then space
-//             (shared "tasks.groupby", kept); the machine ones only when props().machines (more
-//             than one machine has tasks)
+//   "group"   the header's ⋯: group the list For you, by space or by status (shared "tasks.group",
+//             kept; props().current, the panel's grouping now: core/tasks.js groupNow)
 //   "filter"  the filter row's More: the statuses that don't get a chip of their own;
 //             props().items = [{ key, label, count }], props().current. A pick goes to the
 //             panel as shared "tasks.filterreq" = { key, at }.
@@ -18,10 +17,10 @@ import { v_flex } from "gpui-base";
 import { props, closeOverlay, theme, shared, setShared, exec, appHome } from "herdr";
 import { menuRow, heading, toast, TEXT } from "./ui.js";
 import { taskMenu } from "./core/menus.js";
+import { settle } from "./core/pending.js";
 
-// Shepherdr's GROUP_WORDS. "folder" was Space's old key.
-const GROUPS = [{ key: "status", label: "Status" }, { key: "space", label: "Space" },
-  { key: "machine", label: "Machine" }, { key: "machine-space", label: "Machine › Space" }];
+// Shepherdr's GROUP_WORDS (core/tasks.js GROUP_BY).
+const GROUPS = [{ key: "you", label: "For you" }, { key: "space", label: "Space" }, { key: "status", label: "Status" }];
 
 // The menu's sections, each a title (or none), its items, which is checked and what a pick does.
 function sections() {
@@ -29,11 +28,8 @@ function sections() {
   if (p.menu === "row") return rowSections(p);
   if (p.menu === "filter") return [{ title: null, items: p.items ?? [], current: p.current,
     pick: (key) => setShared("tasks.filterreq", { key, at: Date.now() }) }];
-  const items = GROUPS.filter((g) => p.machines || !g.key.startsWith("machine"));
-  // What the list shows now: by machine with one machine is by status, Machine › Space by space.
-  const by = shared("tasks.groupby") === "folder" ? "space" : shared("tasks.groupby");
-  const current = items.some((g) => g.key === by) ? by : by === "machine-space" ? "space" : "status";
-  return [{ title: "Group by", items, current, pick: (key) => setShared("tasks.groupby", key) }];
+  const current = GROUPS.some((g) => g.key === p.current) ? p.current : "you";
+  return [{ title: "Group by", items: GROUPS, current, pick: (key) => setShared("tasks.group", key) }];
 }
 
 // A row's menu (core/menus.js taskMenu, the web's too): its sections between the lines, a heading
@@ -64,7 +60,9 @@ function rowPick(p, key) {
   const args = it.id === "start-now" ? ["start", p.ref, "--now"] : it.id === "unschedule" ? ["edit", p.ref, "--at", ""]
     : ["edit", p.ref, ...(it.in ? ["--in", it.in] : ["--at", it.at])];
   // herdr-task, here or (--on) on the folder's machine; the list shows the change on its next read.
-  exec(`${appHome()}/mods/tasks/bin/herdr-task`, [...(p.machine ? ["--on", p.machine] : []), ...args, "--json", "--folder", p.folder])
+  const cli = (a) => exec(`${appHome()}/mods/tasks/bin/herdr-task`, a);
+  cli([...(p.machine ? ["--on", p.machine] : []), ...args, "--json", "--folder", p.folder])
+    .then((r) => settle(cli, r))
     .then((r) => {
       let out = null;
       try { out = JSON.parse(r.stdout || "null"); } catch {}

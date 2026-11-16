@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { newestHost, renamer, moveId, relocate, relocateDoc, keepForeign, relocateSettings, merge3, serveChoice, nodeAlive } from "./host.js";
+import { newestHost, renamer, moveId, relocate, relocateDoc, keepForeign, relocateSettings, merge3, serveChoice, nodeAlive, pickedMachine } from "./host.js";
 
 // the laptop (id L) calls the mini "mac-mini"; the mini (id M) calls the laptop "m3"; both call the VM "vm"
 const laptop = { id: "L", links: { "mac-mini": "M", vm: "V" } };
@@ -83,4 +83,31 @@ test("a machine's line in the picker", () => {
   expect(serveChoice({ here: true, name: "m3", os: "linux", state: "connected" })).toBe("This computer · Linux");
   expect(serveChoice({ name: "mac-mini", os: "darwin", state: "connected" })).toBe("mac-mini · macOS");
   expect(serveChoice({ name: "vm", os: null, state: "unreachable" })).toBe("vm · Offline");
+});
+
+test("the dragged order of each machine's spaces reads the same on both machines; the mini's own stays (SHEP-130)", () => {
+  const order = { "": ["sp2", "sp1"], "mac-mini": ["mac-mini/sp9", "mac-mini/sp4"], vm: ["vm/sp3"], gone: ["gone/sp1"] };
+  const there = relocate("spaces-chat", { order }, toMini);
+  expect(there.order).toEqual({ m3: ["m3/sp2", "m3/sp1"], "": ["sp9", "sp4"], vm: ["vm/sp3"] });
+  expect(relocate("spaces-chat", there, toLaptop).order).toEqual({ "": ["sp2", "sp1"], "mac-mini": ["mac-mini/sp9", "mac-mini/sp4"], vm: ["vm/sp3"] });
+  const merged = keepForeign("spaces-chat", relocate("spaces-chat", { order: { "": ["sp1"] } }, toMini), { order: { lonely: ["lonely/a"], m3: ["m3/old"] } }, toLaptop);
+  expect(merged.order).toEqual({ lonely: ["lonely/a"], m3: ["m3/sp1"] });
+});
+
+test("the machines' dragged order reads the same on both machines; one only the mini knows keeps its place (SHEP-153)", () => {
+  const there = relocate("spaces-chat", { machineOrder: ["vm", "", "mac-mini", "gone"] }, toMini);
+  expect(there.machineOrder).toEqual(["vm", "m3", ""]);
+  expect(relocate("spaces-chat", there, toLaptop).machineOrder).toEqual(["vm", "", "mac-mini"]);
+  // the laptop moves itself first; the mini's "lonely" (the laptop can't name it) stays after vm, where it was
+  const merged = keepForeign("spaces-chat", relocate("spaces-chat", { machineOrder: ["", "vm", "mac-mini"] }, toMini), { machineOrder: ["vm", "lonely", "m3", ""] }, toLaptop);
+  expect(merged.machineOrder).toEqual(["m3", "vm", "lonely", ""]);
+});
+
+test("a Kept on / Serve from pick of this computer is null, whichever way the page says it (#1042)", () => {
+  expect(pickedMachine("here", "m3")).toBe(null);
+  expect(pickedMachine("m3", "m3")).toBe(null);
+  expect(pickedMachine("", "m3")).toBe(null);
+  expect(pickedMachine(undefined, "m3")).toBe(null);
+  expect(pickedMachine("here", undefined)).toBe(null);
+  expect(pickedMachine("mac-mini", "m3")).toBe("mac-mini");
 });

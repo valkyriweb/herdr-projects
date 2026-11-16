@@ -69,6 +69,7 @@ an add-on's line and Web's state; `service/settings.test.ts` checks the rows the
 | Tasks at once | stepper − N + (1–10), no unit | `Settings.tsx:575` Stepper over the row's steps | ✓ (was a typed box with "tasks") |
 | Archive Done after | segmented Off / 1 day / 3 days / 1 week / 1 month | Segments | ✓ (was a picker) |
 | Base branch (a space's) | `base-branch.js:47` box, "Its branch now: main" / "Its current branch", checked here or on origin, "There's no branch “x” here or on origin." | text box with that placeholder (`service/main.ts` fetchBranch), checked in `service/main.ts` before saving, the error under the row | ✓ (was missing) |
+| Branch names (Everywhere's or a space's) | `branch-names.js` box, "task/{n}-{slug}" when empty, checked by `branchPattern`, its words under the box | text box with that placeholder, checked by `branchPattern` in `service/settings.ts` before saving, the error under the row | ✓ |
 | When a task starts / finishes | `main.js:545` title, line, a box as wide as the page with its example dim, saved after typing stops and on leaving, "Saved" | `Settings.tsx:817` NoteBox (was a Save/Undo editor with "Every task here") | ✓ |
 | Lines under each row | ABOUT | `service/settings.ts` hint: ABOUT | ✓ (were missing) |
 
@@ -120,6 +121,6 @@ an add-on's line and Web's state; `service/settings.test.ts` checks the rows the
 | Element | Window | Web | State |
 |---|---|---|---|
 | Shepherdr on the web | `web-section.js:30` state line: "On, private to your tailnet." / why / "Off. Turn it on under Window › Add-ons." | `service/settings.ts` web() (webState, the service's own state) | ✓ (was only a Link row) |
-| Link | `:32` the link, Copy | link as its line, Copy (CopyButton) | ✓ |
+| Link | `:32` the link, Copy, "Copied" for 1.5 s | link as its line, Copy (CopyButton), "Copied" for 1.5 s once it really copied (copy.ts) | ✓ |
 | QR code | `:34` "Open it on your phone", the picture | the same SVG (`service/main.ts` webNow), its words | ✓ (was missing) |
 | "Reading…", "Shepherdr's service isn't running here." | before the first read, no service | never: the page comes from the service | ◇ the web is the service's own page |

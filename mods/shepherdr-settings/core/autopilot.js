@@ -1,9 +1,9 @@
 // Autopilot's words and picks, the same in the window (Settings › Autopilot: mods/shepherdr-settings/autopilot-section.js;
 // the header's switch: mods/pane-chat/autopilot.js) and on the web (service/compat.ts, web/plugins/coordinators).
 // Set as Tasks is: Everywhere's heartbeat, schedule and events, and a space's own where it sets one (Shepherdr settings,
-// ~/.herdr/shepherdr.json "autopilot" = { every, events, heartbeat } in "everywhere" and in "spaces"[id], travelling
+// ~/.config/shepherdr/settings.json "autopilot" = { every, events, heartbeat } in "everywhere" and in "spaces"[id], travelling
 // to every machine with the rest). A space switches it on or off in its Assistant's header. herdr-task keeps each
-// space's switch and how its wakes go (mods/tasks/bin/herdr_task/autopilot.py, ~/.herdr/tasks/.autopilot.json, whose
+// space's switch and how its wakes go (mods/tasks/bin/herdr_task/autopilot.py, ~/.local/share/shepherdr/tasks/.autopilot.json, whose
 // "everywhere" {every, events} and the heartbeat file everywhere.md are Everywhere's from before Settings kept them,
 // still read where Settings sets none). pilotFor() is herdr-task's resolve(), for the header, which reads the files
 // itself, and for a space herdr-task has no record of yet; core/autopilot.cases.json holds the cases both sides are
@@ -211,7 +211,8 @@ export function when(ms, today = new Date()) {
 
 // What follows "Autopilot" in an Assistant's header while on: waking (a wake's turn runs), queued (waits for an idle
 // Assistant), the next scheduled wake ("Next in 7 min" within the hour, "Next 14:30" within a day, else "Next Fri"),
-// else what wakes it. Nothing while off. A screen showing it looks again each half minute or so.
+// else what wakes it ("On events"; neither: "No schedule", it wakes only on Run now). Nothing while off. A screen
+// showing it looks again each half minute or so.
 export function headerDetail(a, now = Date.now()) {
   if (!a?.on) return "";
   if (a.inflight) return "Waking";
@@ -222,5 +223,13 @@ export function headerDetail(a, now = Date.now()) {
     if (left < 3600000) return `Next in ${Math.ceil(left / 60000)} min`;
     return left < 86400000 ? `Next ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}` : `Next ${d.toLocaleDateString("en", { weekday: "short" })}`;
   }
-  return a.events?.length ? "On events" : "Run now only";
+  return a.events?.length ? "On events" : "No schedule";
+}
+
+// What a header shows the moment its switch is flipped, until herdr-task's answer comes (SHEP-52): switched on, it
+// wakes at once (herdr-task queues its first wake), so "Waking" rather than the off record's empty schedule; switched
+// off, nothing waits.
+export function flipped(a, on) {
+  return on ? { ...a, on: true, inflight: a?.inflight || { reason: "switched on" } }
+    : { ...a, on: false, next_run: null, pending: null, inflight: null };
 }

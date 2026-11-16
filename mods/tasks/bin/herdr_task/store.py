@@ -1,10 +1,12 @@
 """Where a folder's tasks live (~/.herdr/tasks/<slug>.json) and the locked Store that edits them."""
 
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import re
+from contextlib import contextmanager
 
 from .base import Fail, git, hc_json, HOME, LEGACY, MAX_RUNNING, now, run, STORE
 from .settings import settings_for
@@ -30,6 +32,19 @@ def locate(path):
     return {"folder": path, "kind": "folder", "name": name, "common": None}
 
 
+def bare_by_mistake(path):
+    """#1052: a repo whose .git/config says core.bare = true though its files are checked out (a .git
+    folder with work beside it): git then sees no work tree, so to herdr-task it looked like a plain
+    folder and tasks quietly worked in it, Worktrees on or not. Returns what to say, else None."""
+    ok, out, _ = git(path, "rev-parse", "--is-bare-repository", "--path-format=absolute", "--git-dir")
+    lines = out.split("\n") if ok else []
+    if len(lines) != 2 or lines[0] != "true" or os.path.basename(lines[1]) != ".git":
+        return None
+    folder = os.path.dirname(lines[1])
+    return (f"{folder} is a git repo, but its .git/config says core.bare = true, so git sees no work tree here and "
+            f"tasks would quietly skip their worktrees. If its files belong there, run: git -C {folder} config core.bare false")
+
+
 def slug_of(folder):
     # Folders in home drop the home part: ~/dev/app -> dev-app, ~ -> home.
     rel = os.path.relpath(folder, HOME) if folder == HOME or folder.startswith(HOME + "/") else folder
@@ -37,9 +52,45 @@ def slug_of(folder):
     return s or "root"
 
 
+# ---- a repo's stable id (SHEP-141) ------------------------------------------------------------
+# A repo's tasks are kept by its folder's name (the slug), so renaming or moving the folder would lose them. Each
+# repo gets an id of its own in its .git/config (`git config --local shepherdr.id`: never committed, shared by its
+# worktrees, moved with it), recorded in its task list as "project_id": a folder with no list of its own finds the
+# list whose repo it is, when that list's folder is gone, and goes on with it (same slug, so its tasks' keys stay).
+
+def project_id(folder, make=False):
+    """The repo's id (None outside git); make: give it one when it has none."""
+    ok, out, _ = git(folder, "config", "--local", "--get", "shepherdr.id")
+    if ok and out.strip():
+        return out.strip()
+    if not make:
+        return None
+    import uuid
+    new = str(uuid.uuid4())
+    return new if git(folder, "config", "--local", "shepherdr.id", new)[0] else None
+
+
+def moved_list(folder):
+    """The list of the repo now at `folder` that was kept under its old folder (gone now), or None."""
+    pid = project_id(folder) if os.path.isdir(os.path.join(folder, ".git")) else None
+    if not pid:
+        return None
+    for p in (os.path.join(STORE, f) for f in sorted(os.listdir(STORE))) if os.path.isdir(STORE) else []:
+        if not p.endswith(".json"):
+            continue
+        d = read_list(p)
+        if is_task_list(d) and d.get("project_id") == pid and d.get("folder") != folder and not os.path.isdir(d.get("folder") or ""):
+            return p
+    return None
+
+
 def store_path(folder):
     slug = slug_of(folder)
     p = os.path.join(STORE, slug + ".json")
+    if not os.path.exists(p):
+        moved = moved_list(folder)
+        if moved:
+            return os.path.basename(moved)[:-5], moved
     # Two folders can share a readable slug ("a-b/c", "a/b-c"): the second gets a hash.
     if os.path.exists(p):
         try:
@@ -92,18 +143,45 @@ def parse_ref(ref):
     raise Fail(f"{ref!r} isn't a task id; use one like HAT-4 or 4.")
 
 
+def open_lock(path):
+    """(a list's lock file, writable): opened to write, else, where nothing can be written (a
+    read-only sandbox: a Codex reviewer's, #841), to read (a shared lock still works on it), else
+    None when it doesn't exist yet."""
+    try:
+        return open(path, "a"), True
+    except OSError as e:
+        if e.errno not in (errno.EROFS, errno.EACCES, errno.EPERM):
+            raise
+    try:
+        return open(path), False
+    except OSError:
+        return None, False
+
+
 class Store:
-    """One folder's tasks, locked while open. `with Store(loc) as s: s.data[...]; s.dirty = True`."""
+    """One folder's tasks, locked while open. `with Store(loc) as s: s.data[...]; s.dirty = True`.
+    write: True (refused where nothing can be written), False (read only), or "try" (a read that
+    saves what it learns when it can: show, list)."""
 
     def __init__(self, loc, write=True):
-        self.loc, self.write = loc, write
+        self.loc, self.write, self.best_effort = loc, bool(write), write == "try"
         self.slug, self.path = store_path(loc["folder"])
-        self.dirty = False
+        self.dirty = self.read_only = False
 
     def __enter__(self):
-        os.makedirs(STORE, exist_ok=True)
-        self.lock = open(os.path.join(STORE, "." + os.path.basename(self.path) + ".lock"), "a")
-        fcntl.flock(self.lock, fcntl.LOCK_EX if self.write else fcntl.LOCK_SH)
+        try:
+            os.makedirs(STORE, exist_ok=True)
+        except OSError:
+            pass
+        self.lock, can = open_lock(os.path.join(STORE, "." + os.path.basename(self.path) + ".lock"))
+        if not can:
+            if self.write and not self.best_effort:
+                if self.lock:
+                    self.lock.close()
+                raise Fail(f"Can't change the task list here: {STORE} is read-only (a sandbox?). Run this outside it.")
+            self.write, self.read_only = False, True
+        if self.lock:
+            fcntl.flock(self.lock, fcntl.LOCK_EX if self.write else fcntl.LOCK_SH)
         try:
             with open(self.path) as f:
                 self.data = json.load(f)
@@ -113,6 +191,8 @@ class Store:
             raise Fail(f"{self.path} isn't valid JSON. Fix it first.")
         d = self.data
         d.setdefault("version", 1)
+        if self.write and d.get("folder") not in (None, self.loc["folder"]) and os.path.exists(self.path):
+            self.dirty = True   # its repo moved (moved_list): kept under its new folder from now on
         d["folder"], d["kind"], d["name"] = self.loc["folder"], self.loc["kind"], self.loc["name"]
         if d.get("slug") != self.slug and os.path.exists(self.path):
             d["slug"] = self.slug
@@ -121,6 +201,11 @@ class Store:
         d.setdefault("next", 1)
         d.setdefault("tasks", [])
         self.new_prefix = False
+        if self.write and self.loc["kind"] == "repo" and not d.get("project_id"):
+            pid = project_id(self.loc["folder"], make=True)
+            if pid:
+                d["project_id"] = pid
+                self.dirty = self.dirty or os.path.exists(self.path)
         if self.write:
             self.migrate()
             if not d.get("prefix"):
@@ -133,17 +218,60 @@ class Store:
                 self.dirty = self.new_prefix = bool(d["tasks"]) or os.path.exists(self.path)
         return self
 
+    def save(self):
+        if self.write and self.dirty:
+            tmp = f"{self.path}.{os.getpid()}.tmp"
+            with open(tmp, "w") as f:
+                json.dump(self.data, f, indent=2)
+                f.write("\n")
+            os.replace(tmp, self.path)
+            self.dirty = False
+
+    @contextmanager
+    def released(self):
+        """The lock let go while slow work outside the list runs (#1007: a git push through the repo's
+        pre-push hook can take many minutes, and every other command here waited on it): what changed
+        is saved first, and the list read again after, since others may have changed it meanwhile.
+        Each task's dict stays the same object, updated in place, so a caller's `t` sees the new state.
+        Never inside a loop over the tasks (the list itself is a new one after)."""
+        if not (self.lock and self.write):
+            yield
+            return
+        self.save()
+        fcntl.flock(self.lock, fcntl.LOCK_UN)
+        try:
+            yield
+        finally:
+            fcntl.flock(self.lock, fcntl.LOCK_EX)
+            try:
+                with open(self.path) as f:
+                    fresh = json.load(f)
+            except (OSError, ValueError):
+                fresh = None
+            if isinstance(fresh, dict) and isinstance(fresh.get("tasks"), list):
+                mine = {t.get("id"): t for t in self.data.get("tasks") or []}
+                tasks = []
+                for t in fresh["tasks"]:
+                    old = mine.get(t.get("id")) if isinstance(t, dict) else None
+                    if old is not None:
+                        old.clear()
+                        old.update(t)
+                        t = old
+                    tasks.append(t)
+                fresh["tasks"] = tasks
+                self.data.clear()
+                self.data.update(fresh)
+            # Saved again on the way out: the caller goes on changing its task without saying so.
+            self.dirty = True
+
     def __exit__(self, kind, *_):
         try:
-            if kind is None and self.write and self.dirty:
-                tmp = f"{self.path}.{os.getpid()}.tmp"
-                with open(tmp, "w") as f:
-                    json.dump(self.data, f, indent=2)
-                    f.write("\n")
-                os.replace(tmp, self.path)
+            if kind is None:
+                self.save()
         finally:
-            fcntl.flock(self.lock, fcntl.LOCK_UN)
-            self.lock.close()
+            if self.lock:
+                fcntl.flock(self.lock, fcntl.LOCK_UN)
+                self.lock.close()
         if kind is None and self.new_prefix:
             # A list that just got its prefix: its running tasks' tabs say it too.
             retag_tabs(self)

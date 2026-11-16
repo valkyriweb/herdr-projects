@@ -25,9 +25,12 @@ import { unreadSpaces, readShown } from "./unread.js";
 import { muted } from "./notify.js";
 import { MachinePopup, openMachine, openMachineSettings } from "./machine-popup.js";
 import { startPolling, allStats, healthMeters, bars } from "./machines.js";
-import { countBadge, red, H, TEXT, RADIUS } from "./ui.js";
-import { spaceName, gitTail, tilde, sharedNames } from "./core/spaces.js";
+import { countBadge, red, green, H, TEXT, RADIUS, toast } from "./ui.js";
+import { on as addonOn } from "./addons.js";
+import { spaceName, gitTail, tilde, sharedNames, inOrder, withOrder, machinesInOrder, machineOrderOf, withMachineOrder } from "./core/spaces.js";
 import { coordinatorTab } from "./coordinator.js";
+import { WORKTREE_RE, SH } from "./core/paths.js";
+import { dirsReady } from "./dirs.js";
 
 const POPUPS = { add: Menu, space: Menu, section: Menu, icon: IconPicker, rename: Rename, machine: MachinePopup };
 
@@ -48,7 +51,7 @@ const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
 // Checkouts made for work (~/.herdr/worktrees/<repo>/<branch>, on any machine): a coordinator's
 // task workers run in them, and a worktree space is made in one.
-const WORKTREES = /\/\.herdr\/worktrees\//;
+const WORKTREES = WORKTREE_RE;   // ~/.herdr/worktrees (Herdr's dialog, older tasks) or Shepherdr's data/worktrees
 const inside = (path, folder) => path === folder || path.startsWith(`${folder.replace(/\/+$/, "")}/`);
 
 // Where a space is now: its first terminal's live folder, else where it was made. A task
@@ -94,6 +97,19 @@ function nameText(text, fresh, color, t) {
       .when(fresh, (el) => el.font_semibold()).child(text));
 }
 
+// A machine's Autopilot file (herdr-task's .autopilot.json there), read over herdr-core.
+const READ_PILOTS = SH + 'cat "$SHEP_TASKS/.autopilot.json" 2>/dev/null || true';
+
+// The spaces on Autopilot in a machine's file -> [[key, "on" | "waking"]] ("waking" while a wake runs or waits for its
+// Assistant): this computer's by space id, a linked machine's as "<machine>/<its id there>".
+export function pilotEntries(d, machine = null) {
+  return Object.entries(d?.spaces ?? {}).filter(([, a]) => a?.on)
+    .map(([id, a]) => [machine ? `${machine}/${String(id).split("/").pop()}` : id, a.inflight || a.pending ? "waking" : "on"]);
+}
+
+// A sidebar space's key in pilotEntries' map.
+export const pilotKey = (w) => (w.machine ? `${w.machine}/${String(w.id).split("/").pop()}` : w.id);
+
 export default class Spaces extends View {
   init(_props, cx) {
     const Popup = POPUPS[props()?.view];
@@ -115,6 +131,8 @@ export default class Spaces extends View {
     this.shown = new Set(spaces().map((s) => s.id));
     this.born = {};
     this.pressed = null; // the space being dragged (its id)
+    this.movingMachine = undefined; // the machine whose header is being dragged (null: this computer; undefined: none)
+    this.machineOver = undefined; // the machine header it is over
     this.over = null; // where it would land: "space:<id>", "section:<id>" (its end) or "top:<machine>"
     this.peek = null; // a folded section opened while a space is dragged over it
     this.unread = new Set(); // spaces whose Assistant has something new (unread.js)
@@ -124,11 +142,20 @@ export default class Spaces extends View {
     this.machinesRead = false; // hc machine ls answered once: a machine missing from it is offline
     this.refreshMachines(cx);
     cx.timer.every(15000, cx => this.refreshMachines(cx));
-    // Each of this computer's spaces on Autopilot (herdr-task's ~/.herdr/tasks/.autopilot.json): "on", or "waking"
+    // Each space on Autopilot, this computer's and linked machines' (herdr-task's ~/.local/share/shepherdr/tasks/.autopilot.json): "on", or "waking"
     // while a wake runs or waits for its Assistant; its row shows a mark (row()). Read every 5 s.
     this.pilots = new Map();
     this.readPilots(cx);
     cx.timer.every(5000, (cx) => this.readPilots(cx));
+    // SHEP-135: the brand row's voice button (mods/workspace-chrome-shepherdr) asks for a call through shared
+    // "voice.startreq" = { at }: started here, where the spaces and chats are read. One from before this ran is old.
+    this.voiceReqAt = shared("voice.startreq")?.at ?? null;
+    cx.timer.every(250, () => {
+      const req = shared("voice.startreq");
+      if (!req || req.at === this.voiceReqAt) return;
+      this.voiceReqAt = req.at;
+      if (Date.now() - req.at < 5000 && addonOn("voice") && !this.liveCall()) this.startCall();
+    });
     // Each machine's health and plan limits (machines.js): read every 45 s / 10 min, not per render.
     startPolling(cx);
     // spaces-chat.machine (a key, or `herdr-app do`): the details of the shown space's machine.
@@ -149,11 +176,28 @@ export default class Spaces extends View {
     cx.timer.every(250, (cx) => this.checkNew(cx));
   }
 
+  // This computer's file every read; each linked machine's that has spaces here every third (about every 15 s, as the
+  // machines refresh), read there over herdr-core as the Assistant's header does (GitHub #1010). A machine that
+  // doesn't answer keeps what it last said.
   readPilots(cx) {
+    this.pilotTick = (this.pilotTick ?? 0) + 1;
+    const far = this.pilotTick % 3 === 1;
     cx.spawn(async (cx) => {
       let d = null;
-      try { d = JSON.parse((await readTextFile(`${home()}/.herdr/tasks/.autopilot.json`)) ?? "{}"); } catch { return; }
-      const next = new Map(Object.entries(d?.spaces ?? {}).filter(([, a]) => a?.on).map(([id, a]) => [id, a.inflight || a.pending ? "waking" : "on"]));
+      try { d = JSON.parse((await readTextFile(`${(await dirsReady()).tasks}/.autopilot.json`)) ?? "{}"); } catch {}
+      const next = new Map(d ? pilotEntries(d) : [...this.pilots].filter(([k]) => !k.includes("/")));
+      if (far) {
+        const there = new Set(allSpaces().map((sp) => sp.machine).filter(Boolean));
+        const ready = machines().filter((m) => m.name && there.has(m.name) && m.layout === "ready").map((m) => m.name);
+        const read = await Promise.all(ready.map(async (m) => {
+          try { return [m, JSON.parse((await exec("sh", ["-c", READ_PILOTS], { on: m })).stdout || "{}")]; } catch { return [m, null]; }
+        }));
+        const was = this.farPilots ?? new Map();
+        const answered = new Set(read.filter(([, f]) => f).map(([m]) => m));
+        this.farPilots = new Map([...[...was].filter(([k]) => !answered.has(k.slice(0, k.indexOf("/")))),
+          ...read.flatMap(([m, f]) => (f ? pilotEntries(f, m) : []))]);
+      }
+      for (const [k, v] of this.farPilots ?? []) next.set(k, v);
       if (JSON.stringify([...next]) === JSON.stringify([...this.pilots])) return;
       this.pilots = next;
       cx.notify();
@@ -161,14 +205,51 @@ export default class Spaces extends View {
   }
 
   // A space's Autopilot mark after its name (SHEP-5): a small rocket, as its chat's wake lines have, dim while on, in
-  // the working colour and breathing while a wake runs or waits. This computer's spaces only (another machine's file
-  // is read where its header shows).
+  // the working colour and breathing while a wake runs or waits. A linked machine's spaces too (#1010), by pilotKey().
   pilotMark(w, t) {
-    const p = w.machine ? null : this.pilots?.get(w.id);
+    const p = this.pilots?.get(pilotKey(w));
     if (!p) return null;
     return div().id(`pilot-${w.id}`).flex_none().text_color(p === "waking" ? t.working : t.dim)
       .when(p === "waking", (el) => el.loop("opacity", { from: 0.35, to: 1, period: 1200 }))
       .child(svg("mods/spaces-chat/rocket.svg").size(12).flex_none());
+  }
+
+  // SHEP-105, SHEP-135: a voice call with Shepherdr itself, not one chat, started from the voice button in the brand row
+  // beside Search (mods/workspace-chrome-shepherdr, through shared "voice.startreq"). The window runs it in the shown
+  // space's Assistant chat (mods/chat voice.ts: shared "chat.callreq" { pane, at, action: "start" | "mute" | "end" }),
+  // but the call hears and reaches every space. On a call the brand row's button is its Mute and End, nothing shows
+  // here; on the narrow rail (no brand row buttons), a green wave that ends it, and off a call a quiet wave that starts one.
+  liveCall() {
+    for (const [pane, c] of Object.entries(shared("chat.calls") ?? {})) if (Date.now() - (c.beat ?? 0) < 45000) return { pane, ...c };
+    return null;
+  }
+
+  // the chat a new call runs in: the shown space's Assistant's, its tab shown so the chat can take the request
+  startCall() {
+    const ps = panes();
+    const sp = spaces().find((s) => s.active);
+    const tab = sp ? coordinatorTab(sp, undefined, ps) : null;
+    const chatIn = (id) => ps.find((p) => p.mod === "chat" && p.tab === id)?.pane ?? null;
+    const at = tab && chatIn(tab.id) ? tab.id : (sp?.tabs ?? []).map((t) => t.id).find((id) => chatIn(id)) ?? null;
+    if (!at) return toast({ title: "Voice call", body: "This space has no chat to run the call from: open its Assistant first.", level: "info" });
+    if (!sp.tabs.some((t) => t.id === at && t.active)) run("tab.select", { id: at });
+    setShared("chat.callreq", { pane: chatIn(at), at: Date.now(), action: "start" });
+  }
+
+  voiceRow(t, collapsed) {
+    if (!addonOn("voice")) return null;
+    const call = this.liveCall();
+    const req = (action) => setShared("chat.callreq", { pane: call.pane, at: Date.now(), action });
+    const round = (id, size, bg, fg, icon, f) => div().id(id).size(size).flex_none().flex().items_center().justify_center().rounded(size / 2).cursor_pointer()
+      .bg(bg).text_color(fg).hover((s) => s.opacity(0.85))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { cx.stop_propagation(); f(); })
+      .child(svg(icon).size(13));
+    if (collapsed) return h_flex().h(36).flex_none().justify_center().items_center()
+      .child(call ? round("voice-end", 26, `${green()}26`, green(), "mods/chat/audio-lines.svg", () => req("end"))
+        : round("voice-start", 26, "#00000000", t.muted, "mods/chat/audio-lines.svg", () => this.startCall()).hover((s) => s.bg(t.hover).text_color(t.foreground)));
+    // SHEP-135: no card on a call: the brand row's Mute and End are the call's (mods/workspace-chrome-shepherdr)
+    return null;
   }
 
   checkNew(cx) {
@@ -304,14 +385,21 @@ export default class Spaces extends View {
     return spaceName(w, { at, repo: g?.name ?? null, home: home(), named: Boolean(w.named) });
   }
 
-  // The spaces shown, in Herdr's order, each with its git, where it is and its name: { w, i, g, at, name }.
+  // Every space, each machine's in the order the person dragged them into (shared "spaces-chat".order, the web's
+  // too: core/spaces.js inOrder), Herdr's for the rest.
+  sorted() {
+    return inOrder(spaces(), data().order);
+  }
+
+  // The spaces shown, in the sidebar's order, each with its git, where it is and its name: { w, i (Herdr's index), g,
+  // at, name }.
   visible() {
-    const sp = spaces(), ps = panes();
+    const sp = this.sorted(), ps = panes(), herdr = spaces();
     const ready = (w) => this.shown.has(w.id) || where(w, ps) in this.git || Date.now() - (this.born[w.id] ??= Date.now()) > 1500;
     for (const w of sp) if (!this.shown.has(w.id) && ready(w)) this.shown.add(w.id);
     return sp.filter((w) => this.shown.has(w.id)).map((w) => {
       const g = this.git[where(w, ps)] ?? null, at = place(w, ps);
-      return { w, i: sp.indexOf(w), g, at, name: this.nameOf(w, g, at) };
+      return { w, i: herdr.indexOf(w), g, at, name: this.nameOf(w, g, at) };
     });
   }
 
@@ -348,7 +436,8 @@ export default class Spaces extends View {
     const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
     // A machine's spaces: those in no section first, then its sections (the rail has none).
     const body = (m, mine) => (collapsed ? mine.map(draw) : this.sectioned(m, all.filter((r) => (r.w.machine ?? null) === m), t));
-    const remote = [...new Set([...rows.map(r => r.w.machine).filter(Boolean), ...this.machines.map(m => m.name)])].sort();
+    // the other machines as hc lists them (as the web app's), then any only a space names
+    const remote = [...new Set([...this.machines.map(m => m.name), ...rows.map(r => r.w.machine).filter(Boolean)])];
     const loading = m => {
       const layout = machines().find(k => k.name === m)?.layout;
       return layout === "loading" || (!layout && this.machines.some(k => k.name === m && k.state === "connected"))
@@ -357,7 +446,9 @@ export default class Spaces extends View {
     const loadingRow = m => div().id(`machine-loading-${m ?? "local"}`).h(28).flex_none().px(8).flex().items_center().text_size(TEXT.label).text_color(t.dim).child(collapsed ? "…" : "Loading…");
     const pinned = this.pinned(visible, pins, Boolean(remote.length), t);
     if (!remote.length) return [...pinned, ...(loading(null) && !rows.length && !pinned.length ? [loadingRow(null)] : body(null, rows))];
-    const machineNames = [null, ...remote];
+    // in the order the person dragged them into, the same on every device and in the web app (SHEP-153)
+    const machineNames = machinesInOrder([null, ...remote], machineOrderOf(data())).map((k) => k || null);
+    this.machineOrder = machineNames;
     return [...pinned, ...machineNames.flatMap((m) => {
       const mine = rows.filter((r) => (r.w.machine ?? null) === m);
       const machine = this.machines.find(k => k.name === m);
@@ -384,9 +475,14 @@ export default class Spaces extends View {
           }
           cx.notify();
         })
-        .on_mouse_move((_e, cx) => this.drag(`top:${m}`, m, cx))
-        .on_mouse_down("right", (e) => openMenu("machine", { machine: m, row: rectOf(e) }))
+        .on_mouse_move((_e, cx) => { this.drag(`top:${m}`, m, cx); this.dragMachine(m, cx); })
+        // its header drags it among the machines, its spaces along; a press without a move folds it (on_click)
+        .on_mouse_down("left", () => { this.movingMachine = m; this.machineOver = m; })
+        .on_mouse_down("right", (e) => openMenu("machine", { machine: m, row: rectOf(e), order: machineNames }))
         .when(out, el => el.child(this.line(t, "bottom")))
+        .when(this.movingMachine === m && this.machineOver !== m, el => el.opacity(0.5))
+        .when(this.movingMachine !== undefined && this.movingMachine !== m && this.machineOver === m,
+          el => el.child(this.line(t, machineNames.indexOf(this.movingMachine) < machineNames.indexOf(m) ? "bottom" : "top")))
         // Its emoji, or the server / monitor; and the name it was given (Rename), else its own.
         .child(machineLook(m).icon
           ? div().w(14).flex_none().flex().justify_center().text_size(12).when(offline, el => el.opacity(0.5)).child(machineLook(m).icon)
@@ -530,8 +626,23 @@ export default class Spaces extends View {
     }
   }
 
-  // Released: a press without a move selects the space; else it goes where the line shows.
+  // A machine's header dragged over another's: that one's line shows where it lands.
+  dragMachine(m, cx) {
+    if (this.movingMachine === undefined || this.machineOver === m) return;
+    this.machineOver = m;
+    cx.notify();
+  }
+
+  // Released: a press without a move selects the space; else it goes where the line shows. A machine takes the place of
+  // the one it was dropped on (shared "spaces-chat".machineOrder, core/spaces.js withMachineOrder).
   release(cx) {
+    const mm = this.movingMachine, mo = this.machineOver;
+    this.movingMachine = this.machineOver = undefined;
+    if (mm !== undefined && mo !== undefined && mm !== mo && this.machineOrder) {
+      const order = this.machineOrder.filter((k) => k !== mm);
+      order.splice(this.machineOrder.indexOf(mo), 0, mm);
+      setShared("spaces-chat", withMachineOrder(data(), order));
+    }
     const from = this.pressed, over = this.over;
     this.pressed = null;
     this.over = null;
@@ -554,8 +665,8 @@ export default class Spaces extends View {
       const a = sec.spaces.indexOf(from);
       return a >= 0 && a < sec.spaces.indexOf(to) ? "bottom" : "top";
     }
-    // At the top, Herdr's order decides (space.move).
-    const sp = spaces();
+    // At the top, the sidebar's order (sorted()).
+    const sp = this.sorted();
     return sp.findIndex((s) => s.id === from) < sp.findIndex((s) => s.id === to) ? "bottom" : "top";
   }
 
@@ -579,8 +690,18 @@ export default class Spaces extends View {
         const at = sec.spaces.filter((x) => x !== from).indexOf(id);
         placeSpace(from, sec.id, this.edge(from, id) === "bottom" ? at + 1 : at);
       } else {
+        const edge = this.edge(from, id);
         if (sectionOf(from)) placeSpace(from, null);
-        // space.move takes the target's place, counted from 1: the rest shift toward where it was.
+        // The new order, kept in the sidebar's data so the web and every device show it (SHEP-130): the machine's
+        // spaces as they show, this one beside the one it was dropped on.
+        const w = spaces().find((s) => s.id === from);
+        const shown = this.sorted().filter((s) => (s.machine ?? null) === (w?.machine ?? null)).map((s) => s.id);
+        const rest = shown.filter((x) => x !== from), at = rest.indexOf(id);
+        if (w && at >= 0) {
+          rest.splice(edge === "bottom" ? at + 1 : at, 0, from);
+          setShared("spaces-chat", withOrder(data(), w.machine ?? null, rest, shown));
+        }
+        // And Herdr's own order: space.move takes the target's place, counted from 1: the rest shift toward where it was.
         const i = spaces().findIndex((s) => s.id === id);
         if (i >= 0) run("space.move", { id: from, index: i + 1 });
       }
@@ -672,12 +793,14 @@ export default class Spaces extends View {
       );
   }
 
+  // The rail's row: its number and status (a voice call shows at the rail's top, voiceRow).
   compact({ w, i }, t) {
     return h_flex()
       .id(`space-${w.id}`)
       .h(26)
       .flex_none()
       .justify_center()
+      .items_center()
       .gap(4)
       .rounded(RADIUS.card)
       .cursor_pointer()
@@ -717,7 +840,10 @@ export default class Spaces extends View {
       changed = true;
     }
     if (changed) setShared("space.colors", kept);
+    // null on a wide sidebar (SHEP-135) or with voice off: child(null) throws (GitHub #869)
+    const voice = this.voiceRow(t, collapsed);
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
+      .when(Boolean(voice), (el) => el.child(voice))
       .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(TEXT.label).font_medium().text_color(t.dim)
         .when(!collapsed, el => el.child("Spaces"))
         // As a machine's +: New space, New section, on the shown space's machine.

@@ -45,6 +45,24 @@ test("a space's own values go in its layer with its folder, and Reset drops them
   expect(() => s.set("tasks.merge", "Right away", "sp3", null)).toThrow();
 });
 
+test("Branch names (#570): Everywhere's or a space's own pattern, checked before it's kept", () => {
+  const s = new Settings();
+  s.start();
+  const scope = { id: "sp6", name: "api", machine: null, folder: "/api" };
+  const row = (level: string) => s.sections(null, [scope]).find((x) => x.name === "Tasks" && x.level === level)!.rows.find((r) => r.key === "tasks.branch")!;
+  expect(row("all")).toMatchObject({ label: "Branch names", text: true, value: "", placeholder: "task/{n}-{slug}" });
+  s.set("tasks.branch", "feat/{key}-{slug}", "all");
+  s.set("tasks.branch", " {key} ", "sp6", scope);
+  const f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.everywhere.tasks.branch).toBe("feat/{key}-{slug}");
+  expect(f.spaces.sp6.tasks.branch).toBe("{key}");
+  expect(row("sp6")).toMatchObject({ value: "{key}", inherits: { value: "feat/{key}-{slug}", from: "Everywhere" } });
+  expect(() => s.set("tasks.branch", "feat/{slug}", "all")).toThrow("Put {n} or {key} in it");
+  expect(() => s.set("tasks.branch", "a b/{n}", "all")).toThrow("isn't a name git allows");
+  s.set("tasks.branch", "", "sp6", scope);
+  expect(JSON.parse(readFileSync(file, "utf8")).spaces.sp6.tasks).toBeUndefined();
+});
+
 test("Autopilot: Everywhere's unless a space sets its own, kept with the rest and sent to its machine", async () => {
   const { pushBody } = await import("./settings.ts");
   const s = new Settings();
@@ -151,7 +169,7 @@ test("Agents and Tasks say the window's words: the model button, Other CLI, Must
   s.start();
   s.choices = C.choicesFrom({ claude: { model: "opus[1m]", effort: "high", per: {} }, codex: { models: [{ id: "gpt-5", label: "GPT-5", efforts: ["low", "high"] }] } });
   const agents = s.sections(null).find((x) => x.name === "Agents" && x.level === "all")!;
-  expect(agents.rows.map((r) => r.label)).toEqual(["Assistant", "Workers", "Reviewer", "Backup agent", "Reactions"]);
+  expect(agents.rows.map((r) => r.label)).toEqual(["Assistant", "Workers", "Reviewer", "Backup agent", "Reactions", "Suggested next message", "Feedback offers", "Feedback repo"]);
   expect(agents.rows[0].value).toBe("Opus 5.5 · 1M · High");
   expect(agents.rows[2]).toMatchObject({ value: "Other CLI (Codex)", agent: { unset: true, other: false } });
   const tasks = s.sections(null).find((x) => x.name === "Tasks" && x.level === "all")!;
@@ -169,7 +187,7 @@ test("Reactions: on by default for every agent, Everywhere's or a space's own", 
   s.start();
   const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop" };
   const row = (level: string) => s.sections(null, [sp]).find((x) => x.name === "Agents" && x.level === level)!.rows;
-  expect(row("all").at(-1)).toMatchObject({ key: "agents.reactions", label: "Reactions", value: "on", options: ["on", "off"], hint: CORE.REACTIONS.about });
+  expect(row("all").find((r) => r.key === "agents.reactions")).toMatchObject({ key: "agents.reactions", label: "Reactions", value: "on", options: ["on", "off"], hint: CORE.REACTIONS.about });
   expect(CORE.REACTIONS.about).not.toMatch(/Assistant/);
   s.set("agents.reactions", "off", "all");
   let f = JSON.parse(readFileSync(file, "utf8"));
@@ -204,4 +222,25 @@ test("Reactions set as the Assistant's before still apply, and move to agents on
   expect(f.everywhere).toEqual({});
   expect(f.spaces.sp7).toEqual({ folder: "/shop", agents: { reactions: true } });
   expect(CORE.upgradeReactions({ everywhere: { assistant: { reactions: false }, agents: { reactions: true } } })).toEqual({ everywhere: { agents: { reactions: true } } });
+});
+
+// SHEP-78: Feedback offers, on by default, per space as Reactions; the repo Everywhere's only, checked
+test("Feedback offers and its repo", () => {
+  writeFileSync(file, "{}");
+  const s = new Settings();
+  s.start();
+  const sp = { id: "sp7", name: "shop", machine: null, folder: "/shop" };
+  const row = (level: string) => s.sections(null, [sp]).find((x) => x.name === "Agents" && x.level === level)!.rows;
+  expect(row("all").find((r) => r.key === "agents.feedback")).toMatchObject({ label: "Feedback offers", value: "on", options: ["on", "off"] });
+  expect(row("all").find((r) => r.key === "agents.feedback_repo")).toMatchObject({ label: "Feedback repo", value: "", text: true, placeholder: "eliasstravik/shepherdr" });
+  expect(row("sp7").find((r) => r.key === "agents.feedback_repo")).toBeUndefined();
+  s.set("agents.feedback", "off", "sp7", sp);
+  s.set("agents.feedback_repo", "https://github.com/acme/shep", "all");
+  const f = JSON.parse(readFileSync(file, "utf8"));
+  expect(f.spaces.sp7.agents).toEqual({ feedback: false });
+  expect(f.everywhere.agents).toEqual({ feedback_repo: "acme/shep" });
+  expect(() => s.set("agents.feedback_repo", "nope nope", "all")).toThrow();
+  expect(() => s.set("agents.feedback_repo", "acme/x", "sp7", sp)).toThrow();
+  s.set("agents.feedback_repo", "", "all");
+  expect(JSON.parse(readFileSync(file, "utf8")).everywhere?.agents).toBeUndefined();
 });
