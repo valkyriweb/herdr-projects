@@ -3381,6 +3381,14 @@ class Kinds(unittest.TestCase):
             "print('ok')")
         self.assertEqual(out, "ok")
 
+    def test_pi_session_paths_preserve_hyphens(self):
+        out = self.run_py(
+            "from herdr_task import kinds as K; import json, os;"
+            "paths = ['/repo-', '/-repo', '/a//b/../repo-', '/'];"
+            "print(json.dumps([[os.path.basename(K.session_dir(k, p)) for p in paths] "
+            "for k in ('pi', 'pii')]))")
+        self.assertEqual(json.loads(out), [["--repo---", "---repo--", "--a-repo---", "----"]] * 2)
+
     def test_resume_and_sessions(self):
         out = self.run_py(
             "from herdr_task.launch import resume_argv; from herdr_task import kinds as K; import json;"

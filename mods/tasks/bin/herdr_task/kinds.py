@@ -92,9 +92,11 @@ def session_dir(key, cwd=None):
     if s.get("byCwd"):
         if not cwd:
             return None
-        # Pi's folder name: the path with / : \ turned into -, then "--" put around it
-        # ("/a/b" -> "--a-b--", as pi-coding-agent's getDefaultSessionDirPath).
-        d = os.path.join(d, "--" + re.sub(r"[/:\\]", "-", cwd).strip("-") + "--")
+        # Match Pi's getDefaultSessionDirPath: remove only the root separator,
+        # not hyphens that belong to the resolved working directory.
+        resolved = os.path.abspath(os.path.expanduser(cwd))
+        safe = re.sub(r"[/:\\]", "-", re.sub(r"^[/\\]", "", resolved))
+        d = os.path.join(d, "--" + safe + "--")
     return d
 
 
