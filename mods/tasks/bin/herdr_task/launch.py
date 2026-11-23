@@ -22,6 +22,7 @@ from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
 from .github import finish, remote_of
 from .browsers import browser_line, browser_path
+from . import lane as lanes
 
 
 # ---- an agent's own herdr-task commands never ask -------------------------------------------
@@ -539,7 +540,7 @@ def closing_line(s, task, parent=None, argv=None):
     """How the worker finishes: every task, worktree or in the folder, says ready with a summary.
     It names this herdr-task by its full path: only that form runs without asking (own_argv)."""
     done = "finished and committed" if task.get("mode") == "worktree" else "finished"
-    ht = own_path()
+    ht = lanes.own_path(task["lane"]) if task.get("lane") else own_path()
     text = (f"When the work is {done}, run `{ht} ready {s.ref(task)} --folder {shlex.quote(s.loc['folder'])} "
             f"--summary \"<what the person now sees or can do, plain words, at most {SUMMARY_MAX} characters>\"` (optionally "
             f"`--details \"<a few short bullets in plain words, one per line: what changed for the person first, then how it was checked>\"`; with `--agents-md \"<one line>\"` when you learned something "
@@ -562,7 +563,11 @@ def closing_line(s, task, parent=None, argv=None):
                  f"it; carry on.")
     text += (f" Your herdr-task command is {ht}: write that full path each time (never the bare name), as one plain command; "
              f"then its {', '.join(OWN)} commands run without asking.")
-    text += browser_line()
+    text += browser_line(task["lane"]["home"] if task.get("lane") else None)
+    if task.get("lane"):
+        text += (" Lane proof: herdr-artifact guide, publish, update, show, list and link run on the main machine. "
+                 "Publish a local recipe folder; its files are copied back automatically. Preview proof on the main machine. "
+                 "Review is off for this lane because reviewer sign-ins stay on the main machine; ask the Assistant for a local review.")
     if secret_path():
         text += (" Secrets (keys, tokens, passwords) are used by name, never seen: `herdr-secret ask NAME --why \"…\"` "
                  "(then end your turn), `herdr-secret run NAME -- <command>`, `herdr-secret list`; these run without asking too.")
@@ -579,6 +584,9 @@ def where_line(task):
     if not task.get("worktree"):
         return ""
     base = f", from {task['base']}, which it merges into" if task.get("base") else ""
+    lane = task.get("lane")
+    if lane:
+        return f"You work on {lane['machine']}, in {lane['worktree']} on branch {task['branch']}{base}."
     return f"You work in {task['worktree']} on branch {task['branch']}{base}."
 
 
@@ -795,6 +803,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     herdr.space, which Herdr gives a pane), herdr.agent, herdr.coordinator (its coordinator's tab,
     which keeps it under a restarted coordinator) and herdr.role=reviewer for a reviewer, kept
     apart from the task's agents. Returns its record."""
+    if not role and task.get("lane") and agent_key(argv) not in lanes.LANE_KINDS:
+        lanes.reconcile(s, task, agent_key(argv), space)
     key = s.key(task)
     cmd = list(resume or argv)
     if not role:
@@ -809,10 +819,16 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     if role:
         labels += ["--label", f"herdr.role={role}"]
     rel = ["--parent", parent, "--outlive-parent"] if parent else ["--no-parent"]
-    name = agent_name(s, task, "review" if role else None)
+    lane = None if role else task.get("lane")
+    name = agent_name(s, task, "review" if role else None, lane and lane["machine"])
     # HERDR_BROWSER_TASK: which task's browser herdr-browser drives (HERD-57), for it and its children.
-    r = run(["hc", "run", "--bg", "--json", "--keep", "--cwd", folder_for(s, task), "--name", name,
-             *labels, *rel, "--", *low_priority(clean_env(["env", f"HERDR_BROWSER_TASK={key}", *in_shell(cmd)]), name)])
+    if lane:
+        # hc can't parent a terminal across machines: its labels keep it under the space's coordinator.
+        r = run(["hc", "run", "--on", lane["machine"], "--bg", "--json", "--keep", "--cwd", lane["worktree"], "--name", name,
+                 *labels, "--no-parent", "--", *lanes.remote_argv(lane, cmd, [f"HERDR_BROWSER_TASK={key}"])])
+    else:
+        r = run(["hc", "run", "--bg", "--json", "--keep", "--cwd", folder_for(s, task), "--name", name,
+                 *labels, *rel, "--", *low_priority(clean_env(["env", f"HERDR_BROWSER_TASK={key}", *in_shell(cmd)]), name)])
     try:
         out = json.loads(r.stdout)
     except ValueError:
@@ -822,6 +838,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     a = {"address": out["address"], "agent": agent_key(argv), "argv": argv, "at": now()}
     if parent:
         a["parent"] = parent
+    if lane:
+        a["machine"] = lane["machine"]
     s.dirty = True
     if role:
         task.setdefault("reviewers", []).append(a)
@@ -873,7 +891,7 @@ def parent_for(parent, space):
     return live_parent(parent) or coordinator_in(space)
 
 
-def agent_name(s, task, suffix=None):
+def agent_name(s, task, suffix=None, machine=None):
     """The agent's hc name: its id and title as hc allows names (hat-4-fix-login, at most 32),
     with -2, -3 while another live terminal has it (an agent taking over beside the old one)."""
     base = re.sub(r"[^a-z0-9]+", "-", f"{s.ref(task)} {task['title']}".lower()).strip("-")[:32 - (len(suffix) + 1 if suffix else 0)].rstrip("-")
@@ -881,7 +899,7 @@ def agent_name(s, task, suffix=None):
         base += f"-{suffix}"
     for n in range(1, 20):
         name = base if n == 1 else f"{base[:32 - len(str(n)) - 1].rstrip('-')}-{n}"
-        k = hc_json("get", name)
+        k = hc_json("get", f"{machine}/{name}" if machine else name)
         if not k or k.get("state") != "live":
             return name
     return f"{base[:24].rstrip('-')}-{secrets.token_hex(3)}"

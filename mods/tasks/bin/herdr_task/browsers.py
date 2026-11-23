@@ -35,11 +35,13 @@ def browser_path():
     return None if addon_off("browser") else shutil.which("herdr-browser")
 
 
-def browser_line():
+def browser_line(home=None):
     """The worker's brief: its browser's exact command, or "" where there's none."""
     bp = browser_path()
     if not bp:
         return ""
+    if home:
+        bp = os.path.join(home, ".local", "bin", "herdr-browser")
     return (f" Your task has its own browser (agent-browser, kept for this task with its sign-ins; the person can watch it "
             f"in Herdr): run `{bp} <agent-browser command>`, e.g. `{bp} open http://localhost:3000`, `{bp} snapshot -i`, "
             f"`{bp} screenshot`; never pass --session or --profile, and its commands run without asking.")

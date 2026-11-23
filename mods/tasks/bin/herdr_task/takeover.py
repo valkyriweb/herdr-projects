@@ -226,6 +226,8 @@ def takeover(s, t, k, row, log, report):
     s.dirty = True
     try:
         parent = parent_for((t["agents"][-1] if t.get("agents") else {}).get("parent"), space)
+        from .lane import reconcile
+        reconcile(s, t, kind, space)
         text = handover(s, t, running, kind, row["reason"], log) + "\n\n" + brief(s, t, parent, space, argv)
         a = launch(s, t, argv, space, text, parent=parent)
     except Exception as e:  # never a second try: the person decides

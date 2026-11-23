@@ -12,7 +12,8 @@ import time
 from . import link
 from .base import bundle, Fail, guard, run, STORE, sync_held, VERSION
 from .agents import LINE_MAX, SUMMARY_MAX
-from .launch import cmd_allow, name_tabs
+from .launch import cmd_allow, name_tabs, OWN
+from .lane import artifact_forward, forward
 from .commands import (
     cmd_accept, cmd_add, cmd_alert, cmd_config, cmd_edit, cmd_fix, cmd_list, cmd_merge, cmd_ready,
     cmd_resume, cmd_review, cmd_review_more, cmd_reviewed, cmd_rm, cmd_show, cmd_start, cmd_state, cmd_status,
@@ -161,13 +162,18 @@ def main():
     if argv[:1] == ["--version"]:
         print(VERSION)
         return 0
+    if os.environ.get("HERDR_TASK_LANE") and argv[:1] == ["lane-artifact"]:
+        return artifact_forward(argv[1:])
+    if os.environ.get("HERDR_TASK_LANE") and argv[:1] and argv[0] in [*OWN, "tell-assistant"]:
+        # A lane on another machine: its task lives on the main machine (lane.py).
+        return forward(argv)
 
     p = argparse.ArgumentParser(prog="herdr-task", description="Herdr's tasks: add, start and finish work for a folder.",
                                 epilog="Run on another machine's folder: herdr-task --on <machine> <command> ...")
     sub = p.add_subparsers(dest="cmd")
 
     def cmd(name, fn, help, id=True):
-        c = sub.add_parser(name, help=help)
+        c = sub.add_parser(name, help=help, allow_abbrev=not os.environ.get("HERDR_TASK_CALLER"))
         if id:
             c.add_argument("id", help="task id (4, #4 or its key)")
         c.add_argument("--folder", help="the task folder (default: here)")
