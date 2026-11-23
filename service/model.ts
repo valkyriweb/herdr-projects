@@ -215,12 +215,12 @@ export class Model {
     } catch {}
   }
 
-  /** A task's agents now: live terminals labelled with its key, on the folder's machine, not shells. */
+  /** A task's agents now: live terminals labelled with its key, on its lane or folder's machine, not shells. */
   private agentsOf(list: List, task: any) {
     const key = `${list.slug}#${task.id}`;
     const out: { address: string; status: string | null; role: string; turn: number; since: number }[] = [];
     for (const k of this.hub.terminals.values()) {
-      if (k.state !== "live" || k.labels?.["herdr.task"] !== key || machineOf(k.address) !== (list.machine ?? null)) continue;
+      if (k.state !== "live" || k.labels?.["herdr.task"] !== key || machineOf(k.address) !== (task.lane?.machine ?? list.machine ?? null)) continue;
       const st = typeof k.status === "object" ? k.status?.state ?? null : null;
       // a plain shell in front: its agent is gone, whatever status hc kept (#1022: one that died mid-turn keeps
       // "working" for good); a shell that runs a command (fish -ic "claude ...", #780) still holds its agent
@@ -238,9 +238,9 @@ export class Model {
   /** Its worker's own helper agents now (SHEP-54): core place() counts one at work as the task at work. */
   private helpersOf(list: List, task: any, live: { address: string }[]) {
     const key = `${list.slug}#${task.id}`, mine = new Set(live.map((a) => a.address.split("/").pop()));
-    // on the folder's machine, a child of one of its agents
+    // on the worker's machine, a child of one of its agents
     return [...this.hub.terminals.values()].filter((k: any) => k.state === "live" && k.labels?.["herdr.task"] === key && isHelper(k)
-      && machineOf(k.address) === (list.machine ?? null) && mine.has(String(k.parent).split("/").pop()))
+      && machineOf(k.address) === (task.lane?.machine ?? list.machine ?? null) && mine.has(String(k.parent).split("/").pop()))
       .map((k: any) => ({ address: k.address, status: typeof k.status === "object" ? k.status?.state ?? null : null }));
   }
 
