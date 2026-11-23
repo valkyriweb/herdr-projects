@@ -2163,8 +2163,21 @@ class DoneWorktreesGo(unittest.TestCase):
                              "branch": "task/1", "base": "main", "merged": True, "agents": []}])
         self.store.loc["folder"] = self.main
         self.task = self.store.data["tasks"][0]
+        self.cleanup_calls = []
+        real_run = github.run
+
+        def run(args, **kwargs):
+            if args[0] != os.path.join(github.HOME, "Projects", "agent-scripts", "scripts", "agent-cleanup"):
+                return real_run(args, **kwargs)
+            self.cleanup_calls.append(args[1:])
+            self.assertEqual(args[1:], ["close", "--path", wt, "--apply"])
+            if self.git(wt, "status", "--porcelain", "--untracked-files=all"):
+                return subprocess.CompletedProcess(args, 0, "flag: dirty or untracked", "")
+            self.git(self.main, "worktree", "remove", wt)
+            return subprocess.CompletedProcess(args, 0, "remove: guards-passed", "")
+
         live = lambda key: list(self.live)
-        for mod, name, value in ((github, "live_agents", live), (github, "live_helpers", lambda key: []),
+        for mod, name, value in ((github, "run", run), (github, "live_agents", live), (github, "live_helpers", lambda key: []),
                                  (github, "detail", lambda k: k),
                                  (github, "hc_json", lambda *a: {"terminals": self.live + self.others}),
                                  (tick, "live_agents", live), (tick, "detail", lambda k: k),
@@ -2207,7 +2220,8 @@ class DoneWorktreesGo(unittest.TestCase):
         self.assertEqual(self.live, [])
         report = self.pass_()                                    # nothing left of it: its worktree goes
         self.assertFalse(os.path.isdir(self.task["worktree"]))
-        self.assertEqual(self.git(self.main, "branch", "--list", "task/1"), "")
+        self.assertEqual(self.git(self.main, "branch", "--list", "--format=%(refname:short)", "task/1"), "task/1")
+        self.assertEqual(len(self.cleanup_calls), 1)
         self.assertEqual(report["worktrees_removed"], [{"task": "SHEP-1", "path": self.task["worktree"]}])
         self.assertEqual(self.pass_(), {})                       # then never looked at again
 
@@ -2230,6 +2244,24 @@ class DoneWorktreesGo(unittest.TestCase):
         self.later(3600000)  # TIDY_AGAIN_MS
         self.pass_()                                             # clean since: it goes
         self.assertFalse(os.path.isdir(self.task["worktree"]))
+
+    def test_cleanup_refusal_is_reported_and_keeps_untracked_files(self):
+        self.task.update(state="done", done_at=1000, ended_at=2000)
+        path = os.path.join(self.task["worktree"], "draft.txt")
+        with open(path, "w") as draft:
+            draft.write("unfinished")
+        report = self.pass_()
+        with open(path) as draft:
+            self.assertEqual(draft.read(), "unfinished")
+        self.assertIn("untracked", report["worktrees_kept"][0]["why"])
+        self.assertEqual(len(self.cleanup_calls), 1)
+
+    def test_missing_cleanup_does_not_fall_back_to_git(self):
+        from unittest.mock import patch
+        with patch.object(self.github, "run", side_effect=FileNotFoundError("agent-cleanup")):
+            self.assertFalse(self.github.remove_worktree(self.store, self.task))
+        self.assertTrue(os.path.isdir(self.task["worktree"]))
+        self.assertIn("cannot run agent-cleanup", self.task["worktree_kept_why"])
 
     def test_new_commits_after_the_merge_keep_it(self):
         self.task.update(state="done", done_at=1000, ended_at=2000)
@@ -3024,13 +3056,19 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.assertEqual(self.tick_once(), ("ready", False))
         self.task["gh_checked"] = 0
         self.assertEqual(self.tick_once(), ("ready", False))
-        # Accept: done, never merged, its worktree and branch cleaned up
-        self.accept_now()
+        # Accept marks the task done even if its local-only repository has no origin to verify.
+        from unittest.mock import patch
+        from herdr_task import github
+        with patch.object(github, "run", return_value=subprocess.CompletedProcess([], 0, "flag: origin-unverified", "")) as cleanup:
+            self.accept_now()
+        cleanup.assert_called_once_with([os.path.join(github.HOME, "Projects", "agent-scripts", "scripts", "agent-cleanup"),
+                                         "close", "--path", self.task["worktree"], "--apply"])
         self.assertEqual(self.task["state"], "done")
         self.assertFalse(self.task.get("merged"))
         self.assertTrue(self.task["nothing_to_merge"])
-        self.assertFalse(os.path.isdir(self.task["worktree"]))
-        self.assertEqual(self.git(self.main, "branch", "--list", "task/1"), "")
+        self.assertTrue(os.path.isdir(self.task["worktree"]))
+        self.assertIn("origin-unverified", self.task["worktree_kept_why"])
+        self.assertEqual(self.git(self.main, "branch", "--list", "--format=%(refname:short)", "task/1"), "task/1")
 
     def test_ready_with_no_commits_keeps_a_live_agents_worktree(self):
         self.github([])

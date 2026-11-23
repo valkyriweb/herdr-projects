@@ -6,7 +6,7 @@ import os
 import re
 import shutil
 
-from .base import Fail, GH, git, hc_json, now, run, STORE
+from .base import Fail, GH, HOME, git, hc_json, now, run, STORE
 from .agents import agent_running, detail, live_agents, live_helpers, mid_turn_agents
 
 
@@ -697,9 +697,8 @@ def mid_turn(s, task):
 
 
 def finish(s, task, even_if_busy=False):
-    """Done, its branch merged: removes the worktree and branch when nothing is left uncommitted
-    there and no agent still works in it: none mid-turn (mid_turn()), and (unless the person merged
-    from Herdr) none running at all. Else tidy_done() removes them once its agents ended."""
+    """Done, its branch merged: try guarded cleanup when no agent still works in the worktree.
+    Else tidy_done() tries again once the agents have ended. The branch stays."""
     task["state"], task["done_at"] = "done", now()
     for k in ("attention", "merge_requested", "queue", "queued_at", "merge_queued", "kept_open"):
         task.pop(k, None)
@@ -710,26 +709,34 @@ def finish(s, task, even_if_busy=False):
 
 
 def remove_worktree(s, task):
-    """A finished task's worktree removed when nothing is uncommitted there, then its branch. True
-    once the worktree is gone."""
-    wt, br, main = task.get("worktree"), task.get("branch"), s.loc["folder"]
+    """Let agent-cleanup guard removal of the worktree on this machine. Never delete its branch."""
+    wt, main = task.get("worktree"), s.loc["folder"]
     from .lane import cleanup
     if not cleanup(task):
         return False
-    if os.path.isdir(wt):
+    if wt and os.path.lexists(wt):
         if os.path.realpath(wt) == os.path.realpath(main):
             return False
-        ok, out, _ = git(wt, "status", "--porcelain", "--untracked-files=no")
-        if not ok or out or not git(main, "worktree", "remove", "--force", wt)[0]:
+        tool = os.path.join(HOME, "Projects", "agent-scripts", "scripts", "agent-cleanup")
+        try:
+            result = run([tool, "close", "--path", wt, "--apply"])
+            if result.returncode == 0 and not os.path.lexists(wt):
+                why = None
+            else:
+                why = (result.stderr or result.stdout).strip() or "agent-cleanup did not remove it"
+        except OSError as error:
+            why = f"cannot run agent-cleanup: {error}"
+        if why:
+            task["worktree_kept_why"] = f"Worktree {wt} kept: {why}"
+            s.dirty = True
             return False
-    if br:
-        git(main, "branch", "-D", br)
+    task.pop("worktree_kept_why", None)
     return True
 
 
 # A Done task's worktree left on disk (its agent was still open when it finished, SHEP-161): removed
-# as finish() would have, once nothing runs in it; one that can't go yet (uncommitted work, a
-# terminal there) is looked at again after TIDY_AGAIN_MS. Old leftovers go the same way on the next
+# as finish() would have, once nothing runs in it; one that can't go yet is looked at again after
+# TIDY_AGAIN_MS. Old leftovers go the same way on the next
 # pass. A task made Done by hand with its work unmerged keeps its worktree (the person's to remove).
 TIDY_AGAIN_MS = 3600000
 
@@ -742,9 +749,8 @@ def tidy_due(t):
 
 
 def tidy_done(s, t, report=None):
-    """Removes a Done task's leftover worktree and branch (remove_worktree()) when no terminal is
-    live in it (neither the task's own nor any other with its folder there) and its branch has
-    nothing new since its work merged. True when removed."""
+    """Try guarded cleanup of a Done task's worktree when no terminal is live there and the branch
+    has nothing new since the merge. The branch stays. True when the worktree was removed."""
     if not tidy_due(t):
         return False
     wt, br, main = t["worktree"], t.get("branch"), s.loc["folder"]
@@ -760,6 +766,8 @@ def tidy_done(s, t, report=None):
     if busy or newer or not remove_worktree(s, t):
         t["worktree_kept"] = now()
         s.dirty = True
+        if report is not None and t.get("worktree_kept_why"):
+            report.setdefault("worktrees_kept", []).append({"task": s.ref(t), "path": wt, "why": t["worktree_kept_why"]})
         return False
     t.pop("worktree_kept", None)
     t["worktree_removed_at"] = now()
