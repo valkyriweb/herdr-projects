@@ -1,0 +1,3 @@
+Lukes-MacBook-Pro.local
+Darwin
+/Users/luke/.local/share/shepherdr/worktrees/shep2-live-probe/task-2-shep2-mac-override-placement-smoke
