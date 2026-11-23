@@ -1,0 +1,8 @@
+$ hostname
+Lukes-MacBook-Pro.local
+$ uname -s
+Darwin
+$ pwd
+/Users/luke/.local/share/shepherdr/worktrees/shep2-live-probe/task-1-shep2-default-remote-placement-smoke
+$ ps -p $$ -o pid=,comm=
+43530 /bin/bash
