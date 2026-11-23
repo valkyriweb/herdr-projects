@@ -17,7 +17,7 @@ import time
 
 from .base import ASK_HOME, ENTRY, Fail, git, hc_json, now, run, WORKTREES
 from .settings import agent_key, ASSISTANT_TEMPLATES, trust_roots, bare, BRANCH_PATTERN, branch_pattern_problem, keep_review, notes, notes_part, review_limits, settings_block, settings_for
-from . import kinds as K
+from . import durable, kinds as K
 from .templates import instructions
 from .agents import detail, LINE_MAX, live_agents, SUMMARY_MAX
 from .github import finish, remote_of
@@ -788,7 +788,7 @@ def registered_worktree(main, path):
     return None
 
 
-def launch(s, task, argv, space, message=None, parent=None, resume=None, role=None):
+def launch(s, task, argv, space, message=None, parent=None, resume=None, role=None, followup=None):
     """Starts one agent for the task with no tab or pane of its own (a space can hold thousands
     of tasks): an hc child of `parent`, which parent_for() makes the space's coordinator, reached
     through the Tasks panel. Labels: herdr.task (its task), herdr.task.space (its space; never
@@ -796,11 +796,15 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     which keeps it under a restarted coordinator) and herdr.role=reviewer for a reviewer, kept
     apart from the task's agents. Returns its record."""
     key = s.key(task)
-    cmd = list(resume or argv)
-    if not role:
-        cmd = own_argv(cmd, folder_for(s, task))
-    if message:
-        cmd = cmd + [message]
+    checkpointed = not role and durable.enabled(task)
+    if checkpointed:
+        cmd = durable.command(s, task, argv, message, followup)
+    else:
+        cmd = list(resume or argv)
+        if not role:
+            cmd = own_argv(cmd, folder_for(s, task))
+        if message:
+            cmd = cmd + [message]
     labels = ["--label", f"herdr.task={key}", "--label", f"herdr.task.space={bare(space)}",
               "--label", f"herdr.agent={agent_key(argv)}"]
     ctab = coordinator_tab(parent)
@@ -830,7 +834,10 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     # A tab from before tasks had none stays with its old agent, not the task.
     task["space"] = bare(space)
     task.pop("tab", None)
-    track(s, task, out["address"])
+    if checkpointed:
+        a["durable"] = True
+    else:
+        track(s, task, out["address"])
     return a
 
 

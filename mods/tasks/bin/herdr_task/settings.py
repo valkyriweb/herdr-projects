@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import uuid
 
 from .base import Fail, git, HOME, MAX_RUNNING, WHERE
 from . import kinds as K
@@ -274,7 +275,7 @@ SET_KEYS = {"review": "review", "brief.review": "review", "merge": "merge", "bri
             "reviewer": "reviewer", "reviewer.agent": "reviewer", "reviewer.model": "reviewer_model", "reviewer.effort": "reviewer_effort",
             "reviewer_model": "reviewer_model", "reviewer-model": "reviewer_model",
             "reviewer_effort": "reviewer_effort", "reviewer-effort": "reviewer_effort",
-            "proof": "proof", "brief.proof": "proof"}
+            "proof": "proof", "brief.proof": "proof", "durable": "durable"}
 # The Proof line (as Shepherdr's skill asks of its task agents), on and off.
 PROOF_WORDS = {"on": "show verifiable proof in one recipe artifact: each proof with a one-line caption, real and from this work now, "
                      "plus a \"Not proven\" list; then say ready with --proof <its id>",
@@ -292,7 +293,7 @@ def set_task(t, key, value):
     """One --set key=value (or flag) on task t; an empty value or "default" goes back to Settings'."""
     field = SET_KEYS.get(key.strip().lower())
     if not field:
-        raise Fail(f"--set takes review, review.rounds, review.mustFix, merge, proof, agent, model, effort or reviewer settings, not {key!r}.")
+        raise Fail(f"--set takes review, review.rounds, review.mustFix, merge, proof, durable, agent, model, effort or reviewer settings, not {key!r}.")
     v = value.strip().strip("\"'").strip()
     sets = t.setdefault("set", {})
     if not v or v.lower() == "default":
@@ -302,10 +303,12 @@ def set_task(t, key, value):
             t.pop("set", None)
         return
     low = v.lower()
-    if field in ("review", "proof"):
+    if field in ("review", "proof", "durable"):
         if low not in ONOFF:
             raise Fail(f"{field} is on or off.")
         sets[field] = ONOFF[low]
+        if field == "durable" and sets[field] == "on" and not t.get("durable_id"):
+            t["durable_id"] = uuid.uuid4().hex
     elif field == "review_rounds":
         m = re.fullmatch(r"(\d+)\s*(rounds?)?", low)
         if not m or not 0 <= int(m.group(1)) <= 10:
@@ -563,6 +566,8 @@ def task_settings(s, t, space=None, argv=None, live=False):
     a_by = "task" if any(t.get(f) for f in ("agent", "model", "effort")) else \
         by_layer(s, space, "worker", None, bool(cfg.get("worker")), False)
     add("Agent", text, {"agent": agent, "model": model, "effort": effort}, a_by)
+    if "durable" in sets:
+        add("Durable Pi", sets["durable"], sets["durable"] == "on", "task")
     # Suggested next message (SHEP-186): the reply ends with the words the person would likely send next (templates/worker.md)
     sug = (cfg.get("agents") or {}).get("suggestions") is not False
     add("Suggested next message", "on (your reply ends with the message you'd likely send next, shown greyed out in the box)" if sug
