@@ -238,7 +238,7 @@ export default class Tasks extends View {
   place(list, task) {
     const st = task.state;
     const live = st === "running" || st === "ready" ? this.live(list, task) : [];
-    const loaded = machines().find((m) => (m.name ?? null) === (list.machine ?? null))?.layout !== "loading";
+    const loaded = machines().find((m) => (m.name ?? null) === (task.lane?.machine ?? list.machine ?? null))?.layout !== "loading";
     return place(list, task, { live, loaded, helpers: live.length ? this.helpers(list, task, live) : [] });
   }
 
@@ -770,13 +770,12 @@ export default class Tasks extends View {
   // agent (an Assistant asking) goes to its chat (inbox.js).
   toWorker(address, x = null) {
     const k = terminals().find((y) => y.address === address);
-    const m = machineOf(address);
     if (threads() && k?.labels?.["herdr.task"]) {
       const [slug, id] = k.labels["herdr.task"].split("#");
-      const list = this.listOf(slug, m);
+      const list = this.listForAgent(address);
       const task = list?.tasks.find((y) => String(y.id) === id);
       return openThread({ terminal: address, task: x?.ref ?? this.taskRef(address), title: x?.title ?? task?.title ?? "",
-        key: list ? { machine: m, folder: list.folder, slug, id: Number(id) } : null });
+        key: list ? { machine: list.machine ?? null, folder: list.folder, slug, id: Number(id) } : null });
     }
     toAgent(address);
   }
@@ -785,7 +784,7 @@ export default class Tasks extends View {
   taskRef(address) {
     const key = terminals().find((k) => k.address === address)?.labels?.["herdr.task"];
     const [slug, id] = String(key ?? "").split("#");
-    const list = key && this.listOf(slug, machineOf(address));
+    const list = key && this.listForAgent(address);
     if (list) return refOf(list, { id });
     // Another folder's task: its list's prefix (readPrefixes).
     const pre = key && id ? this.prefixes.get(`${machineOf(address) ?? ""} ${slug}`) : null;
@@ -816,6 +815,15 @@ export default class Tasks extends View {
     return this.lists.find((l) => l.slug === slug && (l.machine ?? null) === (machine ?? null)) ?? null;
   }
 
+  listForAgent(address) {
+    const terminal = terminals().find((item) => item.address === address);
+    const [slug, id] = String(terminal?.labels?.["herdr.task"] ?? "").split("#");
+    const machine = machineOf(address);
+    return this.lists.find((list) => list.slug === slug && list.tasks.some((task) => String(task.id) === id
+      && task.lane?.machine === machine && task.agents?.some((agent) => agent.address === address
+        || agent.address === `${machine}/${String(terminal.parent).split("/").pop()}`))) ?? this.listOf(slug, machine);
+  }
+
   // What a row says of where it is, on its right, as far as its group doesn't say it already
   // (this.names, set by render()): its machine (not this computer) and its space or folder.
   // need: a Needs you row: its space, whatever the grouping. Never the machine (SHEP-98).
@@ -828,7 +836,7 @@ export default class Tasks extends View {
   taskTitle(address) {
     const key = terminals().find((k) => k.address === address)?.labels?.["herdr.task"];
     const [slug, id] = String(key ?? "").split("#");
-    return (key && this.listOf(slug, machineOf(address))?.tasks.find((x) => String(x.id) === id)?.title) || null;
+    return (key && this.listForAgent(address)?.tasks.find((x) => String(x.id) === id)?.title) || null;
   }
 
   // Reads what each ask asks, once (the hook's request file; the chat shows the same card).

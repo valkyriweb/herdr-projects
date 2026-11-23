@@ -170,9 +170,9 @@ export default class Jump extends View {
     return spaces().find((s) => (s.machine ?? null) === (machine ?? null) && s.folder === folder) ?? null;
   }
 
-  // A task's live agents: terminals labelled with its key on its folder's machine.
+  // A task's live agents: terminals labelled with its key on its lane or folder's machine.
   live(list, task) {
-    const key = `${list.slug}#${task.id}`, m = list.machine ?? null;
+    const key = `${list.slug}#${task.id}`, m = task.lane?.machine ?? list.machine ?? null;
     const shown = new Map(agents().map((a) => [a.address, a]));
     return terminals().filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
       .filter((k) => k.program?.key !== "shell" && !k.program?.shell)

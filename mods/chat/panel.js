@@ -129,8 +129,7 @@ export class PanelHost {
   // Reads its task's record again (cheap: one small file; another machine's less often).
   async loadTask(addr, cx) {
     const cur = this.cur;
-    // A terminal gone from the core has no labels left: the task's key, as the list sent it.
-    const k = (addr && this.taskOf(addr)) || cur?.key || null;
+    const k = cur?.key || (addr && this.taskOf(addr)) || null;
     let rec = null;
     if (k) {
       const text = k.machine
