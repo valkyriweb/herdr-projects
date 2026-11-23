@@ -121,9 +121,9 @@ def pr_open(s, task, repo, summary=None):
         if summary:
             pr_note(task, repo, summary)
         return task["pr"]
-    # SHEP-59: never a second pull request for a branch that already had one merged (one at its tip
-    # is done before this: already_merged()); commits made since go on a new branch.
-    done = pr_merged(task, repo)
+    # SHEP-59: never a second PR for a branch that already had one merged. A merge at its tip is
+    # handled before this; commits made since go on a new branch.
+    done, _ = pr_merged(task, repo)
     if done:
         raise Fail(f"Pull request #{done['number']} for {br} is already merged, and {br} has commits since. "
                    f"Put them on a new branch (a new task) rather than a second pull request.")
