@@ -164,7 +164,7 @@ def main():
         return 0
     if os.environ.get("HERDR_TASK_LANE") and argv[:1] == ["lane-artifact"]:
         return artifact_forward(argv[1:])
-    if os.environ.get("HERDR_TASK_LANE") and argv[:1] and argv[0] in OWN:
+    if os.environ.get("HERDR_TASK_LANE") and argv[:1] and argv[0] in [*OWN, "tell-assistant"]:
         # A lane on another machine: its task lives on the main machine (lane.py).
         return forward(argv)
 

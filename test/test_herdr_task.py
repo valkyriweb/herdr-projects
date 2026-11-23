@@ -2541,6 +2541,80 @@ class PiLanes(unittest.TestCase):
                 pull.assert_called_once_with(store, task)
                 self.assertNotIn("lane", task)
 
+    def test_resuming_a_local_pi_session_does_not_move_it(self):
+        import herdr_task.commands as commands
+        task = {"agents": [{"agent": "pi", "argv": ["pi"], "at": 1,
+                            "session": "/mac/session.jsonl"}]}
+        store = Store([])
+        with self.mock.patch.object(commands, "unarchive"), \
+                self.mock.patch.object(commands, "parent_for", return_value="coordinator"), \
+                self.mock.patch.object(commands, "folder_for", return_value="/mac/wt"), \
+                self.mock.patch.object(commands, "launch", return_value={"address": "t4"}) as launch, \
+                self.mock.patch.object(self.lane, "place", return_value=("dl360", None)) as place, \
+                self.mock.patch.object(self.lane, "prepare") as prepare:
+            _, resumed = commands.start_again(store, task, "space")
+        self.assertTrue(resumed)
+        place.assert_not_called()
+        prepare.assert_not_called()
+        self.assertNotIn("lane", task)
+        self.assertEqual(launch.call_args.kwargs["resume"], ["pi", "--session", "/mac/session.jsonl"])
+
+    def test_restarting_a_lane_keeps_its_machine_when_the_default_changes(self):
+        import herdr_task.machines as machines
+        task = {"lane": {"machine": "dl360"}}
+        with self.mock.patch.object(self.lane, "place", return_value=("another", None)), \
+                self.mock.patch.object(machines, "connected_machines", return_value=[{"name": "dl360", "state": "connected"}]), \
+                self.mock.patch.object(self.lane, "prepare") as prepare, \
+                self.mock.patch.object(self.lane, "pull") as pull:
+            self.lane.reconcile(Store([]), task, "pi")
+        self.assertEqual(task["lane"]["machine"], "dl360")
+        prepare.assert_not_called()
+        pull.assert_not_called()
+
+    def test_leaving_a_lane_starts_a_handoff_not_a_remote_session_path(self):
+        import herdr_task.commands as commands
+        import herdr_task.machines as machines
+        task = {"set": {"machine": "here"}, "lane": {"machine": "dl360"},
+                "agents": [{"agent": "pi", "argv": ["pi"], "at": 1,
+                            "address": "dl360/t3", "session": "/remote/session.jsonl"}]}
+        with self.mock.patch.object(commands, "unarchive"), \
+                self.mock.patch.object(commands, "parent_for", return_value="coordinator"), \
+                self.mock.patch.object(commands, "handoff", return_value="Continue here"), \
+                self.mock.patch.object(commands, "launch", return_value={"address": "t4"}) as launch, \
+                self.mock.patch.object(self.lane, "place", return_value=(None, None)), \
+                self.mock.patch.object(machines, "connected_machines", return_value=[{"name": "dl360", "state": "connected"}]), \
+                self.mock.patch.object(self.lane, "pull"):
+            _, resumed = commands.start_again(Store([]), task, "space")
+        self.assertFalse(resumed)
+        self.assertNotIn("resume", launch.call_args.kwargs)
+        self.assertNotIn("lane", task)
+
+    def test_a_failed_request_read_can_be_retried(self):
+        nonce = "cd" * 16
+        with self.mock.patch.object(self.lane, "STORE", self.root), \
+                self.mock.patch.object(self.lane, "hc_json", return_value={"labels": {self.lane.CALL: nonce}}), \
+                self.mock.patch.object(self.lane, "run", side_effect=[
+                    subprocess.CompletedProcess([], 1, "", "link down"),
+                    subprocess.CompletedProcess([], 0, '{"argv":["add"]}', "")]), \
+                self.mock.patch.object(self.lane.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)):
+            self.assertFalse(self.lane.serve("dl360/t4"))
+            self.assertTrue(self.lane.serve("dl360/t4"))
+            self.assertFalse(self.lane.serve("dl360/t4"))
+
+    def test_forward_locks_are_per_terminal(self):
+        with self.mock.patch.object(self.lane, "CALLS", self.root), \
+                self.mock.patch.object(self.lane, "_forward", return_value=0):
+            for terminal in ("t3", "t4", "t3"):
+                with self.mock.patch.dict(os.environ, {"HC_TERMINAL_ID": terminal}):
+                    self.lane.forward(["show", "2"])
+        self.assertEqual(len(os.listdir(self.root)), 2)
+
+    def test_lane_browser_command_uses_the_remote_home(self):
+        import herdr_task.browsers as browsers
+        with self.mock.patch.object(browsers, "browser_path", return_value="/mac/bin/herdr-browser"):
+            self.assertIn("/home/luke/.local/bin/herdr-browser", browsers.browser_line("/home/luke"))
+            self.assertNotIn("/mac/", browsers.browser_line("/home/luke"))
+
     def test_offline_switch_keeps_remote_recovery_information(self):
         import herdr_task.machines as machines
         task = {"lane": {"machine": "dl360", "worktree": "/remote/wt", "synced": "abc"}}
@@ -2693,7 +2767,9 @@ class PiLanes(unittest.TestCase):
         with self.mock.patch.object(self.lane.subprocess, "run", write_there):
             lane3 = self.lane.prepare(s, {"id": 3, "worktree": wt3, "branch": "task/3-z"}, "dl360")
         self.assertEqual(self.git(lane3["worktree"], "rev-parse", "HEAD"), older)
-        self.assertTrue(self.lane.cleanup({"lane": lane3, "worktree": wt3}))
+        third = {"lane": lane3, "worktree": wt3}
+        self.assertTrue(self.lane.cleanup(third))
+        self.assertNotIn("lane", third)
         self.assertFalse(os.path.exists(lane3["worktree"]))
         theirs = self.commit(lane["worktree"], "made there")
         self.lane.pull(s, t)

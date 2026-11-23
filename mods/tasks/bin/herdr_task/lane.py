@@ -240,10 +240,15 @@ def pull(s, t):
     s.dirty = True
 
 
-def reconcile(s, t, kind, space=None):
+def reconcile(s, t, kind, space=None, allow_new=False):
     from .machines import connected_machines
     lane = t.get("lane")
+    if not lane and not allow_new:
+        return
     machine, why = place(s, t, kind, space)
+    if lane and not allow_new and kind in LANE_KINDS and not (t.get("set") or {}).get("machine"):
+        connected = {m["name"] for m in connected_machines() if m.get("state") == "connected"}
+        machine = lane["machine"] if lane["machine"] in connected else None
     if lane and lane["machine"] != machine:
         connected = {m["name"] for m in connected_machines() if m.get("state") == "connected"}
         if lane["machine"] in connected:
@@ -253,7 +258,7 @@ def reconcile(s, t, kind, space=None):
             why = f"{lane['machine']} is unreachable: working here from the last sync; remote work is kept there."
         t.pop("lane")
         s.dirty = True
-    if machine and not t.get("lane"):
+    if allow_new and machine and not t.get("lane"):
         try:
             prepare(s, t, machine)
         except Fail as error:
@@ -263,6 +268,8 @@ def reconcile(s, t, kind, space=None):
 
 
 def cleanup(t):
+    if t.get("parked_lanes"):
+        return False
     lane = t.get("lane")
     if not lane:
         return not t.get("parked_lanes")
@@ -282,7 +289,10 @@ else:
     print(json.dumps({"removed": result.returncode == 0}))
 '''
     try:
-        return bool(remote_python(lane["machine"], script, {"worktree": lane["worktree"], "head": head}).get("removed"))
+        removed = bool(remote_python(lane["machine"], script, {"worktree": lane["worktree"], "head": head}).get("removed"))
+        if removed:
+            t.pop("lane", None)
+        return removed
     except Fail:
         return False
 
@@ -308,7 +318,8 @@ def own_path(lane):
 
 def forward(argv, files=None):
     os.makedirs(CALLS, exist_ok=True)
-    with open(os.path.join(CALLS, ".forward.lock"), "a") as lock:
+    terminal = hashlib.sha256(os.environ.get("HC_TERMINAL_ID", "").encode()).hexdigest()
+    with open(os.path.join(CALLS, f".forward-{terminal}.lock"), "a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         return _forward(argv, files)
 
@@ -478,17 +489,21 @@ def serve(address):
                 os.unlink(p)
         except OSError:
             pass
+    marker = os.path.join(served, nonce)
     try:
-        os.close(os.open(os.path.join(served, nonce), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        os.close(os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
     except FileExistsError:
         return False
     r = run(["hc", "exec", "--on", machine, "--timeout", "30", "--", "sh", "-c", f"exec cat {WHERE_CALL}.json", "sh", nonce])
+    if r.returncode:
+        os.unlink(marker)
+        return False
     try:
         request = json.loads(r.stdout)
         argv = request["argv"]
     except (ValueError, KeyError, TypeError):
         argv = None
-    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv) or argv[0] not in [*OWN, "lane-artifact"]:
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv) or argv[0] not in [*OWN, "tell-assistant", "lane-artifact"]:
         out = {"code": 1, "out": "", "err": f"herdr-task: a lane runs only {', '.join(OWN)} on the main machine.\n"}
     else:
         env = {k: v for k, v in os.environ.items() if k != "HERDR_TASK_LANE"}

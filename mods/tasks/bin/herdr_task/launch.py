@@ -33,7 +33,7 @@ from . import lane as lanes
 
 # How long Codex waits on the permission hook: as the chat's card waits (ask-hook.sh).
 ASK_TIMEOUT = 1800
-OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where", "tell-assistant"]
+OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where"]
 # herdr-secret's agent commands (~/.config/herdr-app/bin/herdr-secret): asking for a secret and
 # using one by name never ask either, as Shepherdr's secret commands. Written by its full path or
 # its bare name. Reviewers get none (launch() skips own_argv for them; herdr-secret refuses them).
@@ -563,7 +563,7 @@ def closing_line(s, task, parent=None, argv=None):
                  f"it; carry on.")
     text += (f" Your herdr-task command is {ht}: write that full path each time (never the bare name), as one plain command; "
              f"then its {', '.join(OWN)} commands run without asking.")
-    text += browser_line()
+    text += browser_line(task["lane"]["home"] if task.get("lane") else None)
     if task.get("lane"):
         text += (" Lane proof: herdr-artifact guide, publish, update, show, list and link run on the main machine. "
                  "Publish a local recipe folder; its files are copied back automatically. Preview proof on the main machine. "

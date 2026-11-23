@@ -273,7 +273,7 @@ def begin(s, t, argv, space, parent=None):
     if t.get("mode") == "worktree" and not t.get("worktree") and not worktrees_on(s, space):
         t["mode"] = "here"
     folder_for(s, t)
-    lanes.reconcile(s, t, agent_key(argv), space)
+    lanes.reconcile(s, t, agent_key(argv), space, allow_new=True)
     if t.get("mode") != "worktree" and s.loc["kind"] == "repo":
         # The folder's commit as it starts: still there, and nothing tracked changed, at ready means
         # it changed nothing, so there is nothing to review (review_refusal, #744).
@@ -939,7 +939,10 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \
         (prev["argv"] if keep else worker_argv(s, t, space))
     lanes.reconcile(s, t, agent_key(argv), space)
-    same = prev and agent_key(argv) == prev.get("agent")
+    previous_address = (prev or {}).get("address") or ""
+    previous_machine = previous_address.split("/", 1)[0] if "/" in previous_address else None
+    current_machine = (t.get("lane") or {}).get("machine")
+    same = prev and agent_key(argv) == prev.get("agent") and previous_machine == current_machine
     res = resume_argv(argv, prev["session"], folder_for(s, t)) if same and prev.get("session") else None
     if res:
         return launch(s, t, argv, space, message or nudge, parent=parent, resume=res), True
