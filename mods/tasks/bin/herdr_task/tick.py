@@ -31,6 +31,7 @@ from .takeover import cant_go_on, takeover
 from .ghnews import main_pass, pr_deliver, pr_news
 from .scheduler import SCHEDULER
 from .revive import revive_pass
+from .lane import serve
 
 
 PR_WAIT_EVERY = 20000  # how often a pull request whose checks still run is read again (ms)
@@ -593,6 +594,17 @@ def retry_pass(report):
         os.replace(tmp, RETRIES)
 
 
+def lane_pass(folder=None):
+    """Lane calls its tracker missed (a tracker gone with this machine's restart): answered here, outside
+    the task list's lock, since the call itself opens it."""
+    for p in store_files(folder):
+        for t in (read_list(p) or {}).get("tasks") or []:
+            if t.get("lane") and t.get("state") in ("running", "ready"):
+                for a in t.get("agents") or []:
+                    if "/" in a.get("address", "") and not a.get("ended"):
+                        serve(a["address"])
+
+
 def cmd_tick(args):
     """Starts queued tasks that can go now and finds merged ones. Cheap when nothing waits; one
     at a time (a second tick while one runs does nothing)."""
@@ -630,6 +642,10 @@ def cmd_tick(args):
             continue
         with Store(locate(d["folder"])) as s:
             tick_store(s, report)
+    try:
+        lane_pass(args.folder)
+    except Exception as e:  # never stops the queue
+        report["lane_error"] = str(e)
     try:
         news_pass(report, args.folder)
     except Exception as e:  # never stops the queue

@@ -26,7 +26,7 @@ OLD_INSTRUCTIONS = os.path.join(HOME, ".herdr", "instructions")
 ASSISTANT_TEMPLATES = ("assistant", "coordinator")  # "coordinator": Assistants started before the rename
 DEFAULTS = {"tasks": {"merge": "ask", "review_rounds": 0, "must_fix": "major", "max_running": MAX_RUNNING, "worktrees": True,
                       "start_notes": "", "finish_notes": "", "archive_after": 7, "proof": True, "base": "", "branch": "",
-                      "worktree_root": ""},
+                      "worktree_root": "", "pi_machine": ""},
             "automations": {"enabled": True}, "worker": {}, "reviewer": {}, "coordinator": {}, "backup": {},
             "agents": {"reactions": True, "suggestions": True, "feedback": True, "feedback_repo": "eliasstravik/shepherdr"}}
 LEVELS = ["blocker", "major", "minor"]
@@ -274,7 +274,7 @@ SET_KEYS = {"review": "review", "brief.review": "review", "merge": "merge", "bri
             "reviewer": "reviewer", "reviewer.agent": "reviewer", "reviewer.model": "reviewer_model", "reviewer.effort": "reviewer_effort",
             "reviewer_model": "reviewer_model", "reviewer-model": "reviewer_model",
             "reviewer_effort": "reviewer_effort", "reviewer-effort": "reviewer_effort",
-            "proof": "proof", "brief.proof": "proof"}
+            "proof": "proof", "brief.proof": "proof", "machine": "machine", "task.machine": "machine"}
 # The Proof line (as Shepherdr's skill asks of its task agents), on and off.
 PROOF_WORDS = {"on": "show verifiable proof in one recipe artifact: each proof with a one-line caption, real and from this work now, "
                      "plus a \"Not proven\" list; then say ready with --proof <its id>",
@@ -292,7 +292,7 @@ def set_task(t, key, value):
     """One --set key=value (or flag) on task t; an empty value or "default" goes back to Settings'."""
     field = SET_KEYS.get(key.strip().lower())
     if not field:
-        raise Fail(f"--set takes review, review.rounds, review.mustFix, merge, proof, agent, model, effort or reviewer settings, not {key!r}.")
+        raise Fail(f"--set takes review, review.rounds, review.mustFix, merge, proof, machine, agent, model, effort or reviewer settings, not {key!r}.")
     v = value.strip().strip("\"'").strip()
     sets = t.setdefault("set", {})
     if not v or v.lower() == "default":
@@ -315,6 +315,14 @@ def set_task(t, key, value):
         if low not in MUST_VALUES:
             raise Fail("review.mustFix is blocker, major or minor.")
         sets[field] = MUST_VALUES[low]
+    elif field == "machine":
+        # The machine a Pi lane runs on (Settings' tasks.pi_machine for this task); here: this one.
+        if low in ("here", "local", "this machine", "mac"):
+            sets[field] = "here"
+        elif re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", v):
+            sets[field] = v
+        else:
+            raise Fail("machine is here or a connected machine's name (herdr-task machines).")
     elif field == "merge":
         if low not in MERGE_VALUES:
             raise Fail('merge is "on its own", "after checks" or "ask me first".')
@@ -558,6 +566,11 @@ def task_settings(s, t, space=None, argv=None, live=False):
     proof = sets["proof"] == "on" if "proof" in sets else k.get("proof") is not False
     add("Proof", PROOF_WORDS["on" if proof else "off"], proof,
         "task" if "proof" in sets else by_layer(s, space, "tasks", "proof", proof, True))
+    lane = t.get("lane")
+    if lane:
+        add("Machine", f"{lane['machine']}: it has no GitHub sign-in, so commit there and never push; ready brings your commits "
+                       "back to the main machine, which pushes them", lane["machine"],
+            "task" if sets.get("machine") else by_layer(s, space, "tasks", "pi_machine", lane["machine"], ""))
     model, effort = argv_model(argv)
     text = agent + (f", model {model}" if model else "") + (f", effort {effort}" if effort else "")
     a_by = "task" if any(t.get(f) for f in ("agent", "model", "effort")) else \

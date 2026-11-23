@@ -10,6 +10,7 @@ import subprocess
 import sys
 import time
 
+from . import lane as lanes
 from . import sandbox
 from .base import Fail, git, guard, now, run, STORE, stop_note, VERSION
 from .settings import (
@@ -272,6 +273,15 @@ def begin(s, t, argv, space, parent=None):
     if t.get("mode") == "worktree" and not t.get("worktree") and not worktrees_on(s, space):
         t["mode"] = "here"
     folder_for(s, t)
+    if not t.get("lane"):
+        machine, why = lanes.place(s, t, agent_key(argv), space)
+        if machine:
+            try:
+                lanes.prepare(s, t, machine)
+            except Fail as e:
+                why = f"Couldn't set up on {machine} ({e}): started on this machine."
+        if why:
+            lanes.note(t, why)
     if t.get("mode") != "worktree" and s.loc["kind"] == "repo":
         # The folder's commit as it starts: still there, and nothing tracked changed, at ready means
         # it changed nothing, so there is nothing to review (review_refusal, #744).
@@ -340,6 +350,10 @@ def cmd_start(args):
         return
     out = {**v, "terminal": a["address"], "space": space, "parent": a.get("parent")}
     text = f"{s.ref(t)} started: {a['address']} in {folder_desc(t, s)}"
+    if t.get("lane"):
+        text += f" (on {t['lane']['machine']}: {t['lane']['worktree']})"
+    elif (t.get("progress") or {}).get("placement"):
+        text += f"\n{t['progress']['text']}"
     # Codex's sandbox can't start here (SHEP-227, #998): whoever started it hears why and the fix, once per start.
     broken = sandbox.check() if sandbox.sandboxed(argv) else None
     if broken:
@@ -373,6 +387,7 @@ def cmd_ready(args):
         if t["state"] == "done":
             raise Fail(f"{s.ref(t)} is already done.")
         wt = t.get("worktree") if t.get("mode") == "worktree" else None
+        lanes.pull(s, t)
         if wt and os.path.isdir(wt):
             if git(wt, "status", "--porcelain", "--untracked-files=no")[1]:
                 raise Fail(f"{wt} has uncommitted changes. Commit them, then run ready again.")
@@ -544,6 +559,7 @@ def cmd_reviewed(args):
             raise Fail(f"All {rounds} review rounds of {s.ref(t)} are used. Say why in your chat and end your turn: only your "
                        f"Assistant can add a round (herdr-task review-more {s.ref(t)}).")
         wt = t.get("worktree") if t.get("mode") == "worktree" else None
+        lanes.pull(s, t)
         head = None
         where = wt if wt and os.path.isdir(wt) else (s.loc["folder"] if s.loc["kind"] == "repo" else None)
         named = getattr(args, "commit", None)
@@ -924,6 +940,11 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     and the session is known; else a fresh one with a handoff. `message` goes after either; `nudge`
     is a resumed session's first message when no `message` is given (a handoff needs none)."""
     unarchive(s, t)
+    lane = t.get("lane")
+    from .machines import connected_machines
+    if lane and lane["machine"] not in [m["name"] for m in connected_machines() if m.get("state") == "connected"]:
+        # Its commits since the last ready are only there.
+        raise Fail(f"{s.ref(t)} works on {lane['machine']}, which is unreachable now. Start it again once it's back.")
     prev = last_agent(t)
     parent = parent_for(parent or (prev or {}).get("parent"), space)
     # The last agent's argv again, unless the task's agent, model or effort changed since (edit).

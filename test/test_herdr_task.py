@@ -2416,6 +2416,154 @@ class NewWorktrees(unittest.TestCase):
             set_branch(self.store, self.task(mode="here"), "ABC-4")
 
 
+class PiLanes(unittest.TestCase):
+    """SHEP-2: Pi lanes on another machine. The placement rule, --set machine, the bundle another machine
+    runs (kinds.json inside), the lane's calls (only its own verbs run here) and the branch's round trip
+    there and back, with real throwaway repos; hc is never run."""
+
+    def setUp(self):
+        from unittest import mock
+        import shutil
+        sys.path.insert(0, BIN)
+        import herdr_task.lane as lane
+        import herdr_task.settings as settings
+        from herdr_task.base import Fail
+        self.lane, self.settings, self.Fail, self.mock = lane, settings, Fail, mock
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+
+    def test_placement(self):
+        place = self.lane.placement
+        on = ["dl360"]
+        cases = [
+            ((None, "", "pi", "worktree", on, "mac"), (None, None)),
+            ((None, "dl360", "pi", "worktree", on, "mac"), ("dl360", None)),
+            (("here", "dl360", "pi", "worktree", on, "mac"), (None, None)),
+            (("local", "dl360", "pi", "worktree", on, "mac"), (None, None)),
+            (("other", "dl360", "pi", "worktree", ["dl360", "other"], "mac"), ("other", None)),
+            ((None, "dl360", "pii", "worktree", on, "mac"), (None, None)),
+            ((None, "dl360", "claude", "worktree", on, "mac"), (None, None)),
+            (("dl360", "", "claude", "worktree", on, "mac"), (None, "Only Pi lanes run on dl360: started on this machine.")),
+            ((None, "dl360", "pi", "here", on, "mac"), (None, "Only a worktree task runs on dl360: started on this machine.")),
+            ((None, "dl360", "pi", "worktree", [], "mac"), (None, "dl360 is unreachable: started on this machine.")),
+            ((None, "mac", "pi", "worktree", ["mac"], "mac"), (None, None)),
+        ]
+        for args, want in cases:
+            self.assertEqual(place(*args), want, args)
+
+    def test_set_machine(self):
+        t = {}
+        self.settings.set_task(t, "machine", "here")
+        self.assertEqual(t["set"], {"machine": "here"})
+        self.settings.set_task(t, "machine", "lue-dl360-worker-01")
+        self.assertEqual(t["set"], {"machine": "lue-dl360-worker-01"})
+        with self.assertRaises(self.Fail):
+            self.settings.set_task(t, "machine", "a b; rm")
+        self.settings.set_task(t, "machine", "")
+        self.assertNotIn("set", t)
+
+    def test_the_bundle_reads_its_kinds(self):
+        from herdr_task.base import bundle
+        path = os.path.join(self.root, "herdr-task")
+        with open(path, "wb") as f:
+            f.write(bundle())
+        code = "import sys; sys.path.insert(0, sys.argv[1]); from herdr_task.kinds import kinds; print('pi' in kinds())"
+        p = subprocess.run([sys.executable, "-c", code, path], capture_output=True, text=True)
+        self.assertEqual(p.stdout.strip(), "True", p.stderr)
+        p = subprocess.run([sys.executable, path, "--version"], capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+    def answered(self, argv):
+        """serve() for one call whose request reads argv: (what it wrote back, the commands it ran here)."""
+        ran, wrote = [], []
+        nonce = "ab" * 16
+
+        def sub_run(cmd, **kw):
+            (wrote if cmd[:2] == ["hc", "exec"] else ran).append((cmd, kw))
+            return subprocess.CompletedProcess(cmd, 0, "done\n", "")
+        patches = [("hc_json", lambda *a: {"labels": {self.lane.CALL: nonce}}), ("STORE", self.root),
+                   ("run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, json.dumps({"argv": argv}), ""))]
+        for name, value in patches:
+            p = self.mock.patch.object(self.lane, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        with self.mock.patch.object(self.lane.subprocess, "run", sub_run):
+            self.lane.serve("dl360/t4")
+            self.assertFalse(self.lane.serve("dl360/t4"))  # once per call
+        return json.loads(wrote[0][1]["input"]), ran
+
+    def test_a_lane_runs_only_its_own_verbs_here(self):
+        out, ran = self.answered(["add", "something"])
+        self.assertEqual((out["code"], ran), (1, []))
+
+    def test_a_lane_call_runs_here_as_its_terminal(self):
+        out, ran = self.answered(["status", "SHEP-2", "--folder", "/x", "Working", "--left", "5m"])
+        self.assertEqual(out, {"code": 0, "out": "done\n", "err": ""})
+        cmd, kw = ran[0]
+        self.assertEqual(cmd[2:], ["status", "SHEP-2", "--folder", "/x", "Working", "--left", "5m"])
+        self.assertEqual(kw["env"]["HC_TERMINAL_ID"], "dl360/t4")
+        self.assertNotIn("HERDR_TASK_LANE", kw["env"])
+
+    def git(self, cwd, *args):
+        return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, check=True).stdout.strip()
+
+    def commit(self, cwd, words):
+        self.git(cwd, "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+                 "commit", "-q", "--allow-empty", "-m", words)
+        return self.git(cwd, "rev-parse", "HEAD")
+
+    def test_the_branch_goes_there_and_its_commits_come_back(self):
+        """prepare() gives the other machine (a throwaway home) the branch, ready's pull() brings its commits back."""
+        import shutil
+        there = os.path.join(self.root, "there")
+        os.makedirs(there)
+        main, wt = os.path.join(self.root, "repo"), os.path.join(self.root, "wt")
+        self.git(self.root, "init", "-q", "-b", "main", main)
+        self.commit(main, "first")
+        self.git(main, "worktree", "add", "-q", "-b", "task/1-x", wt)
+        start = self.commit(wt, "started here")
+
+        real = subprocess.run
+
+        def remote(machine, script, payload, timeout=120):
+            p = real([sys.executable, "-c", script], input=json.dumps(payload), capture_output=True, text=True,
+                               env={**os.environ, "HOME": there}, check=True)
+            return json.loads(p.stdout.strip().splitlines()[-1])
+
+        def write_there(cmd, stdin=None, **kw):
+            if cmd[:3] != ["hc", "file", "write"]:
+                return real(cmd, stdin=stdin, **kw)
+            os.makedirs(os.path.dirname(os.path.join(there, cmd[-1])), exist_ok=True)
+            with open(os.path.join(there, cmd[-1]), "wb") as f:
+                shutil.copyfileobj(stdin, f)
+            return subprocess.CompletedProcess(cmd, 0, b"", b"")
+        for name, value in (("remote_python", remote), ("guard", lambda a: None)):
+            p = self.mock.patch.object(self.lane, name, value)
+            p.start()
+            self.addCleanup(p.stop)
+        s = Store([])
+        s.loc["folder"] = main
+        t = {"id": 1, "worktree": wt, "branch": "task/1-x"}
+        with self.mock.patch.object(self.lane.subprocess, "run", write_there):
+            lane = self.lane.prepare(s, t, "dl360")
+        self.assertEqual((lane["machine"], lane["synced"], lane["home"]), ("dl360", start, there))
+        self.assertEqual(self.git(lane["worktree"], "rev-parse", "HEAD"), start)
+        theirs = self.commit(lane["worktree"], "made there")
+        self.lane.pull(s, t)
+        self.assertEqual((self.git(wt, "rev-parse", "HEAD"), lane["synced"]), (theirs, theirs))
+        # Rewritten there (amended): taken, as nothing changed here since.
+        self.git(lane["worktree"], "-c", "user.name=T", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+                 "commit", "-q", "--amend", "--allow-empty", "-m", "again")
+        self.lane.pull(s, t)
+        self.assertEqual(self.git(wt, "rev-parse", "HEAD"), self.git(lane["worktree"], "rev-parse", "HEAD"))
+        # Uncommitted there: ready waits.
+        with open(os.path.join(lane["worktree"], "f"), "w") as f:
+            f.write("x")
+        self.git(lane["worktree"], "add", "f")
+        with self.assertRaises(self.Fail):
+            self.lane.pull(s, t)
+
+
 class MergedOnlyWithOwnWork(unittest.TestCase):
     """SHEP-23: a task counts as merged only when work of its own landed (its pull request merged, or
     commits made on its branch now in the base), never when its branch just caught up with main, and

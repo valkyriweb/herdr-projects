@@ -3,6 +3,7 @@ lib/kinds.json that bin/sync-shared keeps (the mods, service and web app read th
 
 import json
 import os
+import pkgutil
 import re
 
 from .base import HOME
@@ -14,8 +15,8 @@ def kinds():
     """{key: kind} from kinds.json, read once. Keys starting with "_" are the file's notes."""
     global _TABLE
     if _TABLE is None:
-        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "kinds.json")) as f:
-            _TABLE = {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+        # pkgutil: the copy on another machine runs from a zipapp, where kinds.json has no path.
+        _TABLE = {k: v for k, v in json.loads(pkgutil.get_data(__package__, "kinds.json")).items() if not k.startswith("_")}
     return _TABLE
 
 

@@ -60,6 +60,13 @@ task values a machine set before (the old machine scope) still apply there until
 - `tasks.worktree_root` (in `everywhere`, a machine's or a space's `tasks`; no row in the window yet): the folder new
   task worktrees go in, e.g. a bigger disk (`~` allowed). Unset: `~/.local/share/shepherdr/worktrees`. A task keeps
   the worktree it has.
+- `tasks.pi_machine` (in `everywhere`, a machine's or a space's `tasks`; no row in the window yet): the machine new Pi
+  worktree tasks run on, by its herdr-core name (`hc machine ls`). Unset: here. Only the agent moves: the task, its
+  worktree and its Assistant stay here, and the other machine gets the branch as a git bundle over herdr-core, so it
+  needs no GitHub sign-in. The agent commits there; `ready` brings the commits back and this machine pushes them. Its
+  `herdr-task` calls (status, ready, show...) are answered here (`mods/tasks/bin/herdr_task/lane.py`). A machine that
+  isn't connected: the task starts here and its status says so. One task: `--set machine=here` keeps it here,
+  `--set machine=<name>` picks another. pii and the other CLIs always run here (pii is installed on one machine only).
 - Secrets live in one vault, `~/.local/share/shepherdr/secrets/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as
   `shepherdr.host` is (`core/secrets.js`). `herdr-secret` on any other machine passes `set`, `rm` and `names` there

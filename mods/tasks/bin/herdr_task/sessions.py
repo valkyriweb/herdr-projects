@@ -130,7 +130,8 @@ def refresh_sessions(s, task, live):
         k = detail(k)
         pid = (k.get("foreground") or {}).get("pid")
         a = next((a for a in task["agents"] if a["address"] == k["address"]), None)
-        if not pid or not a or not agent_running(k):
+        # A lane's pid is another machine's.
+        if not pid or not a or "/" in k["address"] or not agent_running(k):
             continue
         sid, log = session_of(pid, a.get("agent"), (k.get("foreground") or {}).get("cwd") or k.get("cwd"),
                               a["at"] / 1000 if isinstance(a.get("at"), (int, float)) and a["at"] > 1e11 else a.get("at"))

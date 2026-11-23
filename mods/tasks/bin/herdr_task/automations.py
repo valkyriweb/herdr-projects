@@ -16,6 +16,7 @@ from .when import parse_at
 from .settings import bare, set_task, settings_for, SET_KEYS, worker_argv, worktrees_on
 from .agents import agent_running, live_agents, starting, status_of, task_status
 from .sessions import session_of
+from .lane import CALL, serve
 from .launch import default_space
 from .store import locate, open_store, read_list, Store, store_files
 from .queues import queue_reason
@@ -786,10 +787,17 @@ def cmd_track(args):
                 a["ended"] = at
                 s.dirty = True
 
+    remote = "/" in args.address
     while True:
         k = hc_json("get", args.address)
         if not k or k.get("state") != "live":
             return ended(now())
+        if remote:
+            # A lane on another machine: its session is there; its herdr-task calls come here.
+            if (k.get("labels") or {}).get(CALL):
+                serve(args.address)
+            time.sleep(1.5)
+            continue
         if not agent_running(k):
             shell_since = shell_since or time.time()
             if time.time() - shell_since > 60:
