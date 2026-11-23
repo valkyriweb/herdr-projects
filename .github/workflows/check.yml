@@ -11,7 +11,7 @@ name: Check
 on:
   # no paths-ignore here: a docs-only pull request must report a check too, or it could never merge
   pull_request:
-    branches: [main, shep/v3.1.1]
+    branches: [main, shep/v3.1.1, shep/upstream-v3.1.35]
   push:
     branches: [main, shep/v3.1.1]
     paths-ignore:
@@ -60,7 +60,7 @@ jobs:
           bun install --frozen-lockfile
           bun web/build-plugins.ts   # web/generated/ (not in git): the plugin list the app imports
           bunx tsc --noEmit -p .
-          bun test service core web
+          bun run test   # keep each file’s Herdr mocks out of other tests
           bun run build
       - name: shell scripts parse
         # every script under plain bash (macOS's bash 3.2 is what people run; #908), and one whose first line says sh
