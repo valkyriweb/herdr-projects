@@ -813,8 +813,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     if role:
         labels += ["--label", f"herdr.role={role}"]
     rel = ["--parent", parent, "--outlive-parent"] if parent else ["--no-parent"]
-    name = agent_name(s, task, "review" if role else None)
     lane = None if role else task.get("lane")
+    name = agent_name(s, task, "review" if role else None, lane and lane["machine"])
     # HERDR_BROWSER_TASK: which task's browser herdr-browser drives (HERD-57), for it and its children.
     if lane:
         # hc can't parent a terminal across machines: its labels keep it under the space's coordinator.
@@ -885,7 +885,7 @@ def parent_for(parent, space):
     return live_parent(parent) or coordinator_in(space)
 
 
-def agent_name(s, task, suffix=None):
+def agent_name(s, task, suffix=None, machine=None):
     """The agent's hc name: its id and title as hc allows names (hat-4-fix-login, at most 32),
     with -2, -3 while another live terminal has it (an agent taking over beside the old one)."""
     base = re.sub(r"[^a-z0-9]+", "-", f"{s.ref(task)} {task['title']}".lower()).strip("-")[:32 - (len(suffix) + 1 if suffix else 0)].rstrip("-")
@@ -893,7 +893,7 @@ def agent_name(s, task, suffix=None):
         base += f"-{suffix}"
     for n in range(1, 20):
         name = base if n == 1 else f"{base[:32 - len(str(n)) - 1].rstrip('-')}-{n}"
-        k = hc_json("get", name)
+        k = hc_json("get", f"{machine}/{name}" if machine else name)
         if not k or k.get("state") != "live":
             return name
     return f"{base[:24].rstrip('-')}-{secrets.token_hex(3)}"

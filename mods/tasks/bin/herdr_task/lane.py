@@ -19,7 +19,7 @@ import sys
 import tempfile
 import time
 
-from .base import ENTRY, Fail, git, guard, hc_json, HOME, now, run, STORE
+from .base import bundle, ENTRY, Fail, git, guard, hc_json, HOME, now, run, STORE
 
 # Only Pi runs elsewhere: pii is a fork installed on this machine only, and the other CLIs'
 # sign-ins and hooks live here.
@@ -28,6 +28,9 @@ HERE = ("here", "local", "this machine")
 CALL = "herdr.task.call"
 CALLS = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state"), "shepherdr", "lane-calls")
 CALL_WAIT = 600
+# The lane's own herdr-task there, this machine's copy, so its calls never hang on what that machine has
+# installed (relative to its home).
+TOOL = ".local/share/shepherdr/lanes/herdr-task"
 NONCE = re.compile(r"[0-9a-f]{32}")
 
 
@@ -72,9 +75,10 @@ def remote_python(machine, script, payload, timeout=120):
 
 
 PREPARE = r'''
-import json, os, subprocess, sys
+import hashlib, json, os, subprocess, sys
 x = json.load(sys.stdin)
 home = os.path.expanduser("~")
+tool = os.path.join(home, x["tool"])
 mirror = os.path.join(home, x["mirror"])
 wt = os.path.join(home, x["worktree"])
 def git(*a, cwd=None):
@@ -86,11 +90,13 @@ if x["op"] == "have":
     os.makedirs(os.path.dirname(mirror), exist_ok=True)
     shell = os.environ.get("SHELL") or "/bin/sh"
     have = git("for-each-ref", "--format=%(objectname)", cwd=mirror).split() if os.path.isdir(mirror) else []
-    print(json.dumps({"home": home, "shell": shell, "have": have}))
+    digest = hashlib.sha1(open(tool, "rb").read()).hexdigest() if os.path.isfile(tool) else None
+    print(json.dumps({"home": home, "shell": shell, "have": have, "tool": digest}))
     raise SystemExit(0)
 if not os.path.isdir(mirror):
     os.makedirs(os.path.dirname(mirror), exist_ok=True)
     git("init", "-q", "--bare", mirror)
+os.chmod(tool, 0o755)
 for k, v in x["config"].items():
     if v:
         git("config", k, v, cwd=mirror)
@@ -100,6 +106,8 @@ if x.get("bundle"):
         git("fetch", "-q", x["bundle"], "+refs/heads/%s:refs/heads/%s" % (b, b), cwd=mirror)
     finally:
         os.unlink(x["bundle"])
+elif subprocess.run(["git", "rev-parse", "-q", "--verify", "refs/heads/" + b], cwd=mirror, stdout=subprocess.DEVNULL).returncode:
+    git("branch", b, x["head"], cwd=mirror)
 if not os.path.isdir(wt):
     git("worktree", "prune", cwd=mirror)
     os.makedirs(os.path.dirname(wt), exist_ok=True)
@@ -152,11 +160,17 @@ def prepare(s, t, machine):
     """Gives the machine the task's branch and a worktree of it; records t["lane"]. Raises Fail."""
     wt, branch = t["worktree"], t["branch"]
     mirror, there = _paths(s, t)
-    base = {"mirror": mirror, "worktree": there, "branch": branch}
+    base = {"mirror": mirror, "worktree": there, "branch": branch, "tool": TOOL}
     info = remote_python(machine, PREPARE, {**base, "op": "have"}, timeout=60)
+    guard(["hc"])
+    tool = bundle()
+    if hashlib.sha1(tool).hexdigest() != info.get("tool"):
+        r = subprocess.run(["hc", "file", "write", "--on", machine, TOOL], input=tool, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if r.returncode != 0:
+            raise Fail(f"Couldn't copy herdr-task to {machine}: {r.stderr.decode(errors='replace').strip()}")
     head = git(wt, "rev-parse", "HEAD")[1]
     have = [h for h in info.get("have") or [] if git(wt, "cat-file", "-e", h + "^{commit}")[0]]
-    payload = {**base, "op": "add", "config": {k: git(wt, "config", k)[1] for k in ("user.name", "user.email")}}
+    payload = {**base, "op": "add", "head": head, "config": {k: git(wt, "config", k)[1] for k in ("user.name", "user.email")}}
     if head not in have:
         fd, path = tempfile.mkstemp(suffix=".bundle")
         os.close(fd)
@@ -165,7 +179,6 @@ def prepare(s, t, machine):
             if not ok:
                 raise Fail(f"Couldn't bundle {branch}: {err}")
             target = f"{mirror}.incoming-{os.getpid()}.bundle"
-            guard(["hc"])
             with open(path, "rb") as f:
                 r = subprocess.run(["hc", "file", "write", "--on", machine, target], stdin=f,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -227,7 +240,7 @@ def remote_argv(lane, argv, env=()):
 
 
 def own_path(lane):
-    return os.path.join(lane["home"], ".local", "bin", "herdr-task")
+    return os.path.join(lane["home"], TOOL)
 
 
 # ---- calls from the lane ----------------------------------------------------------------------

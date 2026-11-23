@@ -2512,6 +2512,18 @@ class PiLanes(unittest.TestCase):
                  "commit", "-q", "--allow-empty", "-m", words)
         return self.git(cwd, "rev-parse", "HEAD")
 
+    def test_a_lane_name_is_unique_on_its_machine(self):
+        """hc run --on refuses a name live on that machine; a bare hc get only looks here."""
+        import herdr_task.launch as launch
+        asked = []
+        live = {"dl360/slp-4-x": {"state": "live"}}
+        s = Store([])
+        s.ref = lambda t: "SLP-4"
+        with self.mock.patch.object(launch, "hc_json", lambda *a: asked.append(a[1]) or live.get(a[1])):
+            self.assertEqual(launch.agent_name(s, {"title": "x"}, machine="dl360"), "slp-4-x-2")
+            self.assertEqual(launch.agent_name(s, {"title": "x"}), "slp-4-x")
+        self.assertEqual(asked, ["dl360/slp-4-x", "dl360/slp-4-x-2", "slp-4-x"])
+
     def test_the_branch_goes_there_and_its_commits_come_back(self):
         """prepare() gives the other machine (a throwaway home) the branch, ready's pull() brings its commits back."""
         import shutil
@@ -2530,12 +2542,12 @@ class PiLanes(unittest.TestCase):
                                env={**os.environ, "HOME": there}, check=True)
             return json.loads(p.stdout.strip().splitlines()[-1])
 
-        def write_there(cmd, stdin=None, **kw):
+        def write_there(cmd, stdin=None, input=None, **kw):
             if cmd[:3] != ["hc", "file", "write"]:
-                return real(cmd, stdin=stdin, **kw)
+                return real(cmd, stdin=stdin, input=input, **kw)
             os.makedirs(os.path.dirname(os.path.join(there, cmd[-1])), exist_ok=True)
             with open(os.path.join(there, cmd[-1]), "wb") as f:
-                shutil.copyfileobj(stdin, f)
+                f.write(input) if input is not None else shutil.copyfileobj(stdin, f)
             return subprocess.CompletedProcess(cmd, 0, b"", b"")
         for name, value in (("remote_python", remote), ("guard", lambda a: None)):
             p = self.mock.patch.object(self.lane, name, value)
@@ -2548,6 +2560,15 @@ class PiLanes(unittest.TestCase):
             lane = self.lane.prepare(s, t, "dl360")
         self.assertEqual((lane["machine"], lane["synced"], lane["home"]), ("dl360", start, there))
         self.assertEqual(self.git(lane["worktree"], "rev-parse", "HEAD"), start)
+        tool = self.lane.own_path(lane)
+        self.assertTrue(os.access(tool, os.X_OK))
+        self.assertEqual(subprocess.run([sys.executable, tool, "--version"], capture_output=True).returncode, 0)
+        # A second task whose branch starts at a commit the machine already has (nothing to bundle).
+        wt2 = os.path.join(self.root, "wt2")
+        self.git(main, "worktree", "add", "-q", "-b", "task/2-y", wt2, start)
+        with self.mock.patch.object(self.lane.subprocess, "run", write_there):
+            lane2 = self.lane.prepare(s, {"id": 2, "worktree": wt2, "branch": "task/2-y"}, "dl360")
+        self.assertEqual(self.git(lane2["worktree"], "rev-parse", "--abbrev-ref", "HEAD"), "task/2-y")
         theirs = self.commit(lane["worktree"], "made there")
         self.lane.pull(s, t)
         self.assertEqual((self.git(wt, "rev-parse", "HEAD"), lane["synced"]), (theirs, theirs))
