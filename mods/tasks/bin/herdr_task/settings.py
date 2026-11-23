@@ -261,7 +261,7 @@ def argv_model(argv):
 
 SETTINGS_HEAD = "Settings: (from herdr-task show; where the brief above says otherwise, it wins)"
 SET_BY = {"task": "set by the assistant for this task", "folder": "this folder's setting", "machine": "this machine's setting",
-          "all": "your setting everywhere"}
+          "all": "your setting everywhere", "lane": "reviewer sign-ins stay on the main machine"}
 MERGE_WORDS = {"ask": "ask the person first: they accept it in the Tasks panel, which merges it",
                "checks": "after checks: once you say ready, Herdr merges it when its checks pass",
                "auto": "on its own: once you say ready, Herdr merges it"}
@@ -504,7 +504,7 @@ def task_settings(s, t, space=None, argv=None, live=False):
         on, rev_by = rounds_cfg > 0, by_layer(s, space, "tasks", "review_rounds", rounds_cfg > 0, False)
     here = t.get("mode") != "worktree"
     if t.get("lane"):
-        on, rev_by = False, "lane: reviewer sign-ins stay on the main machine"
+        on, rev_by = False, "lane"
     add("Review", "off" if not on else "on", on, rev_by)
     # What it runs on: the given argv, else its last agent's, else what it would start with.
     argv = argv or (t["agents"][-1].get("argv") if t.get("agents") else None) or worker_argv(s, t, space)
