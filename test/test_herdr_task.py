@@ -2730,13 +2730,17 @@ class PiLanes(unittest.TestCase):
         real = subprocess.run
 
         def remote(machine, script, payload, timeout=120):
+            self.assertLess(len(json.dumps(payload)), 8 * 1024 * 1024)
             p = real([sys.executable, "-c", script], input=json.dumps(payload), capture_output=True, text=True,
                                env={**os.environ, "HOME": there}, check=True)
+            self.assertLess(len(p.stdout), 8 * 1024 * 1024)
             return json.loads(p.stdout.strip().splitlines()[-1])
 
         def write_there(cmd, stdin=None, input=None, **kw):
             if cmd[:3] != ["hc", "file", "write"]:
                 return real(cmd, stdin=stdin, input=input, **kw)
+            if stdin is not None:
+                self.assertLess(os.fstat(stdin.fileno()).st_size, 8 * 1024 * 1024)
             os.makedirs(os.path.dirname(os.path.join(there, cmd[-1])), exist_ok=True)
             with open(os.path.join(there, cmd[-1]), "wb") as f:
                 f.write(input) if input is not None else shutil.copyfileobj(stdin, f)
@@ -2749,6 +2753,10 @@ class PiLanes(unittest.TestCase):
         s.loc["folder"] = main
         t = {"id": 1, "worktree": wt, "branch": "task/1-x"}
         with self.mock.patch.object(self.lane.subprocess, "run", write_there):
+            with open(os.path.join(wt, "large.bin"), "wb") as stream:
+                stream.write(os.urandom(9 * 1024 * 1024))
+            self.git(wt, "add", "large.bin")
+            start = self.commit(wt, "large repository")
             lane = self.lane.prepare(s, t, "dl360")
         self.assertEqual((lane["machine"], lane["synced"], lane["home"]), ("dl360", start, there))
         self.assertEqual(self.git(lane["worktree"], "rev-parse", "HEAD"), start)
@@ -2771,7 +2779,10 @@ class PiLanes(unittest.TestCase):
         self.assertTrue(self.lane.cleanup(third))
         self.assertNotIn("lane", third)
         self.assertFalse(os.path.exists(lane3["worktree"]))
-        theirs = self.commit(lane["worktree"], "made there")
+        with open(os.path.join(lane["worktree"], "large.bin"), "wb") as stream:
+            stream.write(os.urandom(9 * 1024 * 1024))
+        self.git(lane["worktree"], "add", "large.bin")
+        theirs = self.commit(lane["worktree"], "large commit made there")
         self.lane.pull(s, t)
         self.assertEqual((self.git(wt, "rev-parse", "HEAD"), lane["synced"]), (theirs, theirs))
         # Rewritten there (amended): taken, as nothing changed here since.

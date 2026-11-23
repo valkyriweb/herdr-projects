@@ -34,6 +34,53 @@ CALL_WAIT = 600
 # installed (relative to its home).
 TOOL = ".local/share/shepherdr/lanes/herdr-task"
 NONCE = re.compile(r"[0-9a-f]{32}")
+TRANSFER_CHUNK = 3 * 1024 * 1024
+
+TRANSFER = r'''
+import base64, json, os, sys
+x = json.load(sys.stdin)
+path = os.path.expanduser(x["path"])
+if x["op"] == "write":
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb" if x["offset"] == 0 else "r+b") as stream:
+        stream.seek(0, 2)
+        if stream.tell() != x["offset"]:
+            raise SystemExit("lane transfer offset differs")
+        stream.write(base64.b64decode(x["data"], validate=True))
+    out = {}
+elif x["op"] == "read":
+    with open(path, "rb") as stream:
+        stream.seek(x["offset"])
+        out = {"data": base64.b64encode(stream.read(x["size"])).decode()}
+else:
+    os.unlink(path)
+    out = {}
+print(json.dumps(out))
+'''
+
+
+def send_file(machine, path, target):
+    with open(path, "rb") as stream:
+        offset = 0
+        while True:
+            data = stream.read(TRANSFER_CHUNK)
+            remote_python(machine, TRANSFER, {"op": "write", "path": target, "offset": offset,
+                                             "data": base64.b64encode(data).decode()})
+            offset += len(data)
+            if len(data) < TRANSFER_CHUNK:
+                return
+
+
+def receive_file(machine, source, stream):
+    offset = 0
+    while True:
+        result = remote_python(machine, TRANSFER, {"op": "read", "path": source, "offset": offset,
+                                                  "size": TRANSFER_CHUNK})
+        data = base64.b64decode(result["data"], validate=True)
+        stream.write(data)
+        offset += len(data)
+        if len(data) < TRANSFER_CHUNK:
+            return
 
 
 def placement(task_machine, setting, kind, mode, connected, me):
@@ -144,10 +191,10 @@ if head != x["have"]:
         if code != 0:
             print(json.dumps({"error": err[-300:]}))
             raise SystemExit(0)
-        with open(path, "rb") as f:
-            out["bundle"] = base64.b64encode(f.read()).decode()
-    finally:
+        out["bundle_path"] = path
+    except BaseException:
         os.unlink(path)
+        raise
 print(json.dumps(out))
 '''
 
@@ -184,11 +231,7 @@ def prepare(s, t, machine):
             if not ok:
                 raise Fail(f"Couldn't bundle {branch}: {err}")
             target = f"{mirror}.incoming-{os.getpid()}.bundle"
-            with open(path, "rb") as f:
-                r = subprocess.run(["hc", "file", "write", "--on", machine, target], stdin=f,
-                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            if r.returncode != 0:
-                raise Fail(f"Couldn't send {branch} to {machine}: {r.stderr.decode(errors='replace').strip()}")
+            send_file(machine, path, os.path.join(info["home"], target))
         finally:
             os.unlink(path)
         payload["bundle"] = os.path.join(info["home"], target)
@@ -223,12 +266,13 @@ def pull(s, t):
         fd, path = tempfile.mkstemp(suffix=".bundle")
         try:
             with os.fdopen(fd, "wb") as f:
-                f.write(base64.b64decode(res["bundle"]))
+                receive_file(lane["machine"], res["bundle_path"], f)
             ok, _, err = git(wt, "fetch", "-q", path, "HEAD")
             if not ok:
                 raise Fail(f"Couldn't bring the commits from {lane['machine']}: {err}")
         finally:
             os.unlink(path)
+            remote_python(lane["machine"], TRANSFER, {"op": "remove", "path": res["bundle_path"]})
         if not git(wt, "merge", "-q", "--ff-only", res["head"])[0]:
             # Rewritten there (a rebase): its branch wins only when nothing was added here since.
             if have != lane.get("synced"):
