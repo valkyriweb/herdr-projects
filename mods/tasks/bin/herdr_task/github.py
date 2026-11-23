@@ -254,15 +254,16 @@ def pr_at_tip(task, repo):
 
 
 def pr_merged(task, repo):
-    """The merged pull request for the task's branch (from this repo, into its base), or None
-    (SHEP-59: a squash merge leaves the branch's commits out of the base)."""
+    """The branch's merged PR into its base, if found, plus whether GitHub answered."""
     ok, out, _ = gh("pr", "list", "--repo", repo, "--head", task["branch"], "--state", "merged",
                     "--json", "number,url,isCrossRepository,baseRefName,headRefOid,mergeCommit")
     try:
-        return next((p for p in json.loads(out) if not p.get("isCrossRepository")
-                     and p.get("baseRefName") == (task.get("base") or "main")), None) if ok and out else None
+        if ok and isinstance(rows := json.loads(out), list):
+            return next((p for p in rows if not p.get("isCrossRepository")
+                         and p.get("baseRefName") == (task.get("base") or "main")), None), True
     except (ValueError, TypeError, AttributeError):
-        return None
+        pass
+    return None, False
 
 
 def landed(s, task):
@@ -283,26 +284,29 @@ def landed(s, task):
 
 
 def already_merged(s, task):
-    """SHEP-59: its work is already in its base (its pull request merged, squash too, or nothing left
-    to merge): ready and the tick mark it done instead of opening a pull request. Returns the merged
-    pull request ({} when merged without one), or None. Its pull request is recorded on the task."""
-    if merged_here(s, task):
-        return {}
+    """Return the merged PR (recorded on the task), {} for local integration, or None.
+    Finding a PR defers acceptance to the tick; it does not open a replacement PR."""
     repo = github(s)
-    tip = task.get("head")
+    main = s.loc["folder"]
+    tip = git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{task.get('branch')}")[1] or task.get("head")
+    if task.get("pr"):
+        v = pr_view(task)
+        if v and v.get("state") == "MERGED" and tip and v.get("headRefOid") == tip:
+            return task["pr"]
+        return None  # a known PR must not fall back to the local-only closeout
     if repo:
-        main = s.loc["folder"]
+        found, answered = pr_merged(task, repo)
+        if not answered:
+            return None
+        if found:
+            if tip and found.get("headRefOid") == tip:
+                task["pr"] = {"number": found["number"], "url": found["url"], "repo": repo}
+                return task["pr"]
+            return None  # the branch has work that wasn't in the merged PR
         git(main, "fetch", "--quiet", remote_of(main), task.get("base") or "main")
-        tip = git(main, "rev-parse", "--verify", "--quiet", f"refs/heads/{task.get('branch')}")[1] or tip
-        if task.get("pr"):
-            v = pr_view(task)
-            if v and v.get("state") == "MERGED" and v.get("headRefOid") == tip:
-                return {**task["pr"], "mergeCommit": v.get("mergeCommit")}
-        found = pr_merged(task, repo)
-        if found and found.get("headRefOid") == tip:
-            task["pr"] = {"number": found["number"], "url": found["url"], "repo": repo}
-            return {**task["pr"], "mergeCommit": found.get("mergeCommit")}
-    return {} if landed(s, task) else None
+    elif on_github(main):
+        return None  # GitHub evidence is unavailable, not proof of a local-only task
+    return {} if merged_here(s, task) or landed(s, task) else None
 
 
 BAD = {"FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STARTUP_FAILURE"}
@@ -372,7 +376,11 @@ def check_rows(repo, sha):
         return rows, False
     ok, out, _ = gh("api", f"repos/{repo}/commits/{sha}/check-runs?per_page=100")
     try:
-        for c in json.loads(out).get("check_runs") or [] if ok else []:
+        data = json.loads(out) if ok else {}
+        runs = data.get("check_runs") or []
+        if data.get("total_count", len(runs)) > len(runs):
+            whole = False
+        for c in runs:
             rows.append({"name": c.get("name"), "status": (c.get("status") or "").upper(),
                          "conclusion": (c.get("conclusion") or "").upper(), "startedAt": c.get("started_at") or "",
                          "completedAt": c.get("completed_at") or "",
@@ -382,7 +390,11 @@ def check_rows(repo, sha):
     whole = whole and ok
     ok, out, _ = gh("api", f"repos/{repo}/commits/{sha}/status")
     try:
-        for c in json.loads(out).get("statuses") or [] if ok else []:
+        data = json.loads(out) if ok else {}
+        statuses = data.get("statuses") or []
+        if data.get("total_count", len(statuses)) > len(statuses):
+            whole = False
+        for c in statuses:
             rows.append({"context": c.get("context"), "state": (c.get("state") or "").upper(),
                          "startedAt": c.get("updated_at") or c.get("created_at") or ""})
     except (ValueError, AttributeError):
@@ -713,6 +725,8 @@ def remove_worktree(s, task):
     wt, main = task.get("worktree"), s.loc["folder"]
     from .lane import cleanup
     if not cleanup(task):
+        task["worktree_kept_why"] = f"Worktree {wt} kept: remote cleanup could not verify or remove the lane."
+        s.dirty = True
         return False
     if wt and os.path.lexists(wt):
         if os.path.realpath(wt) == os.path.realpath(main):

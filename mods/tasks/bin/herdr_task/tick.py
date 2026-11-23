@@ -10,6 +10,7 @@ import time
 
 from .base import Fail, git, guard, hc_json, now, PR_EVERY, run, SHELLS, STORE, stop_note
 from .settings import machine_name, worker_argv
+from .closeout import enabled as closeout_enabled, green_merge, ready_for_closeout, worktree_head
 from .agents import (
     agent_log, agent_running, busy_again, detail, held_ask, last_question, live_agents, mid_turn_agents, own_work, ready_turns,
     status_word,
@@ -17,8 +18,8 @@ from .agents import (
 )
 from .provider import NUDGE, provider_cut, provider_error, PROVIDER_WAITS
 from .sessions import find_lost_logs, refresh_sessions, session_of
-from .github import (already_merged, BEHIND, CHECKS_NEVER, checks_missing, checks_since, drop_branch, expected_checks, finish, github, merged_here, needs_approval, note_checks, pr_merged, pr_pending, pr_problem,
-                     pr_view, pr_wait, queue_entry, queue_merge, tidy_done, tidy_due, update_main, watch_main)
+from .github import (already_merged, BEHIND, CHECKS_NEVER, checks_missing, checks_since, expected_checks, finish, github, merged_here, needs_approval, note_checks, on_github, pr_merged, pr_pending, pr_problem,
+                     pr_view, pr_wait, queue_entry, queue_merge, tidy_done, tidy_due, watch_main)
 from .launch import default_space
 from .store import locate, read_list, Store, store_files
 from .queues import machine_hold, refresh_ext, running_count, set_hold, waiting_ext, waiting_for
@@ -72,7 +73,8 @@ def queue_pass(s, t, v, report):
     t.pop("merge_queued")
     why = (q.get("reason") or "").strip().rstrip(".")
     head = v.get("headRefOid")
-    if "timed_out" in why.lower().replace(" ", "_") and head and t.get("requeued") != head and not pr_problem(v):
+    if ("timed_out" in why.lower().replace(" ", "_") and head and t.get("requeued") != head and not pr_problem(v)
+            and (t.get("accepted_at") or not closeout_enabled(t["pr"].get("repo")))):
         ok, err = queue_merge(t, head)
         if ok:
             t["requeued"], t["merge_queued"] = head, now()
@@ -97,10 +99,28 @@ def back_in_queue(s, t, report):
         report.setdefault("requeued", []).append(s.ref(t))
 
 
+def accepted_merge(s, t, report):
+    t["merged"] = True
+    t.setdefault("accepted_at", now())
+    finish(s, t)
+    report["done"].append(t["id"])
+
+
+def here_closeout(s, t, report):
+    prs = t["closeout_prs"]
+    if now() - t.get("closeout_checked", 0) < PR_EVERY or not ready_for_closeout(s, t, prs):
+        return
+    t["closeout_checked"] = now()
+    s.dirty = True
+    if all(green_merge(pr_view({"pr": pr}), pr["head"]) for pr in prs):
+        accepted_merge(s, t, report)
+
+
 def facts(s, t, report):
     """A worktree task whose own work merged anywhere is done (once its agent is between turns, and
     a Working one once its agent is gone or says ready); a pull request's problems need the person."""
     if t.get("pr"):
+        t.pop("_pr_fresh", None)
         pr = t["pr"]
         if now() - pr.get("checked", 0) < PR_EVERY:
             return
@@ -113,15 +133,12 @@ def facts(s, t, report):
         if v.get("state") == "MERGED":
             if at_work(s, t) or holds_open(s, t):
                 return
-            t["merged"] = True
+            pr.pop("wait", None)
+            if not (t.get("accepted_at") or t.get("merge_queued")):
+                if not ready_for_closeout(s, t, [pr]) or not green_merge(v, worktree_head(s, t)):
+                    return
             watch_main(s, t, (v.get("mergeCommit") or {}).get("oid"))
-            if t.get("merge_queued"):
-                # Herdr queued it: its base here catches up and its branch on GitHub goes, as a merge
-                # Herdr made itself would (merge_now()).
-                update_main(s, t)
-                drop_branch(s, t)
-            finish(s, t)
-            report["done"].append(t["id"])
+            accepted_merge(s, t, report)
             return
         problem = pr_problem(v)
         if t.get("merge_queued"):
@@ -164,30 +181,30 @@ def facts(s, t, report):
             # Checks that should have started never did: it doesn't merge by itself (the person's Accept still can).
             t["attention"], t["attention_at"] = CHECKS_NEVER, now()
             report["attention"].append(t["id"])
-    elif merged_here(s, t) and not at_work(s, t) and not t.get("kept_open"):
-        # #989: reopened after its work merged (kept_open, until its agent says ready): its fix goes on.
-        t["merged"] = True
-        finish(s, t)
-        report["done"].append(t["id"])
-    elif t.get("own") and not at_work(s, t) and not holds_open(s, t) and now() - t.get("gh_checked", 0) >= PR_EVERY:
-        # SHEP-59: its pull request squash-merged without the task knowing (opened by its agent), or a
-        # Ready one whose work is already in its base: done, as ready would.
-        t["gh_checked"] = now()
-        s.dirty = True
-        gone = already_merged(s, t) if t["state"] == "ready" else squash_merged(s, t)
-        if gone is not None:
+    elif not at_work(s, t) and not t.get("kept_open"):
+        local = merged_here(s, t)
+        if local and not on_github(s.loc["folder"]) and not github(s):
             t["merged"] = True
-            if gone:
-                watch_main(s, t, (gone.get("mergeCommit") or {}).get("oid"))
             finish(s, t)
             report["done"].append(t["id"])
+        elif t.get("own") and not holds_open(s, t) and now() - t.get("gh_checked", 0) >= PR_EVERY:
+            t["gh_checked"] = now()
+            s.dirty = True
+            if t["state"] == "ready":
+                gone = already_merged(s, t)
+                if gone == {}:
+                    t["merged"] = True
+                    finish(s, t)
+                    report["done"].append(t["id"])
+            else:
+                squash_merged(s, t)  # record it; an agent must report Ready before auto-accept
 
 
 def squash_merged(s, t):
     """A Working task's branch whose pull request (opened by its agent) merged at its tip: that
     pull request, recorded on the task, or None."""
     repo = github(s)
-    found = pr_merged(t, repo) if repo else None
+    found, _ = pr_merged(t, repo) if repo else (None, False)
     if not found or found.get("headRefOid") != (t.get("own") or t.get("head")):
         return None
     t["pr"] = {"number": found["number"], "url": found["url"], "repo": repo}
@@ -282,10 +299,13 @@ def tick_store(s, report):
                     pr_deliver(s, t, report)
                 except Exception as e:  # never stops the tick
                     report.setdefault("github_error", []).append(f"{s.ref(t)}: {e}")
-            if t["state"] == "ready" and t.get("auto_merge") and t.get("pr") and not t.get("attention") and t.get("_pr_fresh"):
+            if (t["state"] == "ready" and t.get("auto_merge") and t.get("pr") and not t.get("attention") and t.get("_pr_fresh")
+                    and (t.get("accepted_at") or not closeout_enabled(t["pr"].get("repo")))):
                 if not merge_now(s, t):
                     report["done"].append(t["id"])
             t.pop("_pr_fresh", None)
+        elif t["state"] == "ready" and t.get("closeout_prs"):
+            here_closeout(s, t, report)
     due_pass(s, report)
     queued = sorted((t for t in s.data["tasks"] if t["state"] == "queued"), key=lambda t: t.get("queued_at") or 0)
     n = running_count(s) if queued else 0

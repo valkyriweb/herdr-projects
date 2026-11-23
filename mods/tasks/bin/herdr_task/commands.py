@@ -12,6 +12,7 @@ import time
 
 from . import lane as lanes
 from . import sandbox
+from .closeout import bind_prs, enabled as closeout_enabled
 from .base import Fail, git, guard, now, run, STORE, stop_note, VERSION
 from .settings import (
     agent_argv, agent_key, bare, merge_policy, review_limits, set_opts, settings_block, settings_for, space_base,
@@ -390,6 +391,14 @@ def cmd_ready(args):
             # Kept (the task's line says why it waits); refused after the store is saved.
             s.dirty = True
         else:
+            urls = getattr(args, "closeout_pr", None)
+            if urls and t.get("mode") != "here":
+                raise Fail("Only tasks in the folder itself use --closeout-pr; worktree tasks already track a PR.")
+            if urls:
+                t["closeout_prs"] = bind_prs(urls)
+            else:
+                t.pop("closeout_prs", None)
+            t.pop("closeout_checked", None)
             if said:
                 t["summary"] = said
                 # A new summary brings its own details (or none): an older one's would be stale.
@@ -412,7 +421,7 @@ def cmd_ready(args):
                 # "For AGENTS.md": what the next agent would need about setting up or testing this
                 # repo; the Assistant decides whether it goes into the repo's AGENTS.md.
                 t["agents_md"] = note[:300]
-            for k in ("attention", "attention_at", "handed_at", "fix_requested", "progress", "retry", "review_out", "back"):
+            for k in ("attention", "attention_at", "handed_at", "fix_requested", "progress", "retry", "review_out", "back", "kept_open"):
                 t.pop(k, None)
             # Its agents' turns now: a later turn of theirs takes it back to work (busy_again()).
             t["ready_turns"] = ready_turns(live_agents(s.key(t)))
@@ -433,17 +442,20 @@ def cmd_ready(args):
         # Its work already in its base (SHEP-59: its pull request squash-merged, or nothing left to
         # merge): done at once, never a second pull request.
         gone = already_merged(s, t) if wt and t.get("start") and not t.get("nothing_to_merge") else None
-        if gone is not None:
+        if gone == {}:
             t["merged"] = True
-            if gone:
-                watch_main(s, t, (gone.get("mergeCommit") or {}).get("oid"))
-                update_main(s, t)
             finish(s, t, even_if_busy=True)
-            v = view(s, t)
-            how = f"pull request #{gone['number']} is merged" if gone else f"its work is already in {t.get('base') or 'main'}"
-            say(args, v, f"{s.ref(t)}: {how}; done.")
+            say(args, view(s, t), f"{s.ref(t)}: its work is already in {t.get('base') or 'main'}; done.")
             return
-        msg = finalize(s, t)
+        if gone:
+            t["state"], t["ready_at"] = "ready", now()
+            t.pop("auto_merge", None)
+            gone["checked"] = 0
+            gone.pop("wait", None)
+            s.dirty = True
+            msg = f"{s.ref(t)} is ready: pull request #{gone['number']} is already merged."
+        else:
+            msg = finalize(s, t)
         # Its own background work still running (SHEP-148): the task shows Working until it ends.
         log = agent_log(t, me) if me else None
         jobs = background_jobs(log)[0] if log else {}
@@ -741,6 +753,8 @@ def finalize(s, t):
         # Nothing to merge (in the folder itself, or no commits beyond its base): it waits in Ready
         # for the person's Accept, whatever the merge setting; no pull request.
         t.pop("auto_merge", None)
+        if t.get("closeout_prs"):
+            return msg + " Shepherdr accepts it once all linked pull requests are merged with passing checks."
         return msg + (" Nothing to merge (no commits beyond its base)." if t.get("nothing_to_merge") else "") + \
             " The person accepts it in the Tasks panel."
     if failed:
@@ -752,6 +766,9 @@ def finalize(s, t):
         pr["wait"] = PR_CHECKS_RUNNING
         msg = (f"{s.ref(t)} is ready: pull request #{pr['number']}, {pr['url']}. It shows Working until its checks "
                "pass and GitHub says it can merge; a failing check or a conflict comes back to you to fix.")
+    if closeout_enabled(repo):
+        t.pop("auto_merge", None)
+        return msg + " Shepherdr won't merge it. Once merged with passing checks, it accepts the task."
     policy = merge_policy(s, t)
     if policy in ("auto", "checks"):
         t["auto_merge"] = policy
@@ -819,7 +836,7 @@ def cmd_state(args, state):
             # pull request merged and close it again at once) until its agent says ready.
             if t["state"] == "done" and t.get("merged"):
                 t["kept_open"] = True
-            for k in ("reviews", "review", "auto_merge", "merged", "nothing_to_merge", "accepted_at", "merge_queued"):
+            for k in ("reviews", "review", "auto_merge", "merged", "nothing_to_merge", "accepted_at", "merge_queued", "closeout_prs", "closeout_checked"):
                 t.pop(k, None)
         if state == "done" and t.get("worktree") and merged_here(s, t):
             t["merged"] = True

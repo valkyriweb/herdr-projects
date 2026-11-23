@@ -1292,8 +1292,7 @@ class BackToWork(unittest.TestCase):
             got["asked"] += 1
             return entry
         for name, value in (("pr_view", lambda t: v), ("pr_news", lambda *a: None), ("now", lambda: clock),
-                            ("queue_entry", ask), ("watch_main", lambda *a: None), ("update_main", lambda *a: None),
-                            ("drop_branch", lambda s, t: got["dropped"].append(t["id"])),
+                            ("queue_entry", ask), ("watch_main", lambda *a: None),
                             ("finish", lambda s, t, even_if_busy=False: (t.update(state="done"), got["done"].append(t["id"])))):
             p = self.mock.patch.object(self.tick, name, value)
             p.start()
@@ -1301,7 +1300,8 @@ class BackToWork(unittest.TestCase):
         t = self.store.data["tasks"][0]
         t["pr"]["checked"] = 0
         report = {"attention": [], "done": []}
-        self.tick.facts(self.store, t, report)
+        with self.mock.patch.object(self.tick, "drop_branch", lambda s, t: got["dropped"].append(t["id"]), create=True):
+            self.tick.facts(self.store, t, report)
         return got, report
 
     def test_a_queued_pull_request_is_done_once_github_merged_it(self):
@@ -1312,7 +1312,51 @@ class BackToWork(unittest.TestCase):
         got, _ = self.queue_tick(self.FINE, {"in": True, "auto": False, "reason": None}, clock=20_000_000)
         self.assertEqual((t["state"], t.get("merge_queued"), got["asked"]), ("ready", 10_000_000 - 1000, 1))
         got, report = self.queue_tick({"state": "MERGED", "mergeCommit": {"oid": "f00"}})
-        self.assertEqual((t["state"], t.get("merged"), got["dropped"], report["done"]), ("done", True, [7], [7]))
+        self.assertEqual((t["state"], t.get("merged"), got["dropped"], report["done"]), ("done", True, [], [7]))
+
+    def test_an_external_merge_outside_the_owner_allowlist_stays_ready(self):
+        t = self.pr_task(head="abc")
+        got, report = self.queue_tick({**self.FINE, "state": "MERGED", "mergeCommit": {"oid": "f00"}})
+        self.assertEqual((t["state"], got["dropped"], report["done"]), ("ready", [], []))
+
+    def test_exact_green_merge_accepts_without_requesting_a_merge(self):
+        t = self.pr_task(head="abc")
+        merged = {**self.FINE, "state": "MERGED", "mergeCommit": {"oid": "f00"}}
+        with self.mock.patch.object(self.tick, "ready_for_closeout", return_value=True), \
+                self.mock.patch.object(self.tick, "worktree_head", return_value="abc"), \
+                self.mock.patch.object(self.tick, "merge_now", side_effect=AssertionError("must not merge")), \
+                self.mock.patch.object(self.tick, "queue_merge", side_effect=AssertionError("must not queue")):
+            for v in (dict(merged, headRefOid="def"), dict(merged, checks_unknown=True),
+                      dict(merged, statusCheckRollup=[]), dict(merged, mergeCommit=None),
+                      dict(merged, statusCheckRollup=[{"name": "test", "conclusion": "FAILURE"}]),
+                      dict(merged, statusCheckRollup=[*merged["statusCheckRollup"], {"status": "IN_PROGRESS"}]),
+                      dict(merged, statusCheckRollup=[{"name": "test", "conclusion": "SKIPPED"}])):
+                self.queue_tick(v)
+                self.assertNotIn("accepted_at", t)
+                self.assertEqual(t["state"], "ready")
+            _, report = self.queue_tick(merged)
+        self.assertEqual((t["state"], t["accepted_at"], report["done"]), ("done", 10_000_000, [7]))
+
+    def test_here_closeout_waits_for_every_bound_head(self):
+        from herdr_task import closeout
+        merged = {**self.FINE, "state": "MERGED", "mergeCommit": {"oid": "f00"}}
+        prs = [{"repo": "o/r", "number": 1, "head": "abc"}, {"repo": "o/another", "number": 2, "head": "def"}]
+        t = self.ready(mode="here", closeout_prs=prs)
+        self.store.loc["folder"] = "/personal"
+        report = {"done": [], "started": []}
+        views = {1: merged, 2: dict(merged, state="OPEN", headRefOid="def")}
+        with self.mock.patch.object(closeout, "read_settings", return_value={"auto_accept_merged_repos": ["O/R", "o/another"]}), \
+                self.mock.patch.object(closeout, "mid_turn", return_value=False), \
+                self.mock.patch.object(self.tick, "pr_view", side_effect=lambda x: views[x["pr"]["number"]]), \
+                self.mock.patch.object(self.tick, "merge_now", side_effect=AssertionError("must not merge")):
+            self.tick.tick_store(self.store, report)
+            self.assertEqual(t["state"], "ready")
+            views[2] = dict(merged, headRefOid="def")
+            t["closeout_checked"] = 0
+            self.tick.tick_store(self.store, report)
+            self.tick.tick_store(self.store, report)
+        self.assertEqual((t["state"], report["done"]), ("done", [7]))
+        self.assertNotIn("pr", t)  # manual Accept can never merge one of these URLs
 
     def test_the_queue_removing_it_needs_you(self):
         t = self.pr_task()
@@ -1467,7 +1511,7 @@ class BackToWork(unittest.TestCase):
         self.assertEqual((t["state"], t.get("merged")), ("running", None))
         self.live = []
         self.queue_tick(merged, clock=20_000_000)
-        self.assertEqual((t["state"], t.get("merged")), ("done", True))
+        self.assertEqual((t["state"], t.get("merged")), ("running", None))
 
     def test_reopened_after_a_merge_it_stays_open_and_takes_status(self):
         t = self.pr_task()
@@ -2256,6 +2300,28 @@ class DoneWorktreesGo(unittest.TestCase):
         self.assertIn("untracked", report["worktrees_kept"][0]["why"])
         self.assertEqual(len(self.cleanup_calls), 1)
 
+    def test_a_green_external_merge_accepts_but_guarded_tidy_keeps_its_draft(self):
+        from unittest.mock import patch
+        from herdr_task import closeout
+        wt = self.task["worktree"]
+        path = os.path.join(wt, "draft.txt")
+        with open(path, "w") as draft:
+            draft.write("unfinished")
+        head = self.git(wt, "rev-parse", "HEAD")
+        self.task.update(state="ready", head=head, merged=False, pr={"number": 7, "repo": "o/r"})
+        merged = {"state": "MERGED", "mergeCommit": {"oid": head}, "headRefOid": head,
+                  "statusCheckRollup": [{"name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS"}]}
+        report = {"done": []}
+        with patch.object(closeout, "read_settings", return_value={"auto_accept_merged_repos": ["o/r"]}), \
+                patch.object(self.tick, "pr_view", return_value=merged):
+            self.tick.facts(self.store, self.task, report)
+        self.assertEqual((self.task["state"], report["done"]), ("done", [1]))
+        self.assertIn("untracked", self.task["worktree_kept_why"])
+        self.assertEqual(self.cleanup_calls, [["close", "--path", wt, "--apply"]])
+        self.assertEqual(self.git(self.main, "rev-parse", "refs/heads/task/1"), head)
+        with open(path) as draft:
+            self.assertEqual(draft.read(), "unfinished")
+
     def test_missing_cleanup_does_not_fall_back_to_git(self):
         from unittest.mock import patch
         with patch.object(self.github, "run", side_effect=FileNotFoundError("agent-cleanup")):
@@ -2815,9 +2881,9 @@ class PiLanes(unittest.TestCase):
             lane3 = self.lane.prepare(s, {"id": 3, "worktree": wt3, "branch": "task/3-z"}, "dl360")
         self.assertEqual(self.git(lane3["worktree"], "rev-parse", "HEAD"), older)
         third = {"lane": lane3, "worktree": wt3}
-        self.assertTrue(self.lane.cleanup(third))
-        self.assertNotIn("lane", third)
-        self.assertFalse(os.path.exists(lane3["worktree"]))
+        self.assertFalse(self.lane.cleanup(third))  # no agent-cleanup on the fixture's remote host
+        self.assertIn("lane", third)
+        self.assertTrue(os.path.exists(lane3["worktree"]))
         with open(os.path.join(lane["worktree"], "large.bin"), "wb") as stream:
             stream.write(os.urandom(9 * 1024 * 1024))
         self.git(lane["worktree"], "add", "large.bin")
@@ -2943,9 +3009,14 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.assertEqual(self.tick_once(), ("done", True))
 
     def test_its_merged_pull_request_makes_it_done(self):
-        self.commit(self.task["worktree"], "reactions on the left")
-        self.task.update(state="ready", pr={"number": 610, "repo": "o/r", "checked": 0})
-        with self.mock_pr({"state": "MERGED", "mergeCommit": {"oid": "f00"}}):
+        from unittest import mock
+        from herdr_task import closeout
+        head = self.commit(self.task["worktree"], "reactions on the left")
+        self.task.update(state="ready", head=head, pr={"number": 610, "repo": "o/r", "checked": 0})
+        merged = {"state": "MERGED", "mergeCommit": {"oid": "f00"}, "headRefOid": head,
+                  "statusCheckRollup": [{"name": "CI", "status": "COMPLETED", "conclusion": "SUCCESS"}]}
+        with self.mock_pr(merged), mock.patch.object(closeout, "mid_turn", return_value=False), \
+                mock.patch.object(closeout, "read_settings", return_value={"auto_accept_merged_repos": ["o/r"]}):
             self.working()
             self.assertEqual(self.tick_once(), ("ready", False))
             self.live, self.task["pr"]["checked"] = [], 0
@@ -3006,7 +3077,7 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.commit(self.main, "another task merged after it")
         calls = self.github([{"number": 704, "url": "https://github.com/o/r/pull/704", "isCrossRepository": False,
                               "baseRefName": "main", "headRefOid": tip, "mergeCommit": {"oid": "f00"}}])
-        self.assertEqual(self.ready_now(), ("done", True))
+        self.assertEqual(self.ready_now(), ("ready", False))
         self.assertEqual(self.task["pr"]["number"], 704)
         self.assertNotIn(("pr", "create"), calls)
 
@@ -3146,7 +3217,7 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.working()
         self.assertEqual(self.tick_once(), ("running", False))  # never under a working agent
         self.live, self.task["gh_checked"] = [], 0  # GitHub asked at most once a minute
-        self.assertEqual(self.tick_once(), ("done", True))
+        self.assertEqual(self.tick_once(), ("running", False))
         self.assertEqual(self.task["pr"]["number"], 704)
 
     def test_the_tick_finds_a_ready_task_already_in_main(self):

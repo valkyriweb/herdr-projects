@@ -76,8 +76,19 @@ task values a machine set before (the old machine scope) still apply there until
   Switching to another agent or setting `machine=here` brings committed work back before starting locally. If the
   remote machine is offline, the local lane starts at the last sync and its status warns that remote work is still
   there; the task keeps that remote worktree and sync commit under `parked_lanes` for recovery. Existing running
-  agents are never moved by changing the default. Completed lane worktrees are removed only when clean and at
-  the same commit as the hosting copy; unreachable machines or extra remote work keep both copies for recovery.
+  agents are never moved by changing the default. A completed lane uses `agent-cleanup close --apply` on its host
+  only when the commit matches the hosting copy. If the guard is missing or refuses, or the host is unreachable,
+  both copies stay for recovery.
+- `auto_accept_merged_repos` (a top-level list in this machine's own `settings.json`, empty by default): exact GitHub repositories,
+  such as `["example/personal-tool"]`. The owner adds only approved personal, non-production repos. Leave client and
+  production repos out. In listed repos, Shepherdr does not request unattended merges. Once a Ready task's PR has
+  merged elsewhere, the next tick accepts it only if its reported head still matches and GitHub shows completed,
+  passing checks on that head. It accepts neither missing checks nor a changed head. For a task in its own folder
+  without a Shepherdr worktree, name every manually opened PR when you report Ready: `herdr-task ready ID
+  --closeout-pr https://github.com/example/personal-tool/pull/42`. Repeat the flag for each PR and on each new report;
+  they must all merge green at the reported heads. PRs mentioned only in notes are not inferred. Only worktrees
+  registered on the task go to guarded cleanup. A clean squash-merged branch can still be kept if the guard cannot
+  verify Git ancestry. The automatic path never deletes a branch.
 - Secrets live in one vault, `~/.local/share/shepherdr/secrets/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as
   `shepherdr.host` is (`core/secrets.js`). `herdr-secret` on any other machine passes `set`, `rm` and `names` there
