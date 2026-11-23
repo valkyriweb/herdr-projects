@@ -210,10 +210,10 @@ export default class Tasks extends View {
     this.lists = [...this.byMachine.entries()].sort(([a], [b]) => rank(a || null) - rank(b || null)).flatMap(([, ls]) => ls);
   }
 
-  // A task's agents now: live terminals labelled with its key, on the folder's machine.
+  // A task's agents now: live terminals labelled with its key, on its lane or folder's machine.
   live(list, task) {
     const key = `${list.slug}#${task.id}`;
-    const m = list.machine ?? null;
+    const m = task.lane?.machine ?? list.machine ?? null;
     const f = this.frame ?? {};
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
     return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && machineOf(k.address) === m)
@@ -245,11 +245,11 @@ export default class Tasks extends View {
   // Its worker's own helper agents (SHEP-54: a reviewer it started as its hc child): never among its agents; one at
   // work or asking keeps the task Working (core/tasks.js place()).
   helpers(list, task, live) {
-    const key = `${list.slug}#${task.id}`, m = list.machine ?? null;
+    const key = `${list.slug}#${task.id}`, m = task.lane?.machine ?? list.machine ?? null;
     const mine = new Set(live.map((a) => a.address.split("/").pop()));
     const f = this.frame ?? {};
     const shown = f.agents ??= new Map(agents().map((a) => [a.address, a]));
-    // on the folder's machine, a child of one of its agents
+    // on the worker's machine, a child of one of its agents
     return (f.terminals ??= terminals()).filter((k) => k.state === "live" && k.labels?.["herdr.task"] === key && helper(k)
       && machineOf(k.address) === m && mine.has(String(k.parent).split("/").pop()))
       .map((k) => ({ address: k.address, status: shown.get(k.address)?.status ?? (RANK[k.status] ? k.status : null) }));
