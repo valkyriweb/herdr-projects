@@ -3056,13 +3056,19 @@ class MergedOnlyWithOwnWork(unittest.TestCase):
         self.assertEqual(self.tick_once(), ("ready", False))
         self.task["gh_checked"] = 0
         self.assertEqual(self.tick_once(), ("ready", False))
-        # Accept: done, never merged, its worktree and branch cleaned up
-        self.accept_now()
+        # Accept marks the task done even if its local-only repository has no origin to verify.
+        from unittest.mock import patch
+        from herdr_task import github
+        with patch.object(github, "run", return_value=subprocess.CompletedProcess([], 0, "flag: origin-unverified", "")) as cleanup:
+            self.accept_now()
+        cleanup.assert_called_once_with([os.path.join(github.HOME, "Projects", "agent-scripts", "scripts", "agent-cleanup"),
+                                         "close", "--path", self.task["worktree"], "--apply"])
         self.assertEqual(self.task["state"], "done")
         self.assertFalse(self.task.get("merged"))
         self.assertTrue(self.task["nothing_to_merge"])
-        self.assertFalse(os.path.isdir(self.task["worktree"]))
-        self.assertEqual(self.git(self.main, "branch", "--list", "task/1"), "")
+        self.assertTrue(os.path.isdir(self.task["worktree"]))
+        self.assertIn("origin-unverified", self.task["worktree_kept_why"])
+        self.assertEqual(self.git(self.main, "branch", "--list", "--format=%(refname:short)", "task/1"), "task/1")
 
     def test_ready_with_no_commits_keeps_a_live_agents_worktree(self):
         self.github([])
