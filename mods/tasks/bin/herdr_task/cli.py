@@ -246,6 +246,7 @@ def main():
     c.add_argument("--details", help="optional: a few short bullets in plain words (one \"- \" per line): what changed for the "
                                      "person first, then how it was checked; file names only where they help; never one dense "
                                      "paragraph. Folded under Details in the Accept card")
+    c.add_argument("--closeout-pr", action="append", metavar="URL", help="for a task in its folder: track an already opened, allowed GitHub PR without merging it (repeat for every PR)")
     c.add_argument("--proof", help="its proof artifact's id (herdr-artifact publish prints it); default: its newest artifact titled \"... · Proof\"")
     c.add_argument("--agents-md", help="\"For AGENTS.md\": one line about setting up or testing this repo that the next agent "
                                        "would need and AGENTS.md lacks; the Assistant decides whether to add it")

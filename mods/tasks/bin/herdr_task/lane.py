@@ -329,8 +329,13 @@ if not os.path.isdir(wt):
 elif git("status", "--porcelain").stdout.strip() or git("rev-parse", "HEAD").stdout.strip() != x["head"]:
     print('{"removed":false}')
 else:
-    result = git("worktree", "remove", wt)
-    print(json.dumps({"removed": result.returncode == 0}))
+    tool = os.path.expanduser("~/Projects/agent-scripts/scripts/agent-cleanup")
+    try:
+        result = subprocess.run([tool, "close", "--path", wt, "--apply"], capture_output=True)
+        removed = result.returncode == 0 and not os.path.lexists(wt)
+    except OSError:
+        removed = False
+    print(json.dumps({"removed": removed}))
 '''
     try:
         removed = bool(remote_python(lane["machine"], script, {"worktree": lane["worktree"], "head": head}).get("removed"))
