@@ -22,9 +22,11 @@ import time
 HOME = os.path.expanduser("~")
 MAC = sys.platform == "darwin"
 
-# New tasks wait while the 1-minute load is over this many times the cores, or memory or the
-# fullest disk (home, /tmp) is over this share (%): Shepherdr's start limits, and its disk alert.
-HOLD = {"start_load": 1.0, "start_memory": 80, "start_disk": 90}
+# New tasks wait while the 1-minute load is over this many times the cores, or memory, swap, or
+# the fullest disk (home, /tmp) is over its share (%).
+HOLD = {"start_load": 1.0, "start_memory": 80, "start_disk": 90, "start_swap": 80}
+# macOS grows its swap pool on demand. A nearly full small pool doesn't mean the Mac is busy.
+_SWAP_MIN_USED = 4 * 2 ** 30
 # Past these the sidebar's meter turns red (Shepherdr's alert limits).
 ALERT = {"load": 1.5, "memory": 90, "disk": 90}
 
@@ -66,6 +68,21 @@ def _memory():
     return total, max(0, total - free) if total else 0
 
 
+def _parse_swapusage(text):
+    """(total, used) in bytes from macOS's sysctl; (0, 0) if unavailable."""
+    size = r"([0-9]+(?:[.,][0-9]+)?)([KMGT])"
+    match = re.match(r"\s*total\s*=\s*" + size + r"\s+used\s*=\s*" + size + r"(?=\s|$)", text)
+    if not match:
+        return 0, 0
+    amount, unit, used_amount, used_unit = match.groups()
+
+    def as_bytes(number, suffix):
+        return round(float(number.replace(",", ".")) * 1024 ** ("KMGT".index(suffix) + 1))
+
+    total, used = as_bytes(amount, unit), as_bytes(used_amount, used_unit)
+    return (total, used) if used <= total else (0, 0)
+
+
 def _disks():
     """Home and /tmp, once each when they're one disk: % full as df counts it (used over what an
     ordinary user could have)."""
@@ -88,14 +105,16 @@ def _disks():
 
 
 def sample():
-    """{at, cores, load, cpu, mem_total, mem_used, memory, disk, disks}: cpu is the 1-minute load
-    over the cores (%), memory in use (%), disk the fullest (%)."""
+    """CPU is 1-minute load over cores (%), memory is in use (%), disk is the fullest (%).
+    Swap counts are bytes on macOS, or zero when not available."""
     cores = os.cpu_count() or 1
     load = os.getloadavg()[0]
     total, used = _memory()
+    swap_total, swap_used = _parse_swapusage(_run(["sysctl", "-n", "vm.swapusage"])) if MAC else (0, 0)
     disks = _disks()
     return {"at": int(time.time() * 1000), "cores": cores, "load": round(load, 2), "cpu": round(load * 100 / cores),
             "mem_total": total, "mem_used": used, "memory": round(used * 100 / total) if total else 0,
+            "swap_total": swap_total, "swap_used": swap_used,
             "disk": max([d["pct"] for d in disks] or [0]), "disks": disks}
 
 
@@ -117,6 +136,12 @@ def hold_reason(h, limits=None):
         return "memory is %d%% full" % h["memory"]
     if lim["start_load"] is not None and h["load"] > lim["start_load"] * h["cores"]:
         return "CPU is %d%% busy" % h["cpu"]
+    swap_total, swap_used = h.get("swap_total", 0), h.get("swap_used", 0)
+    swap_limit = lim["start_swap"]
+    if swap_limit is not None and swap_total > 0 and swap_used >= _SWAP_MIN_USED:
+        pct = swap_used * 100 / swap_total
+        if pct > swap_limit:
+            return f"swap is {round(pct)}% used" if round(pct) > swap_limit else f"swap is over {swap_limit:g}% used"
     if lim["start_disk"] is not None and h["disk"] > lim["start_disk"]:
         return "disk is %d%% full" % h["disk"]
     return None

@@ -49,6 +49,10 @@ repos" without a third layer, and one less layer keeps "where does this value co
 genuinely differs in (its hardware, its home space, a key only it has) is already on Machines and Secrets. Agent and
 task values a machine set before (the old machine scope) still apply there until Reset, and say so on Machines.
 
+On a Mac, new tasks also wait when more than 80% of swap is in use and the Mac is using at least 4 GiB of swap.
+macOS grows its swap pool as needed, so filling a small pool does not hold new tasks by itself. This hold does not
+stop tasks that are already running or add an alert.
+
 ## Where they're kept, and how they travel
 
 - `~/.config/shepherdr/settings.json`: `everywhere` and `spaces[<space id>]` (another machine's space as `<machine>/<id>`), each
