@@ -2463,6 +2463,13 @@ class PiLanes(unittest.TestCase):
         self.settings.set_task(t, "machine", "")
         self.assertNotIn("set", t)
 
+    def test_remote_lane_settings_render_in_the_starting_brief(self):
+        task = {"mode": "worktree", "lane": {"machine": "dl360"}}
+        with self.mock.patch.object(self.settings, "SETTINGS", os.path.join(self.root, "settings.json")):
+            block = self.settings.settings_block(Store([]), task, argv=["pi"], live=True)
+        self.assertIn("- Review: off (reviewer sign-ins stay on the main machine)", block)
+        self.assertIn("- Machine: dl360", block)
+
     def test_the_bundle_reads_its_kinds(self):
         from herdr_task.base import bundle
         path = os.path.join(self.root, "herdr-task")
