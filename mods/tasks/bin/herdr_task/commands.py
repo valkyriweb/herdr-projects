@@ -273,15 +273,7 @@ def begin(s, t, argv, space, parent=None):
     if t.get("mode") == "worktree" and not t.get("worktree") and not worktrees_on(s, space):
         t["mode"] = "here"
     folder_for(s, t)
-    if not t.get("lane"):
-        machine, why = lanes.place(s, t, agent_key(argv), space)
-        if machine:
-            try:
-                lanes.prepare(s, t, machine)
-            except Fail as e:
-                why = f"Couldn't set up on {machine} ({e}): started on this machine."
-        if why:
-            lanes.note(t, why)
+    lanes.reconcile(s, t, agent_key(argv), space)
     if t.get("mode") != "worktree" and s.loc["kind"] == "repo":
         # The folder's commit as it starts: still there, and nothing tracked changed, at ready means
         # it changed nothing, so there is nothing to review (review_refusal, #744).
@@ -495,7 +487,7 @@ def review_refusal(s, t, wt):
         return None
     if wt and head and base_merges_only(s, t, wt, {r.get("head") for r in revs if r.get("head")}, head):
         return None
-    ref, ht, folder = s.ref(t), own_path(), shlex.quote(s.loc["folder"])
+    ref, ht, folder = s.ref(t), lanes.own_path(t["lane"]) if t.get("lane") else own_path(), shlex.quote(s.loc["folder"])
     what = f"your final commit {head[:7]}" if head else "this task's work"
     seen = sorted({r["head"][:7] for r in revs if r.get("head")}) if wt else []
     if seen:
@@ -610,7 +602,7 @@ def cmd_review_more(args):
         live = workers(s, t)
         told = None
         if live:
-            ht, folder = own_path(), shlex.quote(s.loc["folder"])
+            ht, folder = lanes.own_path(t["lane"]) if t.get("lane") else own_path(), shlex.quote(s.loc["folder"])
             from .news import send_or_hold
             r = send_or_hold(live[-1]["address"],
                      f"Your Assistant added one review round to {s.ref(t)}: {rounds + 1} in all. Have your final commit reviewed, "
@@ -940,17 +932,13 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     and the session is known; else a fresh one with a handoff. `message` goes after either; `nudge`
     is a resumed session's first message when no `message` is given (a handoff needs none)."""
     unarchive(s, t)
-    lane = t.get("lane")
-    from .machines import connected_machines
-    if lane and lane["machine"] not in [m["name"] for m in connected_machines() if m.get("state") == "connected"]:
-        # Its commits since the last ready are only there.
-        raise Fail(f"{s.ref(t)} works on {lane['machine']}, which is unreachable now. Start it again once it's back.")
     prev = last_agent(t)
     parent = parent_for(parent or (prev or {}).get("parent"), space)
     # The last agent's argv again, unless the task's agent, model or effort changed since (edit).
     keep = prev and prev.get("argv") and (t.get("pick_at") or 0) <= (prev.get("at") or 0)
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \
         (prev["argv"] if keep else worker_argv(s, t, space))
+    lanes.reconcile(s, t, agent_key(argv), space)
     same = prev and agent_key(argv) == prev.get("agent")
     res = resume_argv(argv, prev["session"], folder_for(s, t)) if same and prev.get("session") else None
     if res:

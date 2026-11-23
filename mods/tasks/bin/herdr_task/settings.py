@@ -503,6 +503,8 @@ def task_settings(s, t, space=None, argv=None, live=False):
     else:
         on, rev_by = rounds_cfg > 0, by_layer(s, space, "tasks", "review_rounds", rounds_cfg > 0, False)
     here = t.get("mode") != "worktree"
+    if t.get("lane"):
+        on, rev_by = False, "lane: reviewer sign-ins stay on the main machine"
     add("Review", "off" if not on else "on", on, rev_by)
     # What it runs on: the given argv, else its last agent's, else what it would start with.
     argv = argv or (t["agents"][-1].get("argv") if t.get("agents") else None) or worker_argv(s, t, space)

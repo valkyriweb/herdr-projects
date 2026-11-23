@@ -33,7 +33,7 @@ from . import lane as lanes
 
 # How long Codex waits on the permission hook: as the chat's card waits (ask-hook.sh).
 ASK_TIMEOUT = 1800
-OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where"]
+OWN = ["ready", "reviewed", "status", "alert", "feedback", "show", "list", "where", "tell-assistant"]
 # herdr-secret's agent commands (~/.config/herdr-app/bin/herdr-secret): asking for a secret and
 # using one by name never ask either, as Shepherdr's secret commands. Written by its full path or
 # its bare name. Reviewers get none (launch() skips own_argv for them; herdr-secret refuses them).
@@ -564,6 +564,10 @@ def closing_line(s, task, parent=None, argv=None):
     text += (f" Your herdr-task command is {ht}: write that full path each time (never the bare name), as one plain command; "
              f"then its {', '.join(OWN)} commands run without asking.")
     text += browser_line()
+    if task.get("lane"):
+        text += (" Lane proof: herdr-artifact guide, publish, update, show, list and link run on the main machine. "
+                 "Publish a local recipe folder; its files are copied back automatically. Preview proof on the main machine. "
+                 "Review is off for this lane because reviewer sign-ins stay on the main machine; ask the Assistant for a local review.")
     if secret_path():
         text += (" Secrets (keys, tokens, passwords) are used by name, never seen: `herdr-secret ask NAME --why \"…\"` "
                  "(then end your turn), `herdr-secret run NAME -- <command>`, `herdr-secret list`; these run without asking too.")
@@ -799,6 +803,8 @@ def launch(s, task, argv, space, message=None, parent=None, resume=None, role=No
     herdr.space, which Herdr gives a pane), herdr.agent, herdr.coordinator (its coordinator's tab,
     which keeps it under a restarted coordinator) and herdr.role=reviewer for a reviewer, kept
     apart from the task's agents. Returns its record."""
+    if not role and task.get("lane") and agent_key(argv) not in lanes.LANE_KINDS:
+        lanes.reconcile(s, task, agent_key(argv), space)
     key = s.key(task)
     cmd = list(resume or argv)
     if not role:

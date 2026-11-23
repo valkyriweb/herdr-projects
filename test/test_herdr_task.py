@@ -1,6 +1,7 @@
 """herdr-task: every module compiles, the add-on switch it reads, and (on CI only, where HOME is
 a throwaway) its commands start. On a person's machine herdr-task never runs with another HOME."""
 import home_guard  # noqa: F401  (first: every test on a throwaway home, never the real one)
+import base64
 import json
 import os
 import re
@@ -2482,6 +2483,7 @@ class PiLanes(unittest.TestCase):
             (wrote if cmd[:2] == ["hc", "exec"] else ran).append((cmd, kw))
             return subprocess.CompletedProcess(cmd, 0, "done\n", "")
         patches = [("hc_json", lambda *a: {"labels": {self.lane.CALL: nonce}}), ("STORE", self.root),
+                   ("owner", lambda address: ({"folder": "/x", "prefix": "SHEP"}, {"id": 2})),
                    ("run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, json.dumps({"argv": argv}), ""))]
         for name, value in patches:
             p = self.mock.patch.object(self.lane, name, value)
@@ -2500,9 +2502,103 @@ class PiLanes(unittest.TestCase):
         out, ran = self.answered(["status", "SHEP-2", "--folder", "/x", "Working", "--left", "5m"])
         self.assertEqual(out, {"code": 0, "out": "done\n", "err": ""})
         cmd, kw = ran[0]
-        self.assertEqual(cmd[2:], ["status", "SHEP-2", "--folder", "/x", "Working", "--left", "5m"])
+        self.assertEqual(cmd[2:], ["status", "SHEP-2", "Working", "--left", "5m", "--folder", "/x"])
         self.assertEqual(kw["env"]["HC_TERMINAL_ID"], "dl360/t4")
         self.assertNotIn("HERDR_TASK_LANE", kw["env"])
+
+    def test_a_lane_cannot_target_another_task_or_folder(self):
+        data, task = {"folder": "/x", "prefix": "SHEP"}, {"id": 2}
+        for argv in (["ready", "SHEP-3"], ["show", "OTHER-2"],
+                     ["status", "SHEP-2", "--folder=/client"],
+                     ["status", "SHEP-2", "--folder", "/x", "--folder", "/client"]):
+            with self.subTest(argv=argv), self.assertRaises(self.Fail):
+                self.lane.scoped_argv(argv, data, task)
+        self.assertEqual(self.lane.scoped_argv(["list", "--all"], data, task),
+                         ["show", "2", "--folder", "/x"])
+        self.assertEqual(self.lane.scoped_argv(["tell-assistant", "space", "hello"], data, task),
+                         ["tell-assistant", "space", "hello"])
+
+    def test_only_the_current_lane_terminal_owns_the_task(self):
+        import herdr_task.store as store
+        task = {"id": 2, "state": "running", "lane": {"machine": "dl360"},
+                "agents": [{"address": "dl360/t3"}, {"address": "dl360/t4"}]}
+        with self.mock.patch.object(store, "store_files", return_value=["x"]), \
+                self.mock.patch.object(store, "read_list", return_value={"folder": "/x", "tasks": [task]}):
+            self.assertEqual(self.lane.owner("dl360/t4")[1], task)
+            with self.assertRaises(self.Fail):
+                self.lane.owner("dl360/t3")
+
+    def test_switching_agent_or_pinning_here_leaves_the_lane(self):
+        import herdr_task.machines as machines
+        for kind, machine in (("claude", None), ("codex", None), ("pi", "here")):
+            task = {"lane": {"machine": "dl360"}, "set": {"machine": machine}}
+            store = Store([])
+            with self.subTest(kind=kind, machine=machine), \
+                    self.mock.patch.object(self.lane, "place", return_value=(None, None)), \
+                    self.mock.patch.object(machines, "connected_machines", return_value=[{"name": "dl360", "state": "connected"}]), \
+                    self.mock.patch.object(self.lane, "pull") as pull:
+                self.lane.reconcile(store, task, kind)
+                pull.assert_called_once_with(store, task)
+                self.assertNotIn("lane", task)
+
+    def test_offline_switch_keeps_remote_recovery_information(self):
+        import herdr_task.machines as machines
+        task = {"lane": {"machine": "dl360", "worktree": "/remote/wt", "synced": "abc"}}
+        with self.mock.patch.object(self.lane, "place", return_value=(None, "offline")), \
+                self.mock.patch.object(machines, "connected_machines", return_value=[]):
+            self.lane.reconcile(Store([]), task, "pi")
+        self.assertNotIn("lane", task)
+        self.assertEqual(task["parked_lanes"][0]["synced"], "abc")
+        self.assertIn("last sync", task["progress"]["text"])
+
+    def test_ended_lane_calls_are_still_served(self):
+        import herdr_task.tick as tick
+        task = {"state": "running", "lane": {"machine": "dl360"},
+                "agents": [{"address": "dl360/t4", "ended": 1}]}
+        with self.mock.patch.object(tick, "store_files", return_value=["x"]), \
+                self.mock.patch.object(tick, "read_list", return_value={"tasks": [task]}), \
+                self.mock.patch.object(tick, "serve") as serve:
+            tick.lane_pass()
+            serve.assert_called_once_with("dl360/t4")
+
+    def test_a_link_drop_does_not_end_the_remote_tracker(self):
+        import herdr_task.automations as automations
+        from types import SimpleNamespace
+        store = Store([])
+        task = {"agents": [{"address": "dl360/t4", "at": 1}]}
+        store.find = lambda ref: task
+        class OpenStore:
+            def __enter__(self):
+                return store
+            def __exit__(self, *args):
+                pass
+        with self.mock.patch.object(automations, "Store", return_value=OpenStore()), \
+                self.mock.patch.object(automations, "locate", return_value={}), \
+                self.mock.patch.object(automations, "hc_json", side_effect=[None, {"state": "ended"}]), \
+                self.mock.patch.object(automations.time, "sleep"):
+            automations.cmd_track(SimpleNamespace(folder="/x", id="2", address="dl360/t4"))
+        self.assertIn("ended", task["agents"][0])
+
+    def test_lane_artifacts_publish_on_the_host_with_the_owner_identity(self):
+        recipe = base64.b64encode(b'{"recipe":1,"blocks":[]}').decode()
+        data, task = {"folder": "/x", "prefix": "SHEP"}, {"id": 2}
+        import herdr_task.proof as proof
+        calls = []
+        def publish(command, **kwargs):
+            calls.append(command)
+            with open(os.path.join(command[2], "recipe.json")) as source:
+                self.assertEqual(json.load(source), {"recipe": 1, "blocks": []})
+            return subprocess.CompletedProcess(command, 0, "proof-id\n", "")
+        with self.mock.patch.object(proof, "artifacts_of", return_value=[]), \
+                self.mock.patch.object(self.lane.subprocess, "run", publish):
+            result = self.lane.artifact_call(["publish", ".", "--title", "Proof"], {"recipe.json": recipe}, data, task, {})
+            self.assertEqual(result["code"], 0)
+            self.assertEqual(calls[0][-4:], ["--task", "SHEP-2", "--folder", "/x"])
+            with self.assertRaises(self.Fail):
+                self.lane.artifact_call(["publish", "."], {"recipe.json": recipe, "../outside": recipe}, data, task, {})
+            for argv in (["update", "other-proof", "."], ["publish", ".", "--ta", "OTHER-1"], ["show", "other-proof"]):
+                with self.subTest(argv=argv), self.assertRaises(self.Fail):
+                    self.lane.artifact_call(argv, {"recipe.json": recipe}, data, task, {})
 
     def git(self, cwd, *args):
         return subprocess.run(["git", "-C", cwd, *args], capture_output=True, text=True, check=True).stdout.strip()
@@ -2523,6 +2619,28 @@ class PiLanes(unittest.TestCase):
             self.assertEqual(launch.agent_name(s, {"title": "x"}, machine="dl360"), "slp-4-x-2")
             self.assertEqual(launch.agent_name(s, {"title": "x"}), "slp-4-x")
         self.assertEqual(asked, ["dl360/slp-4-x", "dl360/slp-4-x-2", "slp-4-x"])
+
+    def test_launch_uses_remote_worktree_but_keeps_coordinator_labels(self):
+        import contextlib
+        import herdr_task.launch as launch
+        task = {"title": "x", "agents": [], "lane": {"machine": "dl360", "worktree": "/remote/wt"}}
+        store = Store([])
+        store.key = lambda task: "store#2"
+        with contextlib.ExitStack() as stack:
+            for name, value in (("folder_for", "/mac/wt"), ("own_argv", ["pi"]),
+                                ("coordinator_tab", "tab"), ("agent_name", "lane"), ("track", None)):
+                stack.enter_context(self.mock.patch.object(launch, name, return_value=value))
+            stack.enter_context(self.mock.patch.object(self.lane, "remote_argv", side_effect=lambda lane, cmd, env: cmd))
+            run = stack.enter_context(self.mock.patch.object(launch, "run", return_value=
+                subprocess.CompletedProcess([], 0, '{"address":"dl360/t4"}', "")))
+            agent = launch.launch(store, task, ["pi"], "space", parent="mac-coordinator")
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("--on") + 1], "dl360")
+        self.assertEqual(command[command.index("--cwd") + 1], "/remote/wt")
+        self.assertIn("herdr.coordinator=tab", command)
+        self.assertIn("herdr.task=store#2", command)
+        self.assertNotIn("--parent", command)
+        self.assertEqual(agent["parent"], "mac-coordinator")
 
     def test_the_branch_goes_there_and_its_commits_come_back(self):
         """prepare() gives the other machine (a throwaway home) the branch, ready's pull() brings its commits back."""
@@ -2569,6 +2687,14 @@ class PiLanes(unittest.TestCase):
         with self.mock.patch.object(self.lane.subprocess, "run", write_there):
             lane2 = self.lane.prepare(s, {"id": 2, "worktree": wt2, "branch": "task/2-y"}, "dl360")
         self.assertEqual(self.git(lane2["worktree"], "rev-parse", "--abbrev-ref", "HEAD"), "task/2-y")
+        older = self.git(main, "rev-parse", start + "^")
+        wt3 = os.path.join(self.root, "wt3")
+        self.git(main, "worktree", "add", "-q", "-b", "task/3-z", wt3, older)
+        with self.mock.patch.object(self.lane.subprocess, "run", write_there):
+            lane3 = self.lane.prepare(s, {"id": 3, "worktree": wt3, "branch": "task/3-z"}, "dl360")
+        self.assertEqual(self.git(lane3["worktree"], "rev-parse", "HEAD"), older)
+        self.assertTrue(self.lane.cleanup({"lane": lane3, "worktree": wt3}))
+        self.assertFalse(os.path.exists(lane3["worktree"]))
         theirs = self.commit(lane["worktree"], "made there")
         self.lane.pull(s, t)
         self.assertEqual((self.git(wt, "rev-parse", "HEAD"), lane["synced"]), (theirs, theirs))
@@ -2577,12 +2703,16 @@ class PiLanes(unittest.TestCase):
                  "commit", "-q", "--amend", "--allow-empty", "-m", "again")
         self.lane.pull(s, t)
         self.assertEqual(self.git(wt, "rev-parse", "HEAD"), self.git(lane["worktree"], "rev-parse", "HEAD"))
+        self.commit(lane["worktree"], "not pulled yet")
+        self.assertFalse(self.lane.cleanup(t))
+        self.lane.pull(s, t)
         # Uncommitted there: ready waits.
         with open(os.path.join(lane["worktree"], "f"), "w") as f:
             f.write("x")
         self.git(lane["worktree"], "add", "f")
         with self.assertRaises(self.Fail):
             self.lane.pull(s, t)
+        self.assertFalse(self.lane.cleanup(t))
 
 
 class MergedOnlyWithOwnWork(unittest.TestCase):

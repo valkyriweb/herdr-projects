@@ -713,6 +713,9 @@ def remove_worktree(s, task):
     """A finished task's worktree removed when nothing is uncommitted there, then its branch. True
     once the worktree is gone."""
     wt, br, main = task.get("worktree"), task.get("branch"), s.loc["folder"]
+    from .lane import cleanup
+    if not cleanup(task):
+        return False
     if os.path.isdir(wt):
         if os.path.realpath(wt) == os.path.realpath(main):
             return False

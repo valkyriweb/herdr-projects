@@ -14,6 +14,8 @@ import json
 import os
 import re
 import select
+import shutil
+import fcntl
 import subprocess
 import sys
 import tempfile
@@ -24,7 +26,7 @@ from .base import bundle, ENTRY, Fail, git, guard, hc_json, HOME, now, run, STOR
 # Only Pi runs elsewhere: pii is a fork installed on this machine only, and the other CLIs'
 # sign-ins and hooks live here.
 LANE_KINDS = ("pi",)
-HERE = ("here", "local", "this machine")
+HERE = ("here", "local", "this machine", "mac")
 CALL = "herdr.task.call"
 CALLS = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.join(HOME, ".local", "state"), "shepherdr", "lane-calls")
 CALL_WAIT = 600
@@ -96,6 +98,9 @@ if x["op"] == "have":
 if not os.path.isdir(mirror):
     os.makedirs(os.path.dirname(mirror), exist_ok=True)
     git("init", "-q", "--bare", mirror)
+if os.path.isdir(wt):
+    if git("status", "--porcelain", cwd=wt) or git("rev-parse", "HEAD", cwd=wt) != x["head"]:
+        raise SystemExit("Existing lane worktree differs; recover its work before reusing it: " + wt)
 os.chmod(tool, 0o755)
 for k, v in x["config"].items():
     if v:
@@ -171,7 +176,7 @@ def prepare(s, t, machine):
     head = git(wt, "rev-parse", "HEAD")[1]
     have = [h for h in info.get("have") or [] if git(wt, "cat-file", "-e", h + "^{commit}")[0]]
     payload = {**base, "op": "add", "head": head, "config": {k: git(wt, "config", k)[1] for k in ("user.name", "user.email")}}
-    if head not in have:
+    if not any(git(wt, "merge-base", "--is-ancestor", head, tip)[0] for tip in have):
         fd, path = tempfile.mkstemp(suffix=".bundle")
         os.close(fd)
         try:
@@ -190,6 +195,13 @@ def prepare(s, t, machine):
     res = remote_python(machine, PREPARE, payload, timeout=300)
     t["lane"] = {"machine": machine, "home": info["home"], "shell": info.get("shell") or "/bin/sh",
                  "worktree": res["worktree"], "synced": res["head"]}
+    wrapper = ("#!/bin/sh\nexec " + own_path(t["lane"]) + " lane-artifact \"$@\"\n").encode()
+    target = os.path.dirname(TOOL) + "/bin/herdr-artifact"
+    result = subprocess.run(["hc", "file", "write", "--on", machine, target], input=wrapper, capture_output=True)
+    if result.returncode:
+        t.pop("lane")
+        raise Fail("Couldn't copy the lane's artifact helper.")
+    remote_python(machine, 'import json,os,sys; x=json.load(sys.stdin); os.chmod(os.path.expanduser("~/"+x["path"]),0o755); print("{}")', {"path": target})
     s.dirty = True
     return t["lane"]
 
@@ -228,6 +240,53 @@ def pull(s, t):
     s.dirty = True
 
 
+def reconcile(s, t, kind, space=None):
+    from .machines import connected_machines
+    lane = t.get("lane")
+    machine, why = place(s, t, kind, space)
+    if lane and lane["machine"] != machine:
+        connected = {m["name"] for m in connected_machines() if m.get("state") == "connected"}
+        if lane["machine"] in connected:
+            pull(s, t)
+        else:
+            t.setdefault("parked_lanes", []).append(lane.copy())
+            why = f"{lane['machine']} is unreachable: working here from the last sync; remote work is kept there."
+        t.pop("lane")
+        s.dirty = True
+    if machine and not t.get("lane"):
+        try:
+            prepare(s, t, machine)
+        except Fail as error:
+            why = f"Couldn't set up on {machine} ({error}): started on this machine."
+    if why:
+        note(t, why)
+
+
+def cleanup(t):
+    lane = t.get("lane")
+    if not lane:
+        return not t.get("parked_lanes")
+    head = git(t["worktree"], "rev-parse", "HEAD")[1]
+    script = r'''
+import json, os, subprocess, sys
+x = json.load(sys.stdin)
+wt = x["worktree"]
+def git(*args):
+    return subprocess.run(["git", "-C", wt, *args], capture_output=True, text=True)
+if not os.path.isdir(wt):
+    print('{"removed":true}')
+elif git("status", "--porcelain").stdout.strip() or git("rev-parse", "HEAD").stdout.strip() != x["head"]:
+    print('{"removed":false}')
+else:
+    result = git("worktree", "remove", wt)
+    print(json.dumps({"removed": result.returncode == 0}))
+'''
+    try:
+        return bool(remote_python(lane["machine"], script, {"worktree": lane["worktree"], "head": head}).get("removed"))
+    except Fail:
+        return False
+
+
 def remote_argv(lane, argv, env=()):
     """The agent's command there: low priority (no scope: that's that machine's), without a parent
     session's markers, in its own interactive shell; HERDR_TASK_LANE sends its herdr-task calls here."""
@@ -235,7 +294,9 @@ def remote_argv(lane, argv, env=()):
     from .settings import machine_option
     shell = lane.get("shell") or "/bin/sh"
     cmd = [shell, "-ic", '"$@"; exec "$0" -i', shell, *argv] if os.path.basename(shell) in ("bash", "zsh", "sh", "ksh", "dash") else argv
+    helper_bin = os.path.join(lane["home"], os.path.dirname(TOOL), "bin")
     cmd = clean_env(["env", *env, "HERDR_TASK_LANE=1", *cmd])
+    cmd = ["sh", "-c", 'export PATH="$1:$PATH"; shift; exec "$@"', "sh", helper_bin, *cmd]
     return cmd if machine_option("low_priority", True) is False else ["sh", "-c", LOW, "herdr-low", *cmd]
 
 
@@ -245,7 +306,14 @@ def own_path(lane):
 
 # ---- calls from the lane ----------------------------------------------------------------------
 
-def forward(argv):
+def forward(argv, files=None):
+    os.makedirs(CALLS, exist_ok=True)
+    with open(os.path.join(CALLS, ".forward.lock"), "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        return _forward(argv, files)
+
+
+def _forward(argv, files=None):
     """In the lane: runs a herdr-task call on the main machine (serve()) and returns its exit code."""
     me = os.environ.get("HC_TERMINAL_ID")
     if not me:
@@ -256,7 +324,7 @@ def forward(argv):
     nonce = os.urandom(16).hex()
     req, fifo = os.path.join(CALLS, nonce + ".json"), os.path.join(CALLS, nonce)
     with open(req, "w") as f:
-        json.dump({"argv": argv}, f)
+        json.dump({"argv": argv, "files": files}, f)
     os.mkfifo(fifo, 0o600)
     buf = b""
     try:
@@ -301,6 +369,98 @@ def forward(argv):
 WHERE_CALL = '"${XDG_STATE_HOME:-$HOME/.local/state}/shepherdr/lane-calls/$1"'
 
 
+def owner(address):
+    from .store import read_list, store_files
+    for path in store_files():
+        data = read_list(path) or {}
+        for task in data.get("tasks") or []:
+            agents = task.get("agents") or []
+            if (task.get("lane") and task.get("state") in ("running", "ready") and agents
+                    and agents[-1].get("address") == address
+                    and task["lane"]["machine"] == address.split("/", 1)[0]):
+                return data, task
+    raise Fail("This terminal no longer owns a running lane.")
+
+
+def scoped_argv(argv, data, task):
+    from .store import parse_ref
+    folder = data["folder"]
+    result = []
+    seen_folder = False
+    index = 0
+    while index < len(argv):
+        arg = argv[index]
+        if arg == "--folder" or arg.startswith("--folder="):
+            value = arg.split("=", 1)[1] if "=" in arg else argv[index + 1]
+            if seen_folder or value != folder:
+                raise Fail("A lane can only call its own task folder.")
+            seen_folder = True
+            index += 1 if "=" in arg else 2
+        else:
+            result.append(arg)
+            index += 1
+    if result[0] in ("list", "where"):
+        result = ["show", str(task["id"])]
+    elif result[0] not in ("alert", "feedback", "lane-artifact", "tell-assistant"):
+        prefix, number = parse_ref(result[1])
+        if number != task["id"] or (prefix and prefix != data.get("prefix")):
+            raise Fail("A lane can only call its own task.")
+    return result if result[0] in ("lane-artifact", "tell-assistant") else [*result, "--folder", folder]
+
+
+def artifact_forward(argv):
+    files = None
+    if argv[:1] in (["publish"], ["update"]):
+        index = 2 if argv[0] == "update" else 1
+        root = os.path.realpath(argv[index])
+        files = {}
+        for directory, _, names in os.walk(root):
+            for name in names:
+                path = os.path.join(directory, name)
+                if os.path.islink(path) or not os.path.realpath(path).startswith(root + os.sep):
+                    raise Fail("Lane artifacts cannot contain links outside their folder.")
+                with open(path, "rb") as source:
+                    files[os.path.relpath(path, root)] = base64.b64encode(source.read()).decode()
+        argv[index] = "."
+    return forward(["lane-artifact", *argv], files)
+
+
+def artifact_call(argv, files, data, task, env):
+    from .proof import artifacts_of
+    verb = argv[0]
+    if verb not in ("guide", "publish", "update", "show", "list", "link") or "--custom" in argv:
+        raise Fail("Lane artifacts support guide, publish, update, show, list and link; preview them on the Mac.")
+    allowed = {"--json"} | ({"--title", "--note"} if verb in ("publish", "update") else set())
+    if any(arg.startswith("--") and arg.split("=", 1)[0] not in allowed for arg in argv):
+        raise Fail("Unsupported lane artifact option.")
+    if any(arg == "--task" or arg.startswith("--task=") or arg == "--id" or arg.startswith("--id=") for arg in argv):
+        raise Fail("Lane artifacts use their own task identity; update with the artifact id.")
+    ref = f"{data['prefix']}-{task['id']}"
+    mine = [art for art in artifacts_of(data["folder"]) if art.get("task") == ref]
+    if verb in ("update", "show", "link") and (len(argv) < 2 or argv[1] not in {art["id"] for art in mine}):
+        raise Fail("A lane can only use its own artifacts.")
+    if verb == "list":
+        return {"code": 0, "out": json.dumps(mine) + "\n", "err": ""}
+    with tempfile.TemporaryDirectory(prefix="lane-proof-") as directory:
+        directory = os.path.realpath(directory)
+        if verb in ("publish", "update"):
+            if not isinstance(files, dict) or "recipe.json" not in files:
+                raise Fail("Publish a recipe.json folder as lane proof.")
+            for name, content in files.items():
+                path = os.path.realpath(os.path.join(directory, name))
+                if not path.startswith(directory + os.sep):
+                    raise Fail("Invalid lane artifact file path.")
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, "wb") as target:
+                    target.write(base64.b64decode(content, validate=True))
+            argv[2 if verb == "update" else 1] = directory
+        command = [shutil.which("herdr-artifact") or "herdr-artifact", *argv]
+        if verb == "publish":
+            command += ["--task", ref, "--folder", data["folder"]]
+        result = subprocess.run(command, env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=CALL_WAIT - 30)
+        return {"code": result.returncode, "out": result.stdout, "err": result.stderr}
+
+
 def serve(address):
     """Main machine: answers the lane call its terminal's label names, once. True when it answered."""
     from .launch import OWN
@@ -324,18 +484,29 @@ def serve(address):
         return False
     r = run(["hc", "exec", "--on", machine, "--timeout", "30", "--", "sh", "-c", f"exec cat {WHERE_CALL}.json", "sh", nonce])
     try:
-        argv = json.loads(r.stdout)["argv"]
+        request = json.loads(r.stdout)
+        argv = request["argv"]
     except (ValueError, KeyError, TypeError):
         argv = None
-    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv) or argv[0] not in OWN:
+    if not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv) or argv[0] not in [*OWN, "lane-artifact"]:
         out = {"code": 1, "out": "", "err": f"herdr-task: a lane runs only {', '.join(OWN)} on the main machine.\n"}
     else:
         env = {k: v for k, v in os.environ.items() if k != "HERDR_TASK_LANE"}
         env["HC_TERMINAL_ID"] = address
+        env["HERDR_TASK_CALLER"] = address
         try:
-            p = subprocess.run([sys.executable, ENTRY, *argv], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                               stderr=subprocess.PIPE, universal_newlines=True, timeout=CALL_WAIT - 30)
-            out = {"code": p.returncode, "out": p.stdout, "err": p.stderr}
+            data, task = owner(address)
+            argv = scoped_argv(argv, data, task)
+            from .store import store_path
+            env["HERDR_BROWSER_TASK"] = f"{store_path(data['folder'])[0]}#{task['id']}"
+            if argv[0] == "lane-artifact":
+                out = artifact_call(argv[1:], request.get("files"), data, task, env)
+            else:
+                p = subprocess.run([sys.executable, ENTRY, *argv], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                   stderr=subprocess.PIPE, universal_newlines=True, timeout=CALL_WAIT - 30)
+                out = {"code": p.returncode, "out": p.stdout, "err": p.stderr}
+        except (Fail, ValueError, IndexError, KeyError) as error:
+            out = {"code": 1, "out": "", "err": f"herdr-task: {error}\n"}
         except subprocess.TimeoutExpired:
             out = {"code": 1, "out": "", "err": "herdr-task: it took too long on the main machine.\n"}
     r = subprocess.run(["hc", "exec", "--stdin", "--on", machine, "--timeout", "30", "--", "sh", "-c",

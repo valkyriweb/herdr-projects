@@ -790,12 +790,21 @@ def cmd_track(args):
     remote = "/" in args.address
     while True:
         k = hc_json("get", args.address)
+        if not k and remote:
+            time.sleep(5)
+            continue
         if not k or k.get("state") != "live":
             return ended(now())
         if remote:
             # A lane on another machine: its session is there; its herdr-task calls come here.
             if (k.get("labels") or {}).get(CALL):
                 serve(args.address)
+            if not agent_running(k):
+                shell_since = shell_since or time.time()
+                if time.time() - shell_since > 60:
+                    return ended(int(shell_since * 1000))
+            else:
+                shell_since = None
             time.sleep(1.5)
             continue
         if not agent_running(k):

@@ -601,7 +601,7 @@ def lane_pass(folder=None):
         for t in (read_list(p) or {}).get("tasks") or []:
             if t.get("lane") and t.get("state") in ("running", "ready"):
                 for a in t.get("agents") or []:
-                    if "/" in a.get("address", "") and not a.get("ended"):
+                    if "/" in a.get("address", ""):
                         serve(a["address"])
 
 

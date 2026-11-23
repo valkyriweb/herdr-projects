@@ -70,6 +70,14 @@ task values a machine set before (the old machine scope) still apply there until
   `--set machine=<name>` picks another. pii and the other CLIs always run here (pii is installed on one machine only).
   The agent starts as `pi` in that machine's interactive shell (with `HERDR_TASK_LANE=1`), so Pi there needs a default
   model and key, or a `pi` shell function in its `.bashrc` that adds them.
+  Lane proof recipes are published on the hosting machine: `herdr-artifact publish` copies the recipe folder there,
+  so `ready --proof` and the Accept card see the same artifact. Preview it on the hosting machine. Automatic review
+  is off in a remote lane's brief because reviewer sign-ins stay on the host; its Assistant can arrange a local review.
+  Switching to another agent or setting `machine=here` brings committed work back before starting locally. If the
+  remote machine is offline, the local lane starts at the last sync and its status warns that remote work is still
+  there; the task keeps that remote worktree and sync commit under `parked_lanes` for recovery. Existing running
+  agents are never moved by changing the default. Completed lane worktrees are removed only when clean and at
+  the same commit as the hosting copy; unreachable machines or extra remote work keep both copies for recovery.
 - Secrets live in one vault, `~/.local/share/shepherdr/secrets/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as
   `shepherdr.host` is (`core/secrets.js`). `herdr-secret` on any other machine passes `set`, `rm` and `names` there
@@ -138,4 +146,3 @@ then the space's own), without guessing (`herdr_task/assistant_settings.py`):
 - **The chat hides them**, as every Herdr tag (`core/chat-log.js`), and the `<hc no-reply/>` after: a settings change
   already shows where it was made, so a news row would only repeat it.
 - **Other agents get only Reactions** (above): a worker's brief's Settings block is fixed when it starts.
-
