@@ -29,14 +29,18 @@ def github(s):
     github_unreachable(s)."""
     if s.loc["kind"] != "repo" or not shutil.which(GH):
         return None
+    folder = s.loc["folder"]
+    remote = remote_of(folder)
+    url = git(folder, "remote", "get-url", "--push", remote)[1]
     g = s.data.get("github") or {}
-    if g and now() - g.get("at", 0) < 3600000:
+    if g and g.get("remote_url") == url and now() - g.get("at", 0) < 3600000:
         return g.get("repo")
-    ok, out, err = gh("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=s.loc["folder"])
+    target = [url] if url else []
+    ok, out, err = gh("repo", "view", *target, "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=folder)
     if not (ok and out) and not settled(err) and on_github(s.loc["folder"]):
         s.github_error = err or "gh couldn't read the repo"
         return None
-    s.data["github"] = {"repo": out if ok and out else None, "at": now()}
+    s.data["github"] = {"repo": out if ok and out else None, "at": now(), "remote_url": url}
     s.dirty = True
     return s.data["github"]["repo"]
 
@@ -70,7 +74,23 @@ def released(s):
 
 def remote_of(main):
     names = git(main, "remote")[1].split()
-    return "origin" if "origin" in names else (names[0] if names else "origin")
+    preferred = git(main, "config", "--get", "remote.pushDefault")[1]
+    enabled = []
+    for name in names:
+        ok, urls, _ = git(main, "remote", "get-url", "--push", "--all", name)
+        if ok and urls and all(url.upper() != "DISABLED" for url in urls.splitlines()):
+            enabled.append(name)
+    if preferred:
+        if preferred not in enabled:
+            raise Fail(f"remote.pushDefault names an unavailable or disabled remote: {preferred}.")
+        return preferred
+    if "origin" in enabled:
+        return "origin"
+    if len(enabled) == 1:
+        return enabled[0]
+    if not names:
+        return "origin"
+    raise Fail("No unique enabled remote. Choose the delivery remote with git config remote.pushDefault <remote>.")
 
 
 def pr_push(s, task, repo):
@@ -80,13 +100,14 @@ def pr_push(s, task, repo):
     its own branch, never forced (#828)."""
     wt, br = task["worktree"], task["branch"]
     remote = remote_of(s.loc["folder"])
+    push_url = git(wt, "remote", "get-url", "--push", remote)[1]
     to = (task.get("pr") or {}).get("branch") or br
     has, tip, _ = git(wt, "rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
-    seen, there, _ = git(wt, "ls-remote", remote, f"refs/heads/{to}")
+    seen, there, _ = git(wt, "ls-remote", push_url or remote, f"refs/heads/{to}")
     if has and tip and seen and there.split()[:1] == [tip]:
         return
     with released(s):
-        ok, out, err = git(wt, "push", "--force-with-lease", "-u", remote, br) if to == br else \
+        ok, out, err = git(wt, "push", "-u", remote, br) if to == br else \
             git(wt, "push", remote, f"{br}:refs/heads/{to}")
     if not ok:
         raise Fail(f"Couldn't push {br}" + (f" to {to}" if to != br else "") + f": {push_error(out, err)}")

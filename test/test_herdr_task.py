@@ -6316,6 +6316,78 @@ class ReadyMergeGit(unittest.TestCase):
         self.git(self.main, "remote", "add", "origin", remote)
         return remote
 
+    def test_ready_uses_the_only_enabled_fork_without_changing_origin(self):
+        import herdr_task.github as github
+        remote = self.remote()
+        self.git(self.main, "remote", "rename", "origin", "fork")
+        self.git(self.main, "remote", "add", "origin", "https://github.com/upstream/project.git")
+        self.git(self.main, "config", "remote.origin.pushurl", "DISABLED")
+        tip = self.commit(self.task["worktree"], "worker work")
+        github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(remote, "rev-parse", "refs/heads/task/1"), tip)
+        self.assertEqual(self.git(self.main, "remote", "get-url", "--push", "origin"), "DISABLED")
+        self.assertEqual(github.remote_of(self.main), "fork")
+
+    def test_push_default_selects_the_fork_and_invalidates_the_github_cache(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.git(self.main, "config", "remote.pushDefault", "fork")
+        self.store.loc["kind"] = "repo"
+        self.store.data["github"] = {"repo": "upstream/project", "at": github.now()}
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        calls = []
+        self.patch(github, "gh", lambda *args, **kw: (calls.append(args) or True, "owner/project", ""))
+        self.assertEqual(github.github(self.store), "owner/project")
+        self.assertIn("https://github.com/owner/project.git", calls[0])
+        self.assertEqual(github.remote_of(self.main), "fork")
+
+    def test_disabled_push_default_is_not_silently_replaced(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.git(self.main, "config", "remote.pushDefault", "fork")
+        self.git(self.main, "config", "remote.fork.pushurl", "DISABLED")
+        with self.assertRaisesRegex(github.Fail, "remote.pushDefault"):
+            github.remote_of(self.main)
+
+    def test_disabled_origin_with_multiple_forks_requires_a_choice(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "config", "remote.origin.pushurl", "DISABLED")
+        for name in ("first", "second"):
+            self.git(self.main, "remote", "add", name, f"https://github.com/{name}/project.git")
+        with self.assertRaisesRegex(github.Fail, "remote.pushDefault"):
+            github.remote_of(self.main)
+
+    def test_origin_remains_the_default_when_enabled(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.assertEqual(github.remote_of(self.main), "origin")
+
+    def test_ready_does_not_overwrite_a_diverged_remote_branch(self):
+        import herdr_task.github as github
+        remote = self.remote()
+        self.commit(self.task["worktree"], "worker work")
+        remote_tip = self.commit(self.main, "someone else's work")
+        self.git(self.main, "push", "origin", "HEAD:refs/heads/task/1")
+        with self.assertRaises(github.Fail):
+            github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(remote, "rev-parse", "refs/heads/task/1"), remote_tip)
+
+    def test_ready_checks_the_push_url_not_the_upstream_fetch_url(self):
+        import herdr_task.github as github
+        upstream = self.remote()
+        fork = os.path.join(self.root, "fork.git")
+        self.git(self.root, "init", "-q", "--bare", fork)
+        tip = self.commit(self.task["worktree"], "worker work")
+        self.git(self.task["worktree"], "push", "origin", "task/1")
+        self.git(self.main, "config", "remote.origin.pushurl", fork)
+        github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(fork, "rev-parse", "refs/heads/task/1"), tip)
+        self.assertEqual(self.git(upstream, "rev-parse", "refs/heads/task/1"), tip)
+
     def test_ready_pushes_without_holding_the_task_list(self):
         """#1007: while ready's push runs the repo's pre-push hook, the task list's lock is free, and what another
         command saved meanwhile (a status line) is kept."""
