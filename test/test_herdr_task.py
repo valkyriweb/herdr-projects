@@ -6387,7 +6387,7 @@ class ReadyMergeGit(unittest.TestCase):
 
     def test_invalid_delivery_choice_reports_attention_without_local_merge(self):
         import herdr_task.github as github
-        self.remote()
+        self.git(self.main, "remote", "add", "origin", "https://github.com/owner/project.git")
         self.git(self.main, "config", "remote.pushDefault", "missing")
         self.commit(self.task["worktree"], "worker work")
         self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
@@ -6396,6 +6396,34 @@ class ReadyMergeGit(unittest.TestCase):
         self.assertEqual(self.task["state"], "ready")
         self.assertNotIn("merged", self.task)
         self.assertEqual(github.remote_of(self.main), "origin")
+
+    def test_local_repos_with_unclear_delivery_can_be_accepted(self):
+        self.remote()
+        self.git(self.main, "remote", "rename", "origin", "first")
+        second = os.path.join(self.root, "second.git")
+        self.git(self.root, "init", "-q", "--bare", second)
+        self.git(self.main, "remote", "add", "second", second)
+        self.accept_local_work()
+
+    def test_local_repo_with_disabled_origin_can_be_accepted(self):
+        self.remote()
+        self.git(self.main, "config", "remote.origin.pushurl", "DISABLED")
+        self.accept_local_work()
+        self.assertEqual(self.git(self.main, "remote", "get-url", "--push", "origin"), "DISABLED")
+
+    def accept_local_work(self):
+        import herdr_task.github as github
+        tip = self.own_commit()
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        self.patch(github, "gh", lambda *args, **kw: (False, "", "none of the git remotes"))
+        self.patch(self.commands, "merge_policy", lambda *args: "ask")
+        self.patch(self.commands, "finish", lambda store, task, **kw: task.update(state="done"))
+        self.commands.finalize(self.store, self.task)
+        self.assertNotIn("attention", self.task)
+        self.assertIsNone(github.github_unreachable(self.store))
+        self.commands.cmd_accept(self.args())
+        self.assertEqual(self.task["state"], "done")
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), tip)
 
     def test_ready_does_not_overwrite_a_diverged_remote_branch(self):
         import herdr_task.github as github

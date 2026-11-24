@@ -94,7 +94,8 @@ task values a machine set before (the old machine scope) still apply there until
   several alternatives or a disabled explicit choice require you to choose, never a guess. GitHub lookup and PRs
   use the chosen remote's push URL, not the upstream repository. Ready pushes fast-forward only; a diverged branch
   is left untouched and reported. This is a repository-wide choice: per-branch `pushRemote` is not used.
-  An unclear delivery choice blocks ready, not local starts or other folders' progress checks.
+  An unclear delivery choice blocks GitHub delivery at ready, not local starts or other folders' progress checks.
+  Repositories without a GitHub remote can still be accepted and merged locally.
   No remote configuration is changed for you.
 - Secrets live in one vault, `~/.local/share/shepherdr/secrets/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as

@@ -34,7 +34,8 @@ def github(s):
     try:
         remote = delivery_remote(folder)
     except Fail as e:
-        s.github_error = str(e)
+        if on_github(folder):
+            s.github_error = str(e)
         return None
     url = git(folder, "remote", "get-url", "--push", remote)[1]
     g = s.data.get("github") or {}
