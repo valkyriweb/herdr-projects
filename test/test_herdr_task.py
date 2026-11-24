@@ -6349,7 +6349,7 @@ class ReadyMergeGit(unittest.TestCase):
         self.git(self.main, "config", "remote.pushDefault", "fork")
         self.git(self.main, "config", "remote.fork.pushurl", "DISABLED")
         with self.assertRaisesRegex(github.Fail, "remote.pushDefault"):
-            github.remote_of(self.main)
+            github.delivery_remote(self.main)
 
     def test_disabled_origin_with_multiple_forks_requires_a_choice(self):
         import herdr_task.github as github
@@ -6358,12 +6358,43 @@ class ReadyMergeGit(unittest.TestCase):
         for name in ("first", "second"):
             self.git(self.main, "remote", "add", name, f"https://github.com/{name}/project.git")
         with self.assertRaisesRegex(github.Fail, "remote.pushDefault"):
-            github.remote_of(self.main)
+            github.delivery_remote(self.main)
 
     def test_origin_remains_the_default_when_enabled(self):
         import herdr_task.github as github
         self.remote()
         self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.assertEqual(github.remote_of(self.main), "origin")
+
+    def test_ambiguous_delivery_does_not_stop_other_stores_ticking(self):
+        import herdr_task.github as github
+        import herdr_task.tick as tick
+        for name in ("fork", "upstream"):
+            self.git(self.main, "remote", "add", name, f"https://github.com/{name}/project.git")
+        self.task["own"] = self.commit(self.task["worktree"], "worker work")
+        self.patch(tick, "at_work", lambda *args: False)
+        self.patch(tick, "holds_open", lambda *args: False)
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        advanced = []
+        self.patch(tick, "due_pass", lambda store, report: advanced.append(store.loc["folder"]))
+        other = Store([])
+        report = {"started": [], "done": [], "attention": []}
+        for store in (self.store, other):
+            tick.tick_store(store, report)
+        self.assertEqual(advanced, [self.main, "/f"])
+        self.assertEqual(self.task["state"], "running")
+        self.assertIn("remote.pushDefault", github.github_unreachable(self.store))
+
+    def test_invalid_delivery_choice_reports_attention_without_local_merge(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "config", "remote.pushDefault", "missing")
+        self.commit(self.task["worktree"], "worker work")
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        self.commands.finalize(self.store, self.task)
+        self.assertIn("remote.pushDefault", self.task["attention"])
+        self.assertEqual(self.task["state"], "ready")
+        self.assertNotIn("merged", self.task)
         self.assertEqual(github.remote_of(self.main), "origin")
 
     def test_ready_does_not_overwrite_a_diverged_remote_branch(self):
@@ -6387,6 +6418,18 @@ class ReadyMergeGit(unittest.TestCase):
         github.pr_push(self.store, self.task, "owner/project")
         self.assertEqual(self.git(fork, "rev-parse", "refs/heads/task/1"), tip)
         self.assertEqual(self.git(upstream, "rev-parse", "refs/heads/task/1"), tip)
+
+    def test_ready_checks_every_push_url_before_skipping_delivery(self):
+        import herdr_task.github as github
+        first = self.remote()
+        second = os.path.join(self.root, "second.git")
+        self.git(self.root, "init", "-q", "--bare", second)
+        tip = self.commit(self.task["worktree"], "worker work")
+        self.git(self.task["worktree"], "push", "origin", "task/1")
+        self.git(self.main, "config", "--add", "remote.origin.pushurl", first)
+        self.git(self.main, "config", "--add", "remote.origin.pushurl", second)
+        github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(second, "rev-parse", "refs/heads/task/1"), tip)
 
     def test_ready_pushes_without_holding_the_task_list(self):
         """#1007: while ready's push runs the repo's pre-push hook, the task list's lock is free, and what another

@@ -30,7 +30,12 @@ def github(s):
     if s.loc["kind"] != "repo" or not shutil.which(GH):
         return None
     folder = s.loc["folder"]
-    remote = remote_of(folder)
+    s.github_error = None
+    try:
+        remote = delivery_remote(folder)
+    except Fail as e:
+        s.github_error = str(e)
+        return None
     url = git(folder, "remote", "get-url", "--push", remote)[1]
     g = s.data.get("github") or {}
     if g and g.get("remote_url") == url and now() - g.get("at", 0) < 3600000:
@@ -73,6 +78,14 @@ def released(s):
 
 
 def remote_of(main):
+    try:
+        return delivery_remote(main)
+    except Fail:
+        names = git(main, "remote")[1].split()
+        return "origin" if "origin" in names or not names else names[0]
+
+
+def delivery_remote(main):
     names = git(main, "remote")[1].split()
     preferred = git(main, "config", "--get", "remote.pushDefault")[1]
     enabled = []
@@ -99,12 +112,12 @@ def pr_push(s, task, repo):
     on it). Only what its remote lacks (#795); a pull request it continues gets its new commits on
     its own branch, never forced (#828)."""
     wt, br = task["worktree"], task["branch"]
-    remote = remote_of(s.loc["folder"])
-    push_url = git(wt, "remote", "get-url", "--push", remote)[1]
+    remote = delivery_remote(s.loc["folder"])
+    push_urls = git(wt, "remote", "get-url", "--push", "--all", remote)[1].splitlines() or [remote]
     to = (task.get("pr") or {}).get("branch") or br
     has, tip, _ = git(wt, "rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
-    seen, there, _ = git(wt, "ls-remote", push_url or remote, f"refs/heads/{to}")
-    if has and tip and seen and there.split()[:1] == [tip]:
+    destinations = [git(wt, "ls-remote", url, f"refs/heads/{to}") for url in push_urls]
+    if has and tip and all(seen and there.split()[:1] == [tip] for seen, there, _ in destinations):
         return
     with released(s):
         ok, out, err = git(wt, "push", "-u", remote, br) if to == br else \
