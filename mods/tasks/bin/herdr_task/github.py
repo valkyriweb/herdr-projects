@@ -29,14 +29,24 @@ def github(s):
     github_unreachable(s)."""
     if s.loc["kind"] != "repo" or not shutil.which(GH):
         return None
+    folder = s.loc["folder"]
+    s.github_error = None
+    try:
+        remote = delivery_remote(folder)
+    except Fail as e:
+        if on_github(folder):
+            s.github_error = str(e)
+        return None
+    url = git(folder, "remote", "get-url", "--push", remote)[1]
     g = s.data.get("github") or {}
-    if g and now() - g.get("at", 0) < 3600000:
+    if g and g.get("remote_url") == url and now() - g.get("at", 0) < 3600000:
         return g.get("repo")
-    ok, out, err = gh("repo", "view", "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=s.loc["folder"])
+    target = [url] if url else []
+    ok, out, err = gh("repo", "view", *target, "--json", "nameWithOwner", "-q", ".nameWithOwner", cwd=folder)
     if not (ok and out) and not settled(err) and on_github(s.loc["folder"]):
         s.github_error = err or "gh couldn't read the repo"
         return None
-    s.data["github"] = {"repo": out if ok and out else None, "at": now()}
+    s.data["github"] = {"repo": out if ok and out else None, "at": now(), "remote_url": url}
     s.dirty = True
     return s.data["github"]["repo"]
 
@@ -69,8 +79,32 @@ def released(s):
 
 
 def remote_of(main):
+    try:
+        return delivery_remote(main)
+    except Fail:
+        names = git(main, "remote")[1].split()
+        return "origin" if "origin" in names or not names else names[0]
+
+
+def delivery_remote(main):
     names = git(main, "remote")[1].split()
-    return "origin" if "origin" in names else (names[0] if names else "origin")
+    preferred = git(main, "config", "--get", "remote.pushDefault")[1]
+    enabled = []
+    for name in names:
+        ok, urls, _ = git(main, "remote", "get-url", "--push", "--all", name)
+        if ok and urls and all(url.upper() != "DISABLED" for url in urls.splitlines()):
+            enabled.append(name)
+    if preferred:
+        if preferred not in enabled:
+            raise Fail(f"remote.pushDefault names an unavailable or disabled remote: {preferred}.")
+        return preferred
+    if "origin" in enabled:
+        return "origin"
+    if len(enabled) == 1:
+        return enabled[0]
+    if not names:
+        return "origin"
+    raise Fail("No unique enabled remote. Choose the delivery remote with git config remote.pushDefault <remote>.")
 
 
 def pr_push(s, task, repo):
@@ -79,14 +113,15 @@ def pr_push(s, task, repo):
     on it). Only what its remote lacks (#795); a pull request it continues gets its new commits on
     its own branch, never forced (#828)."""
     wt, br = task["worktree"], task["branch"]
-    remote = remote_of(s.loc["folder"])
+    remote = delivery_remote(s.loc["folder"])
+    push_urls = git(wt, "remote", "get-url", "--push", "--all", remote)[1].splitlines() or [remote]
     to = (task.get("pr") or {}).get("branch") or br
     has, tip, _ = git(wt, "rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
-    seen, there, _ = git(wt, "ls-remote", remote, f"refs/heads/{to}")
-    if has and tip and seen and there.split()[:1] == [tip]:
+    destinations = [git(wt, "ls-remote", url, f"refs/heads/{to}") for url in push_urls]
+    if has and tip and all(seen and there.split()[:1] == [tip] for seen, there, _ in destinations):
         return
     with released(s):
-        ok, out, err = git(wt, "push", "--force-with-lease", "-u", remote, br) if to == br else \
+        ok, out, err = git(wt, "push", "-u", remote, br) if to == br else \
             git(wt, "push", remote, f"{br}:refs/heads/{to}")
     if not ok:
         raise Fail(f"Couldn't push {br}" + (f" to {to}" if to != br else "") + f": {push_error(out, err)}")

@@ -89,6 +89,14 @@ task values a machine set before (the old machine scope) still apply there until
   they must all merge green at the reported heads. PRs mentioned only in notes are not inferred. Only worktrees
   registered on the task go to guarded cleanup. A clean squash-merged branch can still be kept if the guard cannot
   verify Git ancestry. The automatic path never deletes a branch.
+- Git delivery follows the repository's `remote.pushDefault` (`git config remote.pushDefault fork`, for example).
+  Otherwise an enabled `origin` wins, then the sole enabled remote. A push URL of `DISABLED` excludes that remote;
+  several alternatives or a disabled explicit choice require you to choose, never a guess. GitHub lookup and PRs
+  use the chosen remote's push URL, not the upstream repository. Ready pushes fast-forward only; a diverged branch
+  is left untouched and reported. This is a repository-wide choice: per-branch `pushRemote` is not used.
+  An unclear delivery choice blocks GitHub delivery at ready, not local starts or other folders' progress checks.
+  Repositories without a GitHub remote can still be accepted and merged locally.
+  No remote configuration is changed for you.
 - Secrets live in one vault, `~/.local/share/shepherdr/secrets/vault.json` on the machine that keeps them (Secrets › Kept on). Which one:
   herdr-core document `shepherdr.secrets` = `{ id, at, by }` on every machine, handed on by each service as
   `shepherdr.host` is (`core/secrets.js`). `herdr-secret` on any other machine passes `set`, `rm` and `names` there

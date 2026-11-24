@@ -6316,6 +6316,149 @@ class ReadyMergeGit(unittest.TestCase):
         self.git(self.main, "remote", "add", "origin", remote)
         return remote
 
+    def test_ready_uses_the_only_enabled_fork_without_changing_origin(self):
+        import herdr_task.github as github
+        remote = self.remote()
+        self.git(self.main, "remote", "rename", "origin", "fork")
+        self.git(self.main, "remote", "add", "origin", "https://github.com/upstream/project.git")
+        self.git(self.main, "config", "remote.origin.pushurl", "DISABLED")
+        tip = self.commit(self.task["worktree"], "worker work")
+        github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(remote, "rev-parse", "refs/heads/task/1"), tip)
+        self.assertEqual(self.git(self.main, "remote", "get-url", "--push", "origin"), "DISABLED")
+        self.assertEqual(github.remote_of(self.main), "fork")
+
+    def test_push_default_selects_the_fork_and_invalidates_the_github_cache(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.git(self.main, "config", "remote.pushDefault", "fork")
+        self.store.loc["kind"] = "repo"
+        self.store.data["github"] = {"repo": "upstream/project", "at": github.now()}
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        calls = []
+        self.patch(github, "gh", lambda *args, **kw: (calls.append(args) or True, "owner/project", ""))
+        self.assertEqual(github.github(self.store), "owner/project")
+        self.assertIn("https://github.com/owner/project.git", calls[0])
+        self.assertEqual(github.remote_of(self.main), "fork")
+
+    def test_disabled_push_default_is_not_silently_replaced(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.git(self.main, "config", "remote.pushDefault", "fork")
+        self.git(self.main, "config", "remote.fork.pushurl", "DISABLED")
+        with self.assertRaisesRegex(github.Fail, "remote.pushDefault"):
+            github.delivery_remote(self.main)
+
+    def test_disabled_origin_with_multiple_forks_requires_a_choice(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "config", "remote.origin.pushurl", "DISABLED")
+        for name in ("first", "second"):
+            self.git(self.main, "remote", "add", name, f"https://github.com/{name}/project.git")
+        with self.assertRaisesRegex(github.Fail, "remote.pushDefault"):
+            github.delivery_remote(self.main)
+
+    def test_origin_remains_the_default_when_enabled(self):
+        import herdr_task.github as github
+        self.remote()
+        self.git(self.main, "remote", "add", "fork", "https://github.com/owner/project.git")
+        self.assertEqual(github.remote_of(self.main), "origin")
+
+    def test_ambiguous_delivery_does_not_stop_other_stores_ticking(self):
+        import herdr_task.github as github
+        import herdr_task.tick as tick
+        for name in ("fork", "upstream"):
+            self.git(self.main, "remote", "add", name, f"https://github.com/{name}/project.git")
+        self.task["own"] = self.commit(self.task["worktree"], "worker work")
+        self.patch(tick, "at_work", lambda *args: False)
+        self.patch(tick, "holds_open", lambda *args: False)
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        advanced = []
+        self.patch(tick, "due_pass", lambda store, report: advanced.append(store.loc["folder"]))
+        other = Store([])
+        report = {"started": [], "done": [], "attention": []}
+        for store in (self.store, other):
+            tick.tick_store(store, report)
+        self.assertEqual(advanced, [self.main, "/f"])
+        self.assertEqual(self.task["state"], "running")
+        self.assertIn("remote.pushDefault", github.github_unreachable(self.store))
+
+    def test_invalid_delivery_choice_reports_attention_without_local_merge(self):
+        import herdr_task.github as github
+        self.git(self.main, "remote", "add", "origin", "https://github.com/owner/project.git")
+        self.git(self.main, "config", "remote.pushDefault", "missing")
+        self.commit(self.task["worktree"], "worker work")
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        self.commands.finalize(self.store, self.task)
+        self.assertIn("remote.pushDefault", self.task["attention"])
+        self.assertEqual(self.task["state"], "ready")
+        self.assertNotIn("merged", self.task)
+        self.assertEqual(github.remote_of(self.main), "origin")
+
+    def test_local_repos_with_unclear_delivery_can_be_accepted(self):
+        self.remote()
+        self.git(self.main, "remote", "rename", "origin", "first")
+        second = os.path.join(self.root, "second.git")
+        self.git(self.root, "init", "-q", "--bare", second)
+        self.git(self.main, "remote", "add", "second", second)
+        self.accept_local_work()
+
+    def test_local_repo_with_disabled_origin_can_be_accepted(self):
+        self.remote()
+        self.git(self.main, "config", "remote.origin.pushurl", "DISABLED")
+        self.accept_local_work()
+        self.assertEqual(self.git(self.main, "remote", "get-url", "--push", "origin"), "DISABLED")
+
+    def accept_local_work(self):
+        import herdr_task.github as github
+        tip = self.own_commit()
+        self.patch(github.shutil, "which", lambda name: "/usr/bin/gh")
+        self.patch(github, "gh", lambda *args, **kw: (False, "", "none of the git remotes"))
+        self.patch(self.commands, "merge_policy", lambda *args: "ask")
+        self.patch(self.commands, "finish", lambda store, task, **kw: task.update(state="done"))
+        self.commands.finalize(self.store, self.task)
+        self.assertNotIn("attention", self.task)
+        self.assertIsNone(github.github_unreachable(self.store))
+        self.commands.cmd_accept(self.args())
+        self.assertEqual(self.task["state"], "done")
+        self.assertEqual(self.git(self.main, "rev-parse", "main"), tip)
+
+    def test_ready_does_not_overwrite_a_diverged_remote_branch(self):
+        import herdr_task.github as github
+        remote = self.remote()
+        self.commit(self.task["worktree"], "worker work")
+        remote_tip = self.commit(self.main, "someone else's work")
+        self.git(self.main, "push", "origin", "HEAD:refs/heads/task/1")
+        with self.assertRaises(github.Fail):
+            github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(remote, "rev-parse", "refs/heads/task/1"), remote_tip)
+
+    def test_ready_checks_the_push_url_not_the_upstream_fetch_url(self):
+        import herdr_task.github as github
+        upstream = self.remote()
+        fork = os.path.join(self.root, "fork.git")
+        self.git(self.root, "init", "-q", "--bare", fork)
+        tip = self.commit(self.task["worktree"], "worker work")
+        self.git(self.task["worktree"], "push", "origin", "task/1")
+        self.git(self.main, "config", "remote.origin.pushurl", fork)
+        github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(fork, "rev-parse", "refs/heads/task/1"), tip)
+        self.assertEqual(self.git(upstream, "rev-parse", "refs/heads/task/1"), tip)
+
+    def test_ready_checks_every_push_url_before_skipping_delivery(self):
+        import herdr_task.github as github
+        first = self.remote()
+        second = os.path.join(self.root, "second.git")
+        self.git(self.root, "init", "-q", "--bare", second)
+        tip = self.commit(self.task["worktree"], "worker work")
+        self.git(self.task["worktree"], "push", "origin", "task/1")
+        self.git(self.main, "config", "--add", "remote.origin.pushurl", first)
+        self.git(self.main, "config", "--add", "remote.origin.pushurl", second)
+        github.pr_push(self.store, self.task, "owner/project")
+        self.assertEqual(self.git(second, "rev-parse", "refs/heads/task/1"), tip)
+
     def test_ready_pushes_without_holding_the_task_list(self):
         """#1007: while ready's push runs the repo's pre-push hook, the task list's lock is free, and what another
         command saved meanwhile (a status line) is kept."""
