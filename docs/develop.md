@@ -53,7 +53,7 @@ Quick, fine on any machine (seconds):
 bin/sync-shared --check
 python3 -m unittest discover -s test            # herdr-task's command test runs only on CI
 for f in $(find mods lib core -name '*.js'); do node --input-type=module --check < "$f"; done
-bun test service core web && bunx tsc --noEmit -p . && (cd web && bunx vite build)   # the service and the web app
+bun run test && bunx tsc --noEmit -p . && (cd web && bunx vite build)   # the service and the web app
 ```
 
 The web app against your live data: `bun service/main.ts` (stop the installed service first: it holds port 7788),
