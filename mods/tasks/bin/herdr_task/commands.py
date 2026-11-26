@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 
-from . import sandbox
+from . import durable, sandbox
 from .base import Fail, git, guard, now, run, STORE, stop_note, VERSION
 from .settings import (
     agent_argv, agent_key, bare, merge_policy, review_limits, set_opts, settings_block, settings_for, space_base,
@@ -919,7 +919,7 @@ def last_agent(t):
     return t["agents"][-1] if t["agents"] else None
 
 
-def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None, nudge=None):
+def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None, nudge=None, recovering=False):
     """Starts an agent for the task: the last agent's own session when it's the same kind of agent
     and the session is known; else a fresh one with a handoff. `message` goes after either; `nudge`
     is a resumed session's first message when no `message` is given (a handoff needs none)."""
@@ -930,7 +930,11 @@ def start_again(s, t, space, key=None, argv_json=None, message=None, parent=None
     keep = prev and prev.get("argv") and (t.get("pick_at") or 0) <= (prev.get("at") or 0)
     argv = agent_argv(None, argv_json) if argv_json else worker_argv(s, t, space, key) if key else \
         (prev["argv"] if keep else worker_argv(s, t, space))
-    same = prev and agent_key(argv) == prev.get("agent")
+    if durable.enabled(t):
+        resuming = durable.checkpoint_exists(s, t)
+        followup = None if recovering else message
+        return launch(s, t, argv, space, brief(s, t, parent, space, argv), parent=parent, followup=followup), resuming
+    same = prev and not prev.get("durable") and agent_key(argv) == prev.get("agent")
     res = resume_argv(argv, prev["session"], folder_for(s, t)) if same and prev.get("session") else None
     if res:
         return launch(s, t, argv, space, message or nudge, parent=parent, resume=res), True
@@ -958,7 +962,7 @@ def cmd_resume(args):
             t["state"] = "running"
         gone = [k["address"] for k in live_agents(s.key(t))]  # its agents' terminals, none running an agent
         back_to_work(s, t, "resumed")
-        a, resumed = start_again(s, t, space, args.agent, args.argv, parent=args.parent, message=RESUME_NUDGE)
+        a, resumed = start_again(s, t, space, args.agent, args.argv, parent=args.parent, message=RESUME_NUDGE, recovering=True)
         # #1022: the old agent's terminal, its plain shell left (with the status it last reported when
         # it died mid-turn), kept counting as the task's agent: it goes, as switch ends the one it replaces.
         for address in gone:
@@ -1003,6 +1007,8 @@ def cmd_switch(args):
         # An agent switching itself can't end first: that would end this command too.
         me = os.environ.get("HC_TERMINAL_ID")
         own = bool(old and me and old["address"].split("/")[-1] == me)
+        if old and (args.keep or own) and (durable.enabled(t) or (last_agent(t) or {}).get("durable")):
+            raise Fail("Stop the existing worker before replacing a durable Pi worker. Then run herdr-task resume.")
         if old and not args.keep and not own:
             # The old agent ends before the new one starts (SHEP-211): the new one may resume the same session,
             # and killing the old one after that cut the session's turn short under the new agent, which then
